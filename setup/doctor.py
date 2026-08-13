@@ -154,8 +154,12 @@ def _ports():
 @check("TCP 버스 왕복 (작업 PC <-> 로봇 PC 규약)",
        "방화벽이 루프백까지 막고 있는지 보세요.")
 def _bus():
+    import contextlib
+    import io
+
     import pose_bus
-    pose_bus._loopback_test()
+    with contextlib.redirect_stdout(io.StringIO()):     # 왕복 내용은 안 보여도 된다
+        pose_bus._loopback_test()
     return "JSON 한 줄 왕복 성공"
 
 
