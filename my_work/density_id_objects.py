@@ -304,9 +304,11 @@ class Part:
     # 팔이라 AABB 가 70x256x274 mm 지만, 파지점 근처의 실제 단면은 그보다
     # 훨씬 얇다. AABB 를 쓰면 "개구 256 mm 가 필요하다" 는 엉뚱한 값이 나온다.
     grasp_width_mm: float = None
-    # 그 폭이 **물체 좌표계의 어느 축** 방향인가 (0=x, 1=y, 2=z).
-    # 죠는 이 축에 맞춰 오므린다. None 이면 AABB 에서 가장 좁은 축을 쓴다.
-    grasp_axis: int = None
+    # 죠가 물 방향과 길이 방향. 축 번호(0/1/2) 또는 단위벡터를 넣는다.
+    # 스캔 물체는 볼록 조각에서 잰 실제 방향(벡터)을 넣는다 — 굽은 팔은
+    # 좌표축에 나란하지 않기 때문이다. None 이면 AABB 에서 고른다.
+    grasp_axis: object = None
+    grasp_long_axis: object = None
 
     @property
     def volume_m3(self):

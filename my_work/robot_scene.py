@@ -214,13 +214,19 @@ def grasp_axes(spec):
     part = spec.parts[0]
     dims = np.asarray(part.bbox_mm, dtype=float)
     jaw = getattr(part, "grasp_axis", None)
+    length = getattr(part, "grasp_long_axis", None)
     if jaw is None:
         jaw = int(np.argmin(dims))
-    length = int(np.argmax(dims))
-    if length == jaw:                       # 정육면체 같은 경우
-        length = int(np.argmax([d if k != jaw else -1.0
-                                for k, d in enumerate(dims)]))
-    return int(jaw), int(length)
+    if length is None:
+        length = int(np.argmax(dims))
+        if length == jaw:                   # 정육면체 같은 경우
+            length = int(np.argmax([d if k != jaw else -1.0
+                                    for k, d in enumerate(dims)]))
+    # 축 번호로 준 것은 단위벡터로 바꾼다. 이후는 벡터 하나로 다룬다.
+    jaw = np.eye(3)[jaw] if np.isscalar(jaw) else np.asarray(jaw, float)
+    length = (np.eye(3)[length] if np.isscalar(length)
+              else np.asarray(length, float))
+    return jaw, length
 
 
 # 길쭉한 축을 그리퍼의 어느 방향으로 둘 것인가.
@@ -239,14 +245,19 @@ def grasp_rotation(spec, long_axis=None):
     """
     jaw, length = grasp_axes(spec)
     long_axis = long_axis or GRASP_LONG_AXIS
-    third = [k for k in range(3) if k not in (jaw, length)][0]
+    jaw_vector = np.asarray(jaw, dtype=float)
+    long_vector = np.asarray(length, dtype=float)
+    jaw_vector = jaw_vector / np.linalg.norm(jaw_vector)
+    # 길이 축을 죠 축에 직교화한다 (볼록 조각의 주축은 정확히 직교하지 않는다)
+    long_vector = long_vector - (long_vector @ jaw_vector) * jaw_vector
+    long_vector = long_vector / np.linalg.norm(long_vector)
     basis = np.zeros((3, 3))
-    basis[:, 0] = np.eye(3)[jaw]
+    basis[:, 0] = jaw_vector
     if long_axis == "z":
-        basis[:, 2] = np.eye(3)[length]
+        basis[:, 2] = long_vector
         basis[:, 1] = np.cross(basis[:, 2], basis[:, 0])
     else:
-        basis[:, 1] = np.eye(3)[length]
+        basis[:, 1] = long_vector
         basis[:, 2] = np.cross(basis[:, 0], basis[:, 1])
     roll = np.deg2rad(GRASP_ROLL_DEG.get(spec.key, 0.0))
     return RotationMatrix.MakeXRotation(roll) @ RotationMatrix(basis.T)
@@ -488,7 +499,8 @@ def jaw_dimension_m(spec):
     if part.grasp_width_mm is not None:
         return part.grasp_width_mm * MM
     jaw, _ = grasp_axes(spec)
-    return float(part.bbox_mm[jaw]) * MM
+    # 벡터 축이면 AABB 를 그 방향으로 투영해 대략의 폭을 쓴다.
+    return float(np.abs(np.asarray(part.bbox_mm, float) @ np.abs(jaw))) * MM
 
 
 def jaw_opening_for(spec, gripper_spec):

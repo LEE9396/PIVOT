@@ -74,6 +74,10 @@ REPO_ASSETS = Path(__file__).resolve().parents[1] / "assets"
 
 def _layout_of(root):
     root = Path(root)
+    if (root / "drake" / "visuals").is_dir() and (root / "drake"
+                                                  / "collisions").is_dir():
+        # 0814 판: 볼록 분해와 glTF 화면 메시를 직접 준다. 우리가 만들 것이 없다.
+        return "minimal_v2"
     if (root / "drake" / "object.urdf").is_file():
         return "minimal"
     if (root / "issacimport").is_dir():
@@ -105,11 +109,19 @@ def _resolve_delivery():
 
 
 DELIVERY, LAYOUT = _resolve_delivery()
-if LAYOUT == "minimal":
+if LAYOUT == "minimal_v2":
     URDF = DELIVERY / "drake" / "object.urdf"
     PARTS = DELIVERY / "geometry" / "parts"
+    VISUALS = DELIVERY / "drake" / "visuals"
+    COLLISIONS = DELIVERY / "drake" / "collisions"
+    SCAN = None
+elif LAYOUT == "minimal":
+    URDF = DELIVERY / "drake" / "object.urdf"
+    PARTS = DELIVERY / "geometry" / "parts"
+    VISUALS = COLLISIONS = None
     SCAN = None
 else:
+    VISUALS = COLLISIONS = None
     URDF = (DELIVERY
             / "issacimport/issac_sim_urdf/desk_lamp_refined_v1/urdf/object.urdf")
     PARTS = None
@@ -159,7 +171,7 @@ def _raw_mesh(path):
 
 
 def _mesh_path(name):
-    if LAYOUT == "minimal":
+    if LAYOUT in ("minimal", "minimal_v2"):
         hits = sorted(PARTS.glob(f"{name}_*rgb.ply")) or sorted(
             PARTS.glob(f"{name}_*.ply"))
         return hits[0] if hits else DELIVERY / "drake" / "meshes" / f"{name}.stl"
@@ -219,6 +231,11 @@ def collision_meshes(name):
     219.58 로 일치). 캐시도 없으면 링크 메시 하나를 통째로 넘기는데,
     Drake 의 Convex 가 볼록 껍질로 감싸므로 굽은 팔이 실제보다 굵어진다.
     """
+    if LAYOUT == "minimal_v2":
+        # 배달물이 볼록 분해를 직접 준다. 우리가 만들 것이 없다.
+        pieces = sorted((COLLISIONS / name).glob("part_*.obj"))
+        if pieces:
+            return tuple(str(p) for p in pieces)
     cached = sorted(CACHE.glob(f"{name}_convex_*.obj"),
                     key=lambda p: int(p.stem.rsplit("_", 1)[1]))
     if cached:
@@ -256,6 +273,14 @@ def ensure_obj(pitch=0.002, n_color=N_COLOR_PIECES):
     out = {}
     for index in (1, 2, 3):
         name = f"link_{index}"
+        if LAYOUT == "minimal_v2":
+            # 배달물이 화면용 glTF 를 준다. 정점 색(COLOR_0)이 들어 있어
+            # Meshcat 이 그대로 그린다 — 색 무리로 쪼갤 필요가 없다.
+            hits = sorted(VISUALS.glob(f"{name}_*.gltf"))
+            if hits:
+                out[name] = dict(visual=str(hits[0]), pieces=(),
+                                 collision=collision_meshes(name))
+                continue
         vertices, faces, colors = part_mesh(name)
         tag = f"{n_color}wb" if WHITE_BALANCE else f"{n_color}"
         visual = CACHE / (f"{name}_visual_rgb.obj" if colors is not None
@@ -369,6 +394,52 @@ def grasp_width_mm(name, centroid_scan, slab_mm=25.0):
     return float(1000.0 * widths[best]), int(axes[best])
 
 
+def pinch_grasp(name, min_width_mm=12.0, max_width_mm=70.0):
+    """그리퍼가 **실제로 물 수 있는 자리**를 볼록 조각에서 고른다.
+
+    도심을 파지점으로 쓰면 안 되는 경우가 있다. 굽은 팔의 도심은 재료 한가운데
+    있어도 그 자리의 단면 중심은 아니어서, 죠를 오므리면 한쪽 패드가 10 mm 씩
+    허공을 문다 (실제로 그랬다).
+
+    볼록 조각 하나하나는 팔을 토막 낸 것이라 거의 원기둥이다. 그러니
+      - 조각의 중심   -> 재료 한가운데
+      - 가장 좁은 주축 -> 죠가 물 방향, 그 폭이 곧 필요한 개구량
+      - 가장 긴 주축   -> 손목 축을 따라 뻗을 방향
+    으로 삼으면 실제로 물리는 자세가 된다.
+
+    너무 얇은 조각(모서리 파편)은 거른다. 남은 것 중 **가장 긴** 조각을
+    고른다 — 팔의 몸통이고, 패드가 길이 방향으로 물기 좋다.
+
+    돌려주는 것: dict(point, jaw_axis, long_axis, width_mm)  — 스캔 좌표계.
+    """
+    best = None
+    for path in collision_meshes(name):
+        vertices = np.array([[float(t) for t in line.split()[1:4]]
+                             for line in open(path) if line.startswith("v ")])
+        if len(vertices) < 4:
+            continue
+        center = vertices.mean(axis=0)
+        _, _, axes = np.linalg.svd(vertices - center, full_matrices=False)
+        spans = [(float(np.ptp((vertices - center) @ axes[k])), k)
+                 for k in range(3)]
+        spans.sort()
+        # 폭은 **파지점 근처** 에서 잰다. 조각 전체의 최대 폭을 쓰면 패드가
+        # 실제 단면보다 넓게 벌어져 물체가 죠 사이에서 논다.
+        along = (vertices - center) @ axes[spans[2][1]]
+        near = vertices[np.abs(along) <= 0.015]
+        if len(near) < 4:
+            near = vertices
+        width = 1000.0 * float(np.ptp((near - center) @ axes[spans[0][1]]))
+        if not (min_width_mm <= width <= max_width_mm):
+            continue
+        length = spans[2][0]
+        if best is None or length > best["length"]:
+            best = dict(point=center, jaw_axis=axes[spans[0][1]],
+                        long_axis=axes[spans[2][1]], width_mm=width,
+                        length=length, piece=str(path))
+    return best
+
+
 def rerooted_joints(joint_rows, root):
     """트리를 root 기준으로 다시 세운다.
 
@@ -420,7 +491,7 @@ def rerooted_joints(joint_rows, root):
 # base_frame 을 기본으로 두면 안 된다. 이 스캔에서 link_2 의 프레임 원점은
 # 관절 축 위가 아니라 스캔 좌표 원점이고, 베이스 도심에서 285 mm 떨어진
 # 허공이다. 거기를 파지점으로 삼으면 모든 모멘트팔이 실물과 어긋난다.
-DEFAULT_GRASP = "centroid"
+DEFAULT_GRASP = "pinch"
 # 로봇이 잡는 **부위**. link_3 은 연결부(Arm) 로, 단면이 가늘어 그리퍼가
 # 실제로 물 수 있는 유일한 부위다 (베이스 88 mm, Head 90 mm vs 개구 53 mm).
 # 여기를 잡으면 트리가 link_3 를 뿌리로 다시 세워지고, link_2 와 link_1 이
@@ -449,9 +520,15 @@ def build_spec(pitch=0.002, com_error_mm=0.0, seed=0, grasp_at=DEFAULT_GRASP,
     # 센서(파지점) 원점. 잡는 부위의 도심에 둔다. URDF 링크 프레임 원점은
     # 이 스캔에서 물체 바깥 허공일 수 있어 파지점으로 쓰면 모멘트팔이 어긋난다.
     root = order[0]
-    sensor_origin = (frame_origin.get(root, np.zeros(3))
-                     if grasp_at == "base_frame"
-                     else geometry[root]["centroid"])
+    pinch = pinch_grasp(root) if grasp_at == "pinch" else None
+    if pinch is None and grasp_at == "pinch":
+        print(f"  [주의] {root} 에서 물 만한 볼록 조각을 못 찾아 도심을 씁니다")
+    if grasp_at == "base_frame":
+        sensor_origin = frame_origin.get(root, np.zeros(3))
+    elif pinch is not None:
+        sensor_origin = pinch["point"]
+    else:
+        sensor_origin = geometry[root]["centroid"]
 
     parts = []
     for name in order:
@@ -465,6 +542,13 @@ def build_spec(pitch=0.002, com_error_mm=0.0, seed=0, grasp_at=DEFAULT_GRASP,
         size = (info["aabb"][1] - info["aabb"][0]) * 1000.0
         gt = GROUND_TRUTH[name]
         width_mm, width_axis = grasp_width_mm(name, info["centroid"])
+        if pinch is not None and name == root:
+            # 잡는 부위는 볼록 조각에서 잰 값을 쓴다 (실제로 물리는 자리).
+            width_mm = pinch["width_mm"]
+            width_axis = pinch["jaw_axis"]
+            long_axis = pinch["long_axis"]
+        else:
+            long_axis = None
         # 메시는 스캔 좌표에 있고 몸체 프레임 원점은 도심이다.
         # 따라서 몸체 프레임 -> 메시 좌표 평행이동 = -도심(스캔 좌표).
         parts.append(Part(
@@ -479,6 +563,7 @@ def build_spec(pitch=0.002, com_error_mm=0.0, seed=0, grasp_at=DEFAULT_GRASP,
             inertia_unit=info["inertia"] / info["volume"],
             grasp_width_mm=width_mm,
             grasp_axis=width_axis,
+            grasp_long_axis=long_axis,
             visual_mesh=meshes[name]["visual"],
             visual_pieces=meshes[name]["pieces"],
             collision_meshes=meshes[name]["collision"],
