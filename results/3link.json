@@ -1,0 +1,38 @@
+{
+  "part_count": 3,
+  "grasp_offset_m": 0.04,
+  "simulation_end_s": 5.0,
+  "parent_lift_m": 0.08915829436060296,
+  "tcp_lift_m": 0.0925143017537352,
+  "parent_tcp_lift_ratio": 0.9637244476852278,
+  "finger_positions_after_close_m": [
+    0.02018190039146244,
+    0.01995464116482016
+  ],
+  "initial_contact_pairs": [],
+  "contact_count_after_close": 3,
+  "contact_pairs_after_close": [],
+  "grasp_relative_translation_drift_m": 0.003068615277959975,
+  "grasp_relative_rotation_drift_deg": 15.743910883826123,
+  "maximum_internal_joint_drift_deg": 0.665731581077481,
+  "final_finger_positions_m": [
+    0.02019779283377856,
+    0.01989349684550132
+  ],
+  "final_contact_count": 4,
+  "ft_reaction_force": [
+    -0.9298137138220672,
+    -3.268758564993606,
+    -46.277933671461625
+  ],
+  "ft_reaction_torque": [
+    -0.6818204118857546,
+    -4.854532680847375,
+    0.7448223502179772
+  ],
+  "passed_lift": true,
+  "passed_grasp_translation": true,
+  "passed_grasp_rotation": false,
+  "passed_joint_stability": true,
+  "passed": false
+}

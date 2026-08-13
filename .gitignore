@@ -1,0 +1,29 @@
+# 파이썬 가상환경 (bootstrap.sh 가 만든다. 753 MB 라 저장소에 넣지 않는다)
+.venv*/
+robot_learning/.venv*/
+.cache/
+__pycache__/
+*.py[cod]
+*.log
+.DS_Store
+
+# 실행 중에 생기는 것들
+results/*-rerun.json
+results/*/
+robot_learning/results/*/
+my_work/frames/
+my_work/frames_objects/
+my_work/cache_robotiq_obj/
+my_work/*.urdf.out
+
+# 램프 색 조각 캐시는 배달물에서 다시 구울 수 있다.
+# 다만 볼록 분해 조각(_convex_)은 지금 배달물에 없으므로 반드시 넣는다.
+my_work/cache_lamp_obj/*_shade_*
+my_work/cache_lamp_obj/*_visual*.obj
+my_work/cache_lamp_obj/link_?.obj
+
+# HTD 원본에서 이 파이프라인이 쓰지 않는 큰 자산 (합계 63 MB)
+third_party/HTD/assets/d435i/
+third_party/HTD/assets/drake/d435_visual.obj
+third_party/HTD/assets/rbpodo_description/meshes/
+third_party/robotiq_arg85_description/images/

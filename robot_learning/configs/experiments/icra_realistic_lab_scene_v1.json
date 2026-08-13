@@ -1,0 +1,165 @@
+{
+  "schema": "icra-realistic-lab-scene-v1",
+  "units": "m",
+  "coordinate_frame": {
+    "name": "lab_world",
+    "x": "table long axis, right",
+    "y": "table short axis, away from robot",
+    "z": "up"
+  },
+  "table": {
+    "size_xyz_m": [2.3, 1.1, 0.04],
+    "top_height_m": 0.75,
+    "center_xy_m": [0.0, 0.0],
+    "surface_rgb": [0.018, 0.018, 0.022],
+    "static_friction": 0.85,
+    "dynamic_friction": 0.72,
+    "restitution": 0.02
+  },
+  "background": {
+    "type": "black_cloth_proxy",
+    "backdrop_center_xyz_m": [0.0, 0.62, 1.45],
+    "backdrop_size_xyz_m": [2.7, 0.015, 1.9],
+    "left_wing_center_xyz_m": [-1.23, 0.10, 1.35],
+    "right_wing_center_xyz_m": [1.23, 0.10, 1.35],
+    "wing_size_xyz_m": [0.015, 1.05, 1.7],
+    "rgb": [0.008, 0.008, 0.010],
+    "note": "Visual backdrop only. Cloth dynamics are intentionally disabled because the curtain does not contact the robot or object."
+  },
+  "robot": {
+    "model": "Rainbow Robotics RB5-850E",
+    "urdf": "third_party/HTD/assets/rbpodo_description/robots/rb5_850e.urdf",
+    "base_xyz_m": [0.0, -0.74, 0.82],
+    "base_rpy_deg": [0.0, 0.0, 90.0],
+    "mount": "independent pedestal at the front long edge",
+    "gripper": {
+      "model": "DH Robotics PGC-140-50",
+      "urdf": "third_party/HTD/assets/pgc_140_50/pgc_140_50.urdf"
+    },
+    "wrist_ft": {
+      "enabled": true,
+      "model": "AIDIN AFT200-KIT-RB C(CAN)",
+      "frame": "between RB5 link6 and gripper base",
+      "sample_rate_hz": 1000,
+      "nominal_force_range_n": 200,
+      "nominal_torque_range_nm": 15,
+      "limit_force_n": 300,
+      "limit_torque_nm": 25,
+      "force_resolution_n": 0.15,
+      "torque_resolution_nm": 0.015,
+      "calibration_matrix_6x6": [
+        [1, 0, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0, 0],
+        [0, 0, 1, 0, 0, 0],
+        [0, 0, 0, 1, 0, 0],
+        [0, 0, 0, 0, 1, 0],
+        [0, 0, 0, 0, 0, 1]
+      ],
+      "bias_fxyz_txyz": [0, 0, 0, 0, 0, 0],
+      "noise_std_fxyz_txyz": [0, 0, 0, 0, 0, 0],
+      "operating_temperature_c": [10, 60],
+      "ip_rating": "IP56",
+      "kit_mass_kg": 0.635,
+      "sensor_mass_kg": 0.236,
+      "rb_bracket_mass_kg": 0.399,
+      "dimensions_mm": [80.0, 52.3],
+      "calibration_status": "official_nominal_spec; physical bias/noise calibration pending"
+    }
+  },
+  "workspace": {
+    "object_home_xyz_m": [0.0, -0.08, 0.83],
+    "object_home_rpy_deg": [0.0, 0.0, 0.0],
+    "safe_capture_box_xyz_m": [1.0, 0.7, 0.65],
+    "safe_capture_box_center_xyz_m": [0.0, -0.02, 1.03],
+    "robot_table_clearance_m": 0.03
+  },
+  "cameras": [
+    {
+      "id": "cam_d435i_left",
+      "model": "Intel RealSense D435i",
+      "position_xyz_m": [-0.86, -0.64, 1.36],
+      "look_at_xyz_m": [0.0, -0.15, 1.10],
+      "resolution": [848, 480],
+      "fps": 30,
+      "intrinsics_status": "official D435i nominal depth-camera model",
+      "depth_intrinsics": {"fx": 446.803, "fy": 432.971, "cx": 424.0, "cy": 240.0},
+      "depth_fov_deg": [87.0, 58.0],
+      "depth_range_m": [0.195, 3.0],
+      "depth_scale_m": 0.001,
+      "stereo_baseline_m": 0.050,
+      "role": "left oblique RGB-D and joint marker view"
+    },
+    {
+      "id": "cam_d435i_right",
+      "model": "Intel RealSense D435i",
+      "position_xyz_m": [0.86, -0.55, 1.65],
+      "look_at_xyz_m": [0.0, -0.15, 1.10],
+      "resolution": [848, 480],
+      "fps": 30,
+      "intrinsics_status": "official D435i nominal depth-camera model",
+      "depth_intrinsics": {"fx": 446.803, "fy": 432.971, "cx": 424.0, "cy": 240.0},
+      "depth_fov_deg": [87.0, 58.0],
+      "depth_range_m": [0.195, 3.0],
+      "depth_scale_m": 0.001,
+      "stereo_baseline_m": 0.050,
+      "role": "right oblique RGB-D and joint marker view"
+    },
+    {
+      "id": "cam_d456_front",
+      "model": "Intel RealSense D456",
+      "position_xyz_m": [0.35, 0.50, 1.40],
+      "look_at_xyz_m": [0.0, -0.15, 1.10],
+      "resolution": [1280, 720],
+      "fps": 30,
+      "intrinsics_status": "official D456 nominal depth-camera model",
+      "depth_intrinsics": {"fx": 674.286, "fy": 649.459, "cx": 640.0, "cy": 360.0},
+      "depth_fov_deg": [87.0, 58.0],
+      "depth_range_m": [0.6, 3.0],
+      "depth_scale_m": 0.001,
+      "stereo_baseline_m": 0.095,
+      "role": "robot-facing frontal metric RGB-D and independent joint verification"
+    }
+  ],
+  "object_manifest": [
+    {
+      "id": "commercial_toolbox",
+      "parts_max": 4,
+      "status": "awaiting_measured_mesh_and_gt"
+    },
+    {
+      "id": "accessory_case",
+      "parts_max": 4,
+      "status": "awaiting_measured_mesh_and_gt"
+    },
+    {
+      "id": "mini_cooler",
+      "parts_max": 4,
+      "status": "awaiting_measured_mesh_and_gt"
+    },
+    {
+      "id": "lamp",
+      "parts_max": 4,
+      "status": "conditional_due_to_cable_and_internal_mass"
+    },
+    {
+      "id": "printed_torque_hinge_box",
+      "parts_max": 2,
+      "status": "controlled_primary_proxy",
+      "proxy_dimensions_m": {
+        "parent_outer": [0.16, 0.04, 0.02],
+        "child_outer": [0.10, 0.04, 0.02],
+        "initial_open_angle_deg": 105.0
+      }
+    }
+  ],
+  "validation_limits": {
+    "planning_joint_delta_deg": 0.5,
+    "hard_joint_delta_deg": 1.5,
+    "max_grasp_slip_mm": 2.0,
+    "max_peak_force_n": 180.0,
+    "max_peak_torque_nm": 12.0,
+    "minimum_density_uncertainty_reduction": 0.5,
+    "maximum_part_density_relative_error": 0.15,
+    "required_p95_hard_safe_rate": 0.95
+  }
+}

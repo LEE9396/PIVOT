@@ -1,0 +1,24 @@
+{
+  "schema": "phantom-v3-foundationpose-gpu-summary-v1",
+  "object_profile": "phantom_v3",
+  "initialization": "first-frame masks then track_one",
+  "camera_count": 3,
+  "link_count": 3,
+  "capture_rate_hz": 20.0,
+  "frame_count": 1751,
+  "capture_duration_s": 90.0,
+  "first_frame_angle_errors_deg": [
+    -0.8970093880160164,
+    -0.3095112415075789
+  ],
+  "angle_mae_deg": 1.617690205820659,
+  "angle_p95_deg": 4.225897577627704,
+  "angle_max_deg": 7.132586351529511,
+  "tracking_fps": 9.72993676007888,
+  "safe_hold_request_count": 3,
+  "re_registration_count": 6,
+  "stationary_hold_count": 5,
+  "visible_hold_count": 5,
+  "pass_criterion": "angle P95 <= 5 deg and every static hold stationary with every link visible in at least two cameras",
+  "passed": true
+}

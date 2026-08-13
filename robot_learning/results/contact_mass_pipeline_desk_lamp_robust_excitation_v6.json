@@ -1,0 +1,2302 @@
+{
+  "schema": "rb5-static-gravity-mass-pipeline-v6",
+  "scope": "Online safe adaptive wrist actions, filtered FoundationPose joint angles, and known-tool-compensated AFT200 gravity wrenches",
+  "estimator": {
+    "measurement_equation": "b_i = w_loaded_i - w_known_tool_i = A_i(q_i, g_i, r_ij) m",
+    "solution": "argmin ||W(A m-b)||^2 subject to m_j>=0.1 kg; accept only when 1<=sum(m)<=3 kg",
+    "pose_source": "simulated_foundationpose_angle_sensor",
+    "foundationpose_consensus_frames": 3,
+    "ground_truth_usage": "evaluator_and_simulated_pose_sensor",
+    "systematic_error_model": {
+      "scale": 1.0,
+      "body_frame_com_offset_bound_m": 0.005,
+      "foundationpose_joint_bias_bound_deg": 1.0,
+      "aft200_force_bias_bound_n": 0.07,
+      "aft200_torque_bias_bound_nm": 0.007,
+      "volume_relative_bound": 0.03,
+      "grasp_slip_included": false
+    }
+  },
+  "action_policy": {
+    "mode": "online_replan_after_every_static_hold",
+    "ground_truth_usage": "none",
+    "candidate_pitch_roll_step_deg": [
+      -30.0,
+      -15.0,
+      0.0,
+      15.0,
+      30.0
+    ],
+    "absolute_wrist_limit_deg": 90.0,
+    "collision_clearance_m": 0.01,
+    "selection_order": "safe path, rank, information, condition, movement",
+    "experiment_design": "maximize passive-joint excitation per predicted grasp torque, add one orthogonal bias, then sweep the selected axis without multi-axis transitions",
+    "fixed_household_pose_sequence_used": false
+  },
+  "safety_constraints": {
+    "required_path_clearance_m": 0.01,
+    "verified_selected_path_clearance_lower_bound_m": 0.01,
+    "maximum_total_payload_kg": 3.0,
+    "maximum_grasp_translation_drift_m": 0.006,
+    "maximum_grasp_rotation_drift_deg": 20.0,
+    "accepted_static_holds": 7,
+    "minimum_static_holds": 3,
+    "maximum_candidate_holds": 12,
+    "regrasp_performed": false
+  },
+  "initial_values": {
+    "part_count": 3,
+    "object_profile": "desk_lamp",
+    "part_volumes_m3": [
+      0.0004900000000000001,
+      0.000389125,
+      0.0021000000000000003
+    ],
+    "joint_opening_limits_deg": [
+      120.0,
+      90.0
+    ],
+    "initial_opening_angle_deg": 0.0,
+    "initial_opening_angles_deg": [
+      120.0,
+      0.0
+    ],
+    "prior_mass_kg": [
+      0.19110000000000005,
+      0.15954125,
+      0.8610000000000001
+    ],
+    "prior_mass_std_kg": [
+      0.07350000000000001,
+      0.1011725,
+      0.4830000000000001
+    ],
+    "target_relative_95_half_width": 0.06,
+    "continuous_wrist_pitch_sequence_deg": [
+      0.0,
+      -30.0,
+      -30.0,
+      0.0,
+      15.0,
+      30.0,
+      60.0
+    ],
+    "continuous_wrist_roll_sequence_deg": [
+      0.0,
+      30.0,
+      0.0,
+      -30.0,
+      -30.0,
+      0.0,
+      -30.0
+    ],
+    "grasped_part": "arm"
+  },
+  "trace": [
+    {
+      "step": 1,
+      "selected_wrist_pitch_deg": 0.0,
+      "three_camera_foundationpose_filter": {
+        "source": "filtered_foundationpose_simulation_with_gt_first_mask",
+        "per_camera": {
+          "cam_d435i_left": {
+            "opening_deg": 120.0,
+            "parent_inliers": 29,
+            "child_inliers": 29
+          },
+          "cam_d435i_right": {
+            "opening_deg": 120.0,
+            "parent_inliers": 27,
+            "child_inliers": 27
+          },
+          "cam_d456_front": {
+            "opening_deg": 120.0,
+            "parent_inliers": 30,
+            "child_inliers": 30
+          }
+        },
+        "consensus_frame_count": 3,
+        "fused_opening_deg": 119.96495185590292,
+        "fused_opening_angles_deg": [
+          119.96495185590292,
+          0.07349182393458402
+        ],
+        "stationary": true,
+        "all_links_visible": true
+      },
+      "aft200_filtered_loaded_wrench": [
+        -26.25,
+        -15.149999999999867,
+        0.44999999999999624,
+        1.4400000000000144,
+        -2.5199999999999867,
+        -0.6750000000000063
+      ],
+      "aft200_empty_tool_tare_wrench": [
+        -13.890742591156062,
+        -8.034903665945665,
+        0.2512569594266623,
+        0.40716619426028927,
+        -0.7039543829219499,
+        -0.0014521217976980294
+      ],
+      "aft200_contact_object_wrench": [
+        -12.359257408843938,
+        -7.115096334054202,
+        0.19874304057333392,
+        1.032833805739725,
+        -1.8160456170780368,
+        -0.6735478782023082
+      ],
+      "accepted": true,
+      "contact_gate": {
+        "grasp_translation_drift_m": 6.938893903907228e-18,
+        "grasp_rotation_drift_deg": 0.0,
+        "grasp_stable": true,
+        "physical_safe": true,
+        "normalized_innovation_rms": null,
+        "measurement_consistent": true,
+        "fit_residual_force_norm_n": 0.03828274381762109,
+        "fit_residual_torque_norm_nm": 0.004716100995730335,
+        "opening_angle_span_deg": [
+          1.226396761921933e-11,
+          2.521311918598645e-11
+        ],
+        "actual_opening_angles_deg": [
+          120.00000075150314,
+          -7.422991386674066e-07
+        ],
+        "maximum_abs_joint_velocity_deg_s": [
+          2.646108817729608e-11,
+          5.244027655135011e-11
+        ],
+        "maximum_abs_joint_acceleration_deg_s2": [
+          1.2494431366715664e-08,
+          1.6587995651516457e-11
+        ],
+        "joints_stationary": true,
+        "parent_lift_m": 0.24165016329002786,
+        "final_contact_count": 3
+      },
+      "estimate": {
+        "part_mass_kg": [
+          0.36134090241559946,
+          0.28897132448382845,
+          0.8035433837341596
+        ],
+        "part_mass_95_interval_kg": [
+          [
+            0.1,
+            0.5847036040850123
+          ],
+          [
+            0.1,
+            0.579342051014733
+          ],
+          [
+            0.7648847204557285,
+            0.8461436210922044
+          ]
+        ],
+        "part_density_kg_m3": [
+          737.43041309306,
+          742.6182447383964,
+          382.6397065400759
+        ],
+        "part_density_95_interval_kg_m3": [
+          [
+            199.23801161782592,
+            1204.8496174408126
+          ],
+          [
+            250.2401612937442,
+            1504.2069543701616
+          ],
+          [
+            359.2520503261694,
+            406.81838649631317
+          ]
+        ]
+      },
+      "uncertainty_stop": {
+        "data_rank": 3,
+        "design_condition_number": 1532.359314167176,
+        "mass_change_from_previous": null,
+        "relative_95_half_width": [
+          0.6707012696939664,
+          0.829393802085643,
+          0.05056285838535334
+        ],
+        "maximum_relative_95_half_width": 0.829393802085643,
+        "density_relative_95_half_width": [
+          0.6818349148396756,
+          0.8442876282403718,
+          0.06215551517150492
+        ],
+        "maximum_robust_relative_95_half_width": 0.8442876282403718,
+        "target_relative_95_half_width": 0.06,
+        "target_met": false,
+        "minimum_mass_boundary_active": false,
+        "total_mass_feasible": true,
+        "joint_excitation_range_deg": [
+          0.0,
+          0.0
+        ],
+        "minimum_joint_excitation_deg": 10.0,
+        "internal_joints_excited": false
+      },
+      "evaluator_only": {
+        "true_part_mass_kg": [
+          0.4,
+          0.25,
+          0.8
+        ],
+        "mass_relative_error": [
+          0.0966477439610014,
+          0.1558852979353138,
+          0.0044292296676994025
+        ]
+      },
+      "selected_wrist_roll_deg": 0.0,
+      "action_selection": {
+        "ground_truth_usage": "none",
+        "selected_candidate_index": 4,
+        "selected_wrist_pitch_deg": -30.0,
+        "selected_wrist_roll_deg": 30.0,
+        "selected_minimum_clearance_m": 0.01,
+        "selection_metrics": {
+          "index": 2,
+          "data_rank": 3,
+          "design_condition_number": 15.744469037066516,
+          "logdet_information": 27.19555583292575,
+          "movement_cost": 1.8681391641974976
+        },
+        "predicted_gravity_torque_nm": 1.723876463005347,
+        "predicted_joint_excitation_torque_nm": 2.6162478544673426,
+        "joint_excitation_per_grasp_torque": 1.517653910017581,
+        "rejected_candidates": [
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "new_pose_required"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "lower_joint_excitation_per_grasp_torque"
+          }
+        ]
+      }
+    },
+    {
+      "step": 2,
+      "selected_wrist_pitch_deg": -30.0,
+      "three_camera_foundationpose_filter": {
+        "source": "filtered_foundationpose_simulation_with_gt_first_mask",
+        "per_camera": {
+          "cam_d435i_left": {
+            "opening_deg": 119.97060640323892,
+            "parent_inliers": 26,
+            "child_inliers": 27
+          },
+          "cam_d435i_right": {
+            "opening_deg": 120.0,
+            "parent_inliers": 28,
+            "child_inliers": 28
+          },
+          "cam_d456_front": {
+            "opening_deg": 119.98046291533068,
+            "parent_inliers": 27,
+            "child_inliers": 27
+          }
+        },
+        "consensus_frame_count": 3,
+        "fused_opening_deg": 120.0,
+        "fused_opening_angles_deg": [
+          120.0,
+          0.03035694528763126
+        ],
+        "stationary": true,
+        "all_links_visible": true
+      },
+      "aft200_filtered_loaded_wrench": [
+        -18.75,
+        -13.199999999999886,
+        19.79999999999998,
+        0.8999999999999925,
+        -2.0700000000000207,
+        -0.5250000000000032
+      ],
+      "aft200_empty_tool_tare_wrench": [
+        -9.96028928329825,
+        -6.9877547077560305,
+        10.466109996421787,
+        0.3537878049099283,
+        -0.5061087578084774,
+        -0.0012167827073306836
+      ],
+      "aft200_contact_object_wrench": [
+        -8.78971071670175,
+        -6.212245292243855,
+        9.333890003578192,
+        0.5462121950900642,
+        -1.5638912421915432,
+        -0.5237832172926725
+      ],
+      "accepted": true,
+      "contact_gate": {
+        "grasp_translation_drift_m": 0.0005417302446071682,
+        "grasp_rotation_drift_deg": 0.6387055606520462,
+        "grasp_stable": true,
+        "physical_safe": true,
+        "normalized_innovation_rms": null,
+        "measurement_consistent": true,
+        "fit_residual_force_norm_n": 0.06894685961649352,
+        "fit_residual_torque_norm_nm": 0.003621314662370338,
+        "opening_angle_span_deg": [
+          1.951150352397235e-11,
+          4.262658951866794e-11
+        ],
+        "actual_opening_angles_deg": [
+          120.00000061265439,
+          -6.473058797012273e-07
+        ],
+        "maximum_abs_joint_velocity_deg_s": [
+          4.5863197649689956e-11,
+          8.89460848381784e-11
+        ],
+        "maximum_abs_joint_acceleration_deg_s2": [
+          1.2196884976357962e-08,
+          2.8784885547156425e-11
+        ],
+        "joints_stationary": true,
+        "parent_lift_m": 0.24165016329002786,
+        "final_contact_count": 3
+      },
+      "estimate": {
+        "part_mass_kg": [
+          0.38330178825628874,
+          0.26512886179094053,
+          0.8048552225632465
+        ],
+        "part_mass_95_interval_kg": [
+          [
+            0.11377085694293529,
+            0.590446859860944
+          ],
+          [
+            0.1,
+            0.4989144802184405
+          ],
+          [
+            0.7706551246105783,
+            0.841777157580121
+          ]
+        ],
+        "part_density_kg_m3": [
+          782.2485474618136,
+          681.3462558071071,
+          383.264391696784
+        ],
+        "part_density_95_interval_kg_m3": [
+          [
+            227.46806086357148,
+            1209.4163955630918
+          ],
+          [
+            252.297834593118,
+            1269.698981178218
+          ],
+          [
+            360.25898747198323,
+            405.0742413168673
+          ]
+        ]
+      },
+      "uncertainty_stop": {
+        "data_rank": 3,
+        "design_condition_number": 15.949469345006401,
+        "mass_change_from_previous": 0.08992782804494588,
+        "relative_95_half_width": [
+          0.6218024772157947,
+          0.7523030075333567,
+          0.04418312199244866
+        ],
+        "maximum_relative_95_half_width": 0.7523030075333567,
+        "density_relative_95_half_width": [
+          0.6276447159190508,
+          0.7466109470139451,
+          0.05846519376151598
+        ],
+        "maximum_robust_relative_95_half_width": 0.7523030075333567,
+        "target_relative_95_half_width": 0.06,
+        "target_met": false,
+        "minimum_mass_boundary_active": false,
+        "total_mass_feasible": true,
+        "joint_excitation_range_deg": [
+          0.03504814409707535,
+          0.04313487864695276
+        ],
+        "minimum_joint_excitation_deg": 10.0,
+        "internal_joints_excited": false
+      },
+      "evaluator_only": {
+        "true_part_mass_kg": [
+          0.4,
+          0.25,
+          0.8
+        ],
+        "mass_relative_error": [
+          0.041745529359278194,
+          0.060515447163762115,
+          0.006069028204058052
+        ]
+      },
+      "selected_wrist_roll_deg": 30.0,
+      "action_selection": {
+        "ground_truth_usage": "none",
+        "selected_candidate_index": 10,
+        "selected_wrist_pitch_deg": -30.0,
+        "selected_wrist_roll_deg": 0.0,
+        "selected_minimum_clearance_m": 0.01,
+        "selection_metrics": {
+          "index": 0,
+          "data_rank": 3,
+          "design_condition_number": 18.433618005909175,
+          "logdet_information": 28.247575426619978,
+          "movement_cost": 1.1296904923167956
+        },
+        "predicted_gravity_torque_nm": 2.0134454414437837,
+        "predicted_joint_excitation_torque_nm": 4.000495074769572,
+        "joint_excitation_per_grasp_torque": 1.986890229268359,
+        "rejected_candidates": [
+          {
+            "wrist_pitch_deg": -60.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -60.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -60.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -60.0,
+            "wrist_roll_deg": 45.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -60.0,
+            "wrist_roll_deg": 60.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -45.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -45.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -45.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -45.0,
+            "wrist_roll_deg": 45.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -45.0,
+            "wrist_roll_deg": 60.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "lower_orthogonal_joint_excitation"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "new_pose_required"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": 45.0,
+            "reason": "lower_orthogonal_joint_excitation"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": 60.0,
+            "reason": "lower_orthogonal_joint_excitation"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": 45.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": 60.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 45.0,
+            "reason": "orthogonal_bias_required"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 60.0,
+            "reason": "orthogonal_bias_required"
+          }
+        ]
+      }
+    },
+    {
+      "step": 3,
+      "selected_wrist_pitch_deg": -30.0,
+      "three_camera_foundationpose_filter": {
+        "source": "filtered_foundationpose_simulation_with_gt_first_mask",
+        "per_camera": {
+          "cam_d435i_left": {
+            "opening_deg": 119.95927546948494,
+            "parent_inliers": 27,
+            "child_inliers": 27
+          },
+          "cam_d435i_right": {
+            "opening_deg": 120.0,
+            "parent_inliers": 27,
+            "child_inliers": 27
+          },
+          "cam_d456_front": {
+            "opening_deg": 119.85354061056077,
+            "parent_inliers": 25,
+            "child_inliers": 25
+          }
+        },
+        "consensus_frame_count": 3,
+        "fused_opening_deg": 119.98232097508038,
+        "fused_opening_angles_deg": [
+          119.98232097508038,
+          0.04177908890430141
+        ],
+        "stationary": true,
+        "all_links_visible": true
+      },
+      "aft200_filtered_loaded_wrench": [
+        -18.75,
+        -21.29999999999993,
+        10.5,
+        1.8450000000000193,
+        -1.9349999999999754,
+        -0.6299999999999967
+      ],
+      "aft200_empty_tool_tare_wrench": [
+        -9.940607344436458,
+        -11.29071050305414,
+        5.592827484431975,
+        0.572030347891713,
+        -0.5044756933981167,
+        -0.0017093232652945125
+      ],
+      "aft200_contact_object_wrench": [
+        -8.809392655563542,
+        -10.00928949694579,
+        4.907172515568025,
+        1.2729696521083063,
+        -1.4305243066018587,
+        -0.6282906767347022
+      ],
+      "accepted": true,
+      "contact_gate": {
+        "grasp_translation_drift_m": 0.0005937861889373556,
+        "grasp_rotation_drift_deg": 0.6524283564057175,
+        "grasp_stable": true,
+        "physical_safe": true,
+        "normalized_innovation_rms": 0.24223968462700463,
+        "measurement_consistent": true,
+        "fit_residual_force_norm_n": 0.05872992043129784,
+        "fit_residual_torque_norm_nm": 0.0036014002075901498,
+        "opening_angle_span_deg": [
+          1.3486101124726702e-11,
+          3.9541655047816085e-11
+        ],
+        "actual_opening_angles_deg": [
+          120.00000085454799,
+          -1.0480687771670951e-06
+        ],
+        "maximum_abs_joint_velocity_deg_s": [
+          3.88689236570156e-11,
+          7.91999619078203e-11
+        ],
+        "maximum_abs_joint_acceleration_deg_s2": [
+          1.201151257537293e-08,
+          1.885967501240003e-12
+        ],
+        "joints_stationary": true,
+        "parent_lift_m": 0.24165016329002786,
+        "final_contact_count": 3
+      },
+      "estimate": {
+        "part_mass_kg": [
+          0.3809908188826341,
+          0.2667116867043267,
+          0.8042029883505611
+        ],
+        "part_mass_95_interval_kg": [
+          [
+            0.1,
+            0.5859713685637999
+          ],
+          [
+            0.1,
+            0.5045861895159066
+          ],
+          [
+            0.7687770126657948,
+            0.842136240561464
+          ]
+        ],
+        "part_density_kg_m3": [
+          777.532283433947,
+          685.4139073673671,
+          382.9538039764576
+        ],
+        "part_density_95_interval_kg_m3": [
+          [
+            203.48056877658007,
+            1200.9027180473468
+          ],
+          [
+            251.77847339499172,
+            1301.4538493186758
+          ],
+          [
+            361.0917114385875,
+            404.460795393192
+          ]
+        ]
+      },
+      "uncertainty_stop": {
+        "data_rank": 3,
+        "design_condition_number": 18.520073968256852,
+        "mass_change_from_previous": 0.006065682581098006,
+        "relative_95_half_width": [
+          0.6377730702134132,
+          0.7584710563591199,
+          0.045609895112508
+        ],
+        "maximum_relative_95_half_width": 0.7584710563591199,
+        "density_relative_95_half_width": [
+          0.6414024025251293,
+          0.7657237215651365,
+          0.05662443290062036
+        ],
+        "maximum_robust_relative_95_half_width": 0.7657237215651365,
+        "target_relative_95_half_width": 0.06,
+        "target_met": false,
+        "minimum_mass_boundary_active": false,
+        "total_mass_feasible": true,
+        "joint_excitation_range_deg": [
+          0.03504814409707535,
+          0.04313487864695276
+        ],
+        "minimum_joint_excitation_deg": 10.0,
+        "internal_joints_excited": false
+      },
+      "evaluator_only": {
+        "true_part_mass_kg": [
+          0.4,
+          0.25,
+          0.8
+        ],
+        "mass_relative_error": [
+          0.04752295279341484,
+          0.06684674681730685,
+          0.0052537354382013735
+        ]
+      },
+      "selected_wrist_roll_deg": 0.0,
+      "action_selection": {
+        "ground_truth_usage": "none",
+        "selected_candidate_index": 20,
+        "selected_wrist_pitch_deg": 0.0,
+        "selected_wrist_roll_deg": -30.0,
+        "selected_minimum_clearance_m": 0.01,
+        "selection_metrics": {
+          "index": 5,
+          "data_rank": 3,
+          "design_condition_number": 19.062694342266056,
+          "logdet_information": 29.398250421854137,
+          "movement_cost": 1.4624436604710773
+        },
+        "predicted_gravity_torque_nm": 2.1321820080872746,
+        "predicted_joint_excitation_torque_nm": 4.332972885082402,
+        "joint_excitation_per_grasp_torque": 2.032177773120504,
+        "rejected_candidates": [
+          {
+            "wrist_pitch_deg": -60.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -60.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -60.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -60.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -60.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -45.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -45.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -45.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -45.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -45.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "hold_excitation_axis"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "hold_excitation_axis"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "new_pose_required"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "hold_excitation_axis"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "hold_excitation_axis"
+          }
+        ]
+      }
+    },
+    {
+      "step": 4,
+      "selected_wrist_pitch_deg": 0.0,
+      "three_camera_foundationpose_filter": {
+        "source": "filtered_foundationpose_simulation_with_gt_first_mask",
+        "per_camera": {
+          "cam_d435i_left": {
+            "opening_deg": 120.0,
+            "parent_inliers": 28,
+            "child_inliers": 28
+          },
+          "cam_d435i_right": {
+            "opening_deg": 119.78656034450285,
+            "parent_inliers": 29,
+            "child_inliers": 29
+          },
+          "cam_d456_front": {
+            "opening_deg": 119.82881399460314,
+            "parent_inliers": 26,
+            "child_inliers": 25
+          }
+        },
+        "consensus_frame_count": 3,
+        "fused_opening_deg": 119.98128354745631,
+        "fused_opening_angles_deg": [
+          119.98128354745631,
+          0.026783303614375125
+        ],
+        "stationary": true,
+        "all_links_visible": true
+      },
+      "aft200_filtered_loaded_wrench": [
+        -15.449999999999875,
+        -23.850000000000215,
+        -10.649999999999965,
+        2.4600000000000173,
+        -1.3350000000000015,
+        -0.5999999999999999
+      ],
+      "aft200_empty_tool_tare_wrench": [
+        -8.191903377243474,
+        -12.604949568703509,
+        -5.619920125213546,
+        0.6388605352141956,
+        -0.41439649427064396,
+        -0.001785944291664701
+      ],
+      "aft200_contact_object_wrench": [
+        -7.258096622756401,
+        -11.245050431296706,
+        -5.030079874786419,
+        1.8211394647858217,
+        -0.9206035057293576,
+        -0.5982140557083352
+      ],
+      "accepted": true,
+      "contact_gate": {
+        "grasp_translation_drift_m": 0.0007686883412459166,
+        "grasp_rotation_drift_deg": 0.32214898837865236,
+        "grasp_stable": true,
+        "physical_safe": true,
+        "normalized_innovation_rms": 0.3435705484583906,
+        "measurement_consistent": true,
+        "fit_residual_force_norm_n": 0.0764472782135474,
+        "fit_residual_torque_norm_nm": 0.008479402754104992,
+        "opening_angle_span_deg": [
+          5.768185928900493e-11,
+          6.64989080938868e-12
+        ],
+        "actual_opening_angles_deg": [
+          120.00000088707193,
+          -1.1681000429845668e-06
+        ],
+        "maximum_abs_joint_velocity_deg_s": [
+          1.2155101761819462e-10,
+          1.3399020506206464e-11
+        ],
+        "maximum_abs_joint_acceleration_deg_s2": [
+          1.1404974419436892e-08,
+          2.0419212036030414e-12
+        ],
+        "joints_stationary": true,
+        "parent_lift_m": 0.24165016329002786,
+        "final_contact_count": 3
+      },
+      "estimate": {
+        "part_mass_kg": [
+          0.38651464908342203,
+          0.2618576148438463,
+          0.8031138801376034
+        ],
+        "part_mass_95_interval_kg": [
+          [
+            0.10325880336269207,
+            0.5867010195429667
+          ],
+          [
+            0.1,
+            0.49755688313514057
+          ],
+          [
+            0.7669751384729516,
+            0.8430128163445783
+          ]
+        ],
+        "part_density_kg_m3": [
+          788.8054062926979,
+          672.9395819951077,
+          382.43518101790636
+        ],
+        "part_density_95_interval_kg_m3": [
+          [
+            213.1588820263727,
+            1208.6478263162937
+          ],
+          [
+            252.85518655219613,
+            1281.5379915690014
+          ],
+          [
+            361.1588615185572,
+            406.27701159190735
+          ]
+        ]
+      },
+      "uncertainty_stop": {
+        "data_rank": 3,
+        "design_condition_number": 19.01808826206095,
+        "mass_change_from_previous": 0.018537065891228926,
+        "relative_95_half_width": [
+          0.6253866668788698,
+          0.7591088832230751,
+          0.04733928758559031
+        ],
+        "maximum_relative_95_half_width": 0.7591088832230751,
+        "density_relative_95_half_width": [
+          0.6310104725122346,
+          0.7643203287039548,
+          0.058987970135568696
+        ],
+        "maximum_robust_relative_95_half_width": 0.7643203287039548,
+        "target_relative_95_half_width": 0.06,
+        "target_met": false,
+        "minimum_mass_boundary_active": false,
+        "total_mass_feasible": true,
+        "joint_excitation_range_deg": [
+          0.03504814409707535,
+          0.04670852032020889
+        ],
+        "minimum_joint_excitation_deg": 10.0,
+        "internal_joints_excited": false
+      },
+      "evaluator_only": {
+        "true_part_mass_kg": [
+          0.4,
+          0.25,
+          0.8
+        ],
+        "mass_relative_error": [
+          0.03371337729144497,
+          0.04743045937538515,
+          0.003892350172004233
+        ]
+      },
+      "selected_wrist_roll_deg": -30.0,
+      "action_selection": {
+        "ground_truth_usage": "none",
+        "selected_candidate_index": 17,
+        "selected_wrist_pitch_deg": 15.0,
+        "selected_wrist_roll_deg": -30.0,
+        "selected_minimum_clearance_m": 0.01,
+        "selection_metrics": {
+          "index": 0,
+          "data_rank": 3,
+          "design_condition_number": 20.008853936295424,
+          "logdet_information": 30.20888692279661,
+          "movement_cost": 0.516783476723696
+        },
+        "predicted_gravity_torque_nm": 2.0762608888389673,
+        "predicted_joint_excitation_torque_nm": 4.24478725172765,
+        "joint_excitation_per_grasp_torque": 2.0444382854513576,
+        "rejected_candidates": [
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": -60.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": -45.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -30.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": -60.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": -45.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -60.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -45.0,
+            "reason": "hold_excitation_axis"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "new_pose_required"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "hold_excitation_axis"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "hold_excitation_axis"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": -60.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": -45.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -60.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -45.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          }
+        ]
+      }
+    },
+    {
+      "step": 5,
+      "selected_wrist_pitch_deg": 15.0,
+      "three_camera_foundationpose_filter": {
+        "source": "filtered_foundationpose_simulation_with_gt_first_mask",
+        "per_camera": {
+          "cam_d435i_left": {
+            "opening_deg": 120.0,
+            "parent_inliers": 27,
+            "child_inliers": 27
+          },
+          "cam_d435i_right": {
+            "opening_deg": 120.0,
+            "parent_inliers": 28,
+            "child_inliers": 28
+          },
+          "cam_d456_front": {
+            "opening_deg": 119.88710132094849,
+            "parent_inliers": 27,
+            "child_inliers": 27
+          }
+        },
+        "consensus_frame_count": 3,
+        "fused_opening_deg": 119.98165058072921,
+        "fused_opening_angles_deg": [
+          119.98165058072921,
+          0.022996908615861383
+        ],
+        "stationary": true,
+        "all_links_visible": true
+      },
+      "aft200_filtered_loaded_wrench": [
+        -12.149999999999926,
+        -23.850000000000215,
+        -14.25,
+        2.5350000000000072,
+        -0.9750000000000087,
+        -0.5399999999999986
+      ],
+      "aft200_empty_tool_tare_wrench": [
+        -6.445001094113243,
+        -12.617740381094004,
+        -7.538575818474852,
+        0.6395416699124861,
+        -0.3256209170379265,
+        -0.0017571712155982624
+      ],
+      "aft200_contact_object_wrench": [
+        -5.704998905886683,
+        -11.23225961890621,
+        -6.711424181525148,
+        1.8954583300875212,
+        -0.6493790829620822,
+        -0.5382428287844003
+      ],
+      "accepted": true,
+      "contact_gate": {
+        "grasp_translation_drift_m": 0.0015122072277389267,
+        "grasp_rotation_drift_deg": 1.5518659287384475,
+        "grasp_stable": true,
+        "physical_safe": true,
+        "normalized_innovation_rms": 0.334473330077168,
+        "measurement_consistent": true,
+        "fit_residual_force_norm_n": 0.049157556014618006,
+        "fit_residual_torque_norm_nm": 0.009501936673917633,
+        "opening_angle_span_deg": [
+          1.1857537174364552e-10,
+          1.8588775546631614e-11
+        ],
+        "actual_opening_angles_deg": [
+          120.00000085310565,
+          -1.1696344589779845e-06
+        ],
+        "maximum_abs_joint_velocity_deg_s": [
+          2.462166057168037e-10,
+          3.8972319443581836e-11
+        ],
+        "maximum_abs_joint_acceleration_deg_s2": [
+          9.147177275968113e-09,
+          1.4477188340535204e-11
+        ],
+        "joints_stationary": true,
+        "parent_lift_m": 0.24165016329002786,
+        "final_contact_count": 3
+      },
+      "estimate": {
+        "part_mass_kg": [
+          0.39124009269722154,
+          0.25777523311013056,
+          0.8020606921326745
+        ],
+        "part_mass_95_interval_kg": [
+          [
+            0.102576509122037,
+            0.5857609351018809
+          ],
+          [
+            0.1,
+            0.5002432483147268
+          ],
+          [
+            0.7691640341585917,
+            0.8417505600422426
+          ]
+        ],
+        "part_density_kg_m3": [
+          798.4491687698397,
+          662.4483986126066,
+          381.9336629203211
+        ],
+        "part_density_95_interval_kg_m3": [
+          [
+            213.71762105505857,
+            1206.9290442503673
+          ],
+          [
+            253.14535638583234,
+            1289.0025504961238
+          ],
+          [
+            361.2081103832423,
+            405.61440973500856
+          ]
+        ]
+      },
+      "uncertainty_stop": {
+        "data_rank": 3,
+        "design_condition_number": 19.994367359198485,
+        "mass_change_from_previous": 0.015836982026786055,
+        "relative_95_half_width": [
+          0.6175037208594283,
+          0.7763415505160826,
+          0.04525002072514223
+        ],
+        "maximum_relative_95_half_width": 0.7763415505160826,
+        "density_relative_95_half_width": [
+          0.6219628387399643,
+          0.7818399110630582,
+          0.058133523780319815
+        ],
+        "maximum_robust_relative_95_half_width": 0.7818399110630582,
+        "target_relative_95_half_width": 0.06,
+        "target_met": false,
+        "minimum_mass_boundary_active": false,
+        "total_mass_feasible": true,
+        "joint_excitation_range_deg": [
+          0.03504814409707535,
+          0.05049491531872263
+        ],
+        "minimum_joint_excitation_deg": 10.0,
+        "internal_joints_excited": false
+      },
+      "evaluator_only": {
+        "true_part_mass_kg": [
+          0.4,
+          0.25,
+          0.8
+        ],
+        "mass_relative_error": [
+          0.0218997682569462,
+          0.031100932440522255,
+          0.002575865165843072
+        ]
+      },
+      "selected_wrist_roll_deg": -30.0,
+      "action_selection": {
+        "ground_truth_usage": "none",
+        "selected_candidate_index": 19,
+        "selected_wrist_pitch_deg": 30.0,
+        "selected_wrist_roll_deg": 0.0,
+        "selected_minimum_clearance_m": 0.01,
+        "selection_metrics": {
+          "index": 0,
+          "data_rank": 3,
+          "design_condition_number": 22.23609049321017,
+          "logdet_information": 30.680261703150215,
+          "movement_cost": 0.83805259178818
+        },
+        "predicted_gravity_torque_nm": 2.207188108877341,
+        "predicted_joint_excitation_torque_nm": 4.889079858281735,
+        "joint_excitation_per_grasp_torque": 2.2150716736003555,
+        "rejected_candidates": [
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": -60.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": -45.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": -15.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -60.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -45.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": -60.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": -45.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "new_pose_required"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "hold_excitation_axis"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "hold_excitation_axis"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -60.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -45.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": -60.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": -45.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          }
+        ]
+      }
+    },
+    {
+      "step": 6,
+      "selected_wrist_pitch_deg": 30.0,
+      "three_camera_foundationpose_filter": {
+        "source": "filtered_foundationpose_simulation_with_gt_first_mask",
+        "per_camera": {
+          "cam_d435i_left": {
+            "opening_deg": 120.0,
+            "parent_inliers": 26,
+            "child_inliers": 26
+          },
+          "cam_d435i_right": {
+            "opening_deg": 119.88599412944649,
+            "parent_inliers": 25,
+            "child_inliers": 26
+          },
+          "cam_d456_front": {
+            "opening_deg": 119.97356225536043,
+            "parent_inliers": 27,
+            "child_inliers": 27
+          }
+        },
+        "consensus_frame_count": 3,
+        "fused_opening_deg": 119.99729155087317,
+        "fused_opening_angles_deg": [
+          119.99729155087317,
+          0.04509015594105866
+        ],
+        "stationary": true,
+        "all_links_visible": true
+      },
+      "aft200_filtered_loaded_wrench": [
+        -11.550000000000106,
+        -27.75,
+        -3.59999999999997,
+        2.7300000000000137,
+        -1.0650000000000002,
+        -0.5849999999999997
+      ],
+      "aft200_empty_tool_tare_wrench": [
+        -6.113001525694366,
+        -14.715128968819805,
+        -1.916175467716551,
+        0.7457206095909815,
+        -0.30953002760093945,
+        -0.0019919617972654334
+      ],
+      "aft200_contact_object_wrench": [
+        -5.43699847430574,
+        -13.034871031180195,
+        -1.6838245322834189,
+        1.9842793904090321,
+        -0.7554699723990608,
+        -0.5830080382027343
+      ],
+      "accepted": true,
+      "contact_gate": {
+        "grasp_translation_drift_m": 0.0018999514888407667,
+        "grasp_rotation_drift_deg": 1.7147832711465822,
+        "grasp_stable": true,
+        "physical_safe": true,
+        "normalized_innovation_rms": 0.2527343076415398,
+        "measurement_consistent": true,
+        "fit_residual_force_norm_n": 0.026205314544290096,
+        "fit_residual_torque_norm_nm": 0.008156241791485065,
+        "opening_angle_span_deg": [
+          3.254285729781259e-12,
+          1.9960219661672944e-11
+        ],
+        "actual_opening_angles_deg": [
+          120.00000096408321,
+          -1.3652081669763074e-06
+        ],
+        "maximum_abs_joint_velocity_deg_s": [
+          1.594781739244125e-11,
+          4.125087734475155e-11
+        ],
+        "maximum_abs_joint_acceleration_deg_s2": [
+          9.454434958811079e-09,
+          1.1405016211620596e-11
+        ],
+        "joints_stationary": true,
+        "parent_lift_m": 0.24165016329002786,
+        "final_contact_count": 3
+      },
+      "estimate": {
+        "part_mass_kg": [
+          0.3901271838917824,
+          0.2588364160885616,
+          0.8017353994384954
+        ],
+        "part_mass_95_interval_kg": [
+          [
+            0.12339715407005353,
+            0.5819749448689594
+          ],
+          [
+            0.1,
+            0.4914949483836884
+          ],
+          [
+            0.7664827454750567,
+            0.8415291899129336
+          ]
+        ],
+        "part_density_kg_m3": [
+          796.1779263097599,
+          665.1754991032743,
+          381.7787616373787
+        ],
+        "part_density_95_interval_kg_m3": [
+          [
+            251.48525223638708,
+            1203.2481961154324
+          ],
+          [
+            252.2486467597435,
+            1263.0149415279761
+          ],
+          [
+            360.28257270082946,
+            405.37870998164675
+          ]
+        ]
+      },
+      "uncertainty_stop": {
+        "data_rank": 3,
+        "design_condition_number": 22.230430849560477,
+        "mass_change_from_previous": 0.004099821016174036,
+        "relative_95_half_width": [
+          0.5877285789524872,
+          0.7562594056505119,
+          0.046802501480186935
+        ],
+        "maximum_relative_95_half_width": 0.7562594056505119,
+        "density_relative_95_half_width": [
+          0.5977074422864329,
+          0.7597741469212641,
+          0.05906056309603011
+        ],
+        "maximum_robust_relative_95_half_width": 0.7597741469212641,
+        "target_relative_95_half_width": 0.06,
+        "target_met": false,
+        "minimum_mass_boundary_active": false,
+        "total_mass_feasible": true,
+        "joint_excitation_range_deg": [
+          0.03504814409707535,
+          0.05049491531872263
+        ],
+        "minimum_joint_excitation_deg": 10.0,
+        "internal_joints_excited": false
+      },
+      "evaluator_only": {
+        "true_part_mass_kg": [
+          0.4,
+          0.25,
+          0.8
+        ],
+        "mass_relative_error": [
+          0.02468204027054402,
+          0.035345664354246464,
+          0.0021692492981191525
+        ]
+      },
+      "selected_wrist_roll_deg": 0.0,
+      "action_selection": {
+        "ground_truth_usage": "none",
+        "selected_candidate_index": 20,
+        "selected_wrist_pitch_deg": 60.0,
+        "selected_wrist_roll_deg": -30.0,
+        "selected_minimum_clearance_m": 0.01,
+        "selection_metrics": {
+          "index": 1,
+          "data_rank": 3,
+          "design_condition_number": 20.960451452372382,
+          "logdet_information": 31.34363653710021,
+          "movement_cost": 4.9177910350837655
+        },
+        "predicted_gravity_torque_nm": 1.9427040251423708,
+        "predicted_joint_excitation_torque_nm": 3.716343799982445,
+        "joint_excitation_per_grasp_torque": 1.912974777364809,
+        "rejected_candidates": [
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 0.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "sweep_direction"
+          },
+          {
+            "wrist_pitch_deg": 15.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "hold_excitation_axis"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "new_pose_required"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": 15.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": -30.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": -15.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": 0.0,
+            "reason": "clearance:contact_custom_3_link::link3/contact_custom_3_link::Mesh <-> contact_custom_3_link::link5/contact_custom_3_link::Mesh"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": 30.0,
+            "reason": "clearance:contact_custom_3_link::link2/contact_custom_3_link::Mesh <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_base_collision"
+          }
+        ]
+      }
+    },
+    {
+      "step": 7,
+      "selected_wrist_pitch_deg": 60.0,
+      "three_camera_foundationpose_filter": {
+        "source": "filtered_foundationpose_simulation_with_gt_first_mask",
+        "per_camera": {
+          "cam_d435i_left": {
+            "opening_deg": 32.56741776180317,
+            "parent_inliers": 27,
+            "child_inliers": 27
+          },
+          "cam_d435i_right": {
+            "opening_deg": 32.2820931225026,
+            "parent_inliers": 27,
+            "child_inliers": 27
+          },
+          "cam_d456_front": {
+            "opening_deg": 32.28631005589048,
+            "parent_inliers": 29,
+            "child_inliers": 29
+          }
+        },
+        "consensus_frame_count": 3,
+        "fused_opening_deg": 32.26164850814348,
+        "fused_opening_angles_deg": [
+          32.26164850814348,
+          0.035904797018531553
+        ],
+        "stationary": true,
+        "all_links_visible": true
+      },
+      "aft200_filtered_loaded_wrench": [
+        -1.0500000000000065,
+        -22.200000000000095,
+        -20.54999999999995,
+        3.0299999999999776,
+        -0.9750000000000087,
+        0.8999999999999925
+      ],
+      "aft200_empty_tool_tare_wrench": [
+        -0.5807481115962668,
+        -11.792263245393826,
+        -10.871099192678189,
+        0.5976307961230135,
+        -0.028011729525903993,
+        -0.0015408989243571962
+      ],
+      "aft200_contact_object_wrench": [
+        -0.46925188840373966,
+        -10.407736754606269,
+        -9.678900807321762,
+        2.432369203876964,
+        -0.9469882704741047,
+        0.9015408989243496
+      ],
+      "accepted": true,
+      "contact_gate": {
+        "grasp_translation_drift_m": 0.0023706940239033632,
+        "grasp_rotation_drift_deg": 2.6159504014719546,
+        "grasp_stable": true,
+        "physical_safe": true,
+        "normalized_innovation_rms": 0.3460558723187355,
+        "measurement_consistent": true,
+        "fit_residual_force_norm_n": 0.07699595089863075,
+        "fit_residual_torque_norm_nm": 0.008085838049628955,
+        "opening_angle_span_deg": [
+          0.053903267384576736,
+          1.9834429006149947e-10
+        ],
+        "actual_opening_angles_deg": [
+          32.227642824041574,
+          -1.0710063674333807e-06
+        ],
+        "maximum_abs_joint_velocity_deg_s": [
+          0.10849896383586231,
+          3.9981790907207036e-10
+        ],
+        "maximum_abs_joint_acceleration_deg_s2": [
+          0.0019225905070197058,
+          1.3288762459590863e-11
+        ],
+        "joints_stationary": true,
+        "parent_lift_m": 0.24165016329002786,
+        "final_contact_count": 3
+      },
+      "estimate": {
+        "part_mass_kg": [
+          0.3953200448963071,
+          0.25400090680490894,
+          0.800908535205682
+        ],
+        "part_mass_95_interval_kg": [
+          [
+            0.16928448093443604,
+            0.5780172334646494
+          ],
+          [
+            0.1,
+            0.44305225855523356
+          ],
+          [
+            0.7704092910179976,
+            0.8352028889560523
+          ]
+        ],
+        "part_density_kg_m3": [
+          806.7756018291981,
+          652.7488771086641,
+          381.3850167646104
+        ],
+        "part_density_95_interval_kg_m3": [
+          [
+            352.176447659411,
+            1171.185681640743
+          ],
+          [
+            256.18885031624995,
+            1145.1856625143516
+          ],
+          [
+            360.7927736516457,
+            401.49041344787895
+          ]
+        ]
+      },
+      "uncertainty_stop": {
+        "data_rank": 3,
+        "design_condition_number": 17.914043789630014,
+        "mass_change_from_previous": 0.01903737015933842,
+        "relative_95_half_width": [
+          0.5169643657171804,
+          0.6752973106877971,
+          0.04045006083086319
+        ],
+        "maximum_relative_95_half_width": 0.6752973106877971,
+        "density_relative_95_half_width": [
+          0.5075818059720675,
+          0.6809638770547506,
+          0.053355058546193115
+        ],
+        "maximum_robust_relative_95_half_width": 0.6809638770547506,
+        "target_relative_95_half_width": 0.06,
+        "target_met": false,
+        "minimum_mass_boundary_active": false,
+        "total_mass_feasible": true,
+        "joint_excitation_range_deg": [
+          87.73835149185652,
+          0.05049491531872263
+        ],
+        "minimum_joint_excitation_deg": 10.0,
+        "internal_joints_excited": false
+      },
+      "evaluator_only": {
+        "true_part_mass_kg": [
+          0.4,
+          0.25,
+          0.8
+        ],
+        "mass_relative_error": [
+          0.011699887759232253,
+          0.016003627219635774,
+          0.00113566900710238
+        ]
+      },
+      "selected_wrist_roll_deg": -30.0,
+      "action_selection": {
+        "ground_truth_usage": "none",
+        "selected_candidate_index": null,
+        "rejected_candidates": [
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -60.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -45.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -30.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": -15.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 30.0,
+            "wrist_roll_deg": 0.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": -60.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": -45.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": -30.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": -15.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 45.0,
+            "wrist_roll_deg": 0.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 60.0,
+            "wrist_roll_deg": -60.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 60.0,
+            "wrist_roll_deg": -45.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 60.0,
+            "wrist_roll_deg": -30.0,
+            "safe_path": true,
+            "predicted_gravity_torque_nm": 2.7680851514560847,
+            "predicted_joint_excitation_torque_nm": 2.7254511988438965,
+            "movement_cost": 0.0,
+            "reason": "new_pose_required"
+          },
+          {
+            "wrist_pitch_deg": 60.0,
+            "wrist_roll_deg": -15.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 60.0,
+            "wrist_roll_deg": 0.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 75.0,
+            "wrist_roll_deg": -60.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 75.0,
+            "wrist_roll_deg": -45.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 75.0,
+            "wrist_roll_deg": -30.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 75.0,
+            "wrist_roll_deg": -15.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 75.0,
+            "wrist_roll_deg": 0.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 90.0,
+            "wrist_roll_deg": -60.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 90.0,
+            "wrist_roll_deg": -45.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 90.0,
+            "wrist_roll_deg": -30.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 90.0,
+            "wrist_roll_deg": -15.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          },
+          {
+            "wrist_pitch_deg": 90.0,
+            "wrist_roll_deg": 0.0,
+            "safe_path": false,
+            "predicted_gravity_torque_nm": null,
+            "predicted_joint_excitation_torque_nm": null,
+            "movement_cost": null,
+            "reason": "clearance:contact_custom_3_link_pgc::base_link/contact_custom_3_link_pgc::contact_custom_3_link_pgc_base_collision <-> desk_lamp_base_model::desk_lamp_base/desk_lamp_base_model::desk_lamp_hinge_pedestal_collision"
+          }
+        ]
+      }
+    }
+  ],
+  "final": {
+    "part_mass_kg": [
+      0.3953200448963071,
+      0.25400090680490894,
+      0.800908535205682
+    ],
+    "part_mass_95_interval_kg": [
+      [
+        0.16928448093443604,
+        0.5780172334646494
+      ],
+      [
+        0.1,
+        0.44305225855523356
+      ],
+      [
+        0.7704092910179976,
+        0.8352028889560523
+      ]
+    ],
+    "part_density_kg_m3": [
+      806.7756018291981,
+      652.7488771086641,
+      381.3850167646104
+    ],
+    "part_density_95_interval_kg_m3": [
+      [
+        352.176447659411,
+        1171.185681640743
+      ],
+      [
+        256.18885031624995,
+        1145.1856625143516
+      ],
+      [
+        360.7927736516457,
+        401.49041344787895
+      ]
+    ]
+  },
+  "termination": {
+    "reason": "insufficient_internal_joint_excitation",
+    "next_action": "safe_stop_without_regrasp",
+    "evaluated_pose_count": 7,
+    "controller_stop_after_pose": 7,
+    "maximum_candidate_pose_count": 12,
+    "physical_trajectory": "single_grasp_without_reset",
+    "data_rank": 3,
+    "design_condition_number": 17.914043789630014,
+    "mass_change_from_previous": 0.01903737015933842,
+    "relative_95_half_width": [
+      0.5169643657171804,
+      0.6752973106877971,
+      0.04045006083086319
+    ],
+    "maximum_relative_95_half_width": 0.6752973106877971,
+    "density_relative_95_half_width": [
+      0.5075818059720675,
+      0.6809638770547506,
+      0.053355058546193115
+    ],
+    "maximum_robust_relative_95_half_width": 0.6809638770547506,
+    "target_relative_95_half_width": 0.06,
+    "target_met": false,
+    "minimum_mass_boundary_active": false,
+    "total_mass_feasible": true,
+    "joint_excitation_range_deg": [
+      87.73835149185652,
+      0.05049491531872263
+    ],
+    "minimum_joint_excitation_deg": 10.0,
+    "internal_joints_excited": false
+  },
+  "validation": {
+    "passed": false,
+    "criterion": "single grasp, safe paths, full rank, condition <= 50, <= 6.0% relative 95% mass/density half-width under declared systematic errors, every internal joint excited by at least 10 deg, mass convergence, and feasible masses"
+  },
+  "uncertainty_estimator": {
+    "method": "400 AFT200 block/residual refits with run-constant F/T bias, joint-angle bias, body-frame COM offsets, and volume-scale perturbations",
+    "relative_95_half_width_equation": "u_j=(q97.5(m_j)-q2.5(m_j))/(2*m_hat_j)"
+  },
+  "evaluator_only_ground_truth": {
+    "part_mass_kg": [
+      0.4,
+      0.25,
+      0.8
+    ],
+    "part_density_kg_m3": [
+      816.3265306122448,
+      642.46707356248,
+      380.9523809523809
+    ],
+    "mass_relative_error": [
+      0.011699887759232253,
+      0.016003627219635774,
+      0.00113566900710238
+    ]
+  }
+}

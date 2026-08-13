@@ -1,0 +1,24 @@
+{
+  "schema": "desk-lamp-foundationpose-gpu-summary-v1",
+  "object_profile": "desk_lamp",
+  "initialization": "first-frame masks then track_one",
+  "camera_count": 3,
+  "link_count": 3,
+  "capture_rate_hz": 20.0,
+  "frame_count": 1223,
+  "capture_duration_s": 62.6,
+  "first_frame_angle_errors_deg": [
+    -2.53985479858261,
+    2.9122572417202264
+  ],
+  "angle_mae_deg": 1.7360939306039385,
+  "angle_p95_deg": 3.7577339732395245,
+  "angle_max_deg": 5.580434872583709,
+  "tracking_fps": 8.829325374642755,
+  "safe_hold_request_count": 9,
+  "re_registration_count": 17,
+  "stationary_hold_count": 3,
+  "visible_hold_count": 3,
+  "pass_criterion": "angle P95 <= 5 deg and every static hold stationary with every link visible in at least two cameras",
+  "passed": true
+}

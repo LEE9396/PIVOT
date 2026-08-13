@@ -1,0 +1,22 @@
+# Python 3.12 / Ubuntu 22.04 lock for the HTD + payload-ID Drake baseline.
+# Create Python with:
+#   conda create --prefix .venv-drake-1.54-py312 python=3.12 pip -y
+# Recreate with: ./scripts/run_drake_env.sh python -m pip install -r requirements/drake.txt
+contourpy==1.3.3
+cycler==0.12.1
+drake==1.54.0
+fonttools==4.63.0
+kiwisolver==1.5.0
+matplotlib==3.11.0
+Mosek==11.1.2
+numpy==2.5.1
+packaging==26.0
+pillow==12.3.0
+pydot==4.0.1
+pyparsing==3.3.2
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+scipy==1.18.0
+setuptools==83.0.0
+six==1.17.0
+wheel==0.47.0

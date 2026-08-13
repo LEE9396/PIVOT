@@ -1,0 +1,88 @@
+{
+  "asset": "/home/cheon/drake_validation_test/robot_learning/assets/phantom_v3/phantom_v3.urdf",
+  "root_link_role": "grasped_root_not_heavy_base",
+  "authored_link_masses_kg": [
+    0.4,
+    0.33,
+    0.27
+  ],
+  "total_mass_kg": 1.0,
+  "pass": true,
+  "cases": [
+    {
+      "name": "tilt_a",
+      "initial_deg": [
+        75.0,
+        -55.0
+      ],
+      "final_deg": [
+        133.00000222126363,
+        97.1435579955547
+      ],
+      "motion_range_deg": [
+        58.00000222126363,
+        153.3709163137786
+      ],
+      "final_window_range_deg": [
+        1.0231815394945443e-12,
+        0.0
+      ],
+      "final_window_max_rate_rad_s": [
+        8.899814200483289e-12,
+        1.078679487341872e-13
+      ],
+      "maximum_penetration_m": 0.0,
+      "passed": true
+    },
+    {
+      "name": "tilt_b",
+      "initial_deg": [
+        -70.0,
+        50.0
+      ],
+      "final_deg": [
+        47.983315933066095,
+        41.643245274822185
+      ],
+      "motion_range_deg": [
+        151.3922242519808,
+        27.90826966611175
+      ],
+      "final_window_range_deg": [
+        1.05575068687358e-08,
+        2.987832203871221e-11
+      ],
+      "final_window_max_rate_rad_s": [
+        1.3527636063721175e-09,
+        2.5973470063870762e-12
+      ],
+      "maximum_penetration_m": 0.0,
+      "passed": true
+    },
+    {
+      "name": "tilt_c",
+      "initial_deg": [
+        0.0,
+        0.0
+      ],
+      "final_deg": [
+        -71.97197539435254,
+        33.72656682054336
+      ],
+      "motion_range_deg": [
+        102.87949335658477,
+        33.72657633735401
+      ],
+      "final_window_range_deg": [
+        2.8857840561613557e-08,
+        3.920774815924233e-11
+      ],
+      "final_window_max_rate_rad_s": [
+        1.9953693068844543e-09,
+        4.294335550992985e-12
+      ],
+      "maximum_penetration_m": 0.0,
+      "passed": true
+    }
+  ]
+}

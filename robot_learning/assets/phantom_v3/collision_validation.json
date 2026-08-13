@@ -1,0 +1,14 @@
+{
+  "joint_angle_bounds_deg": [
+    [-133.0, 133.0],
+    [-147.0, 149.0]
+  ],
+  "adjacent_step_deg": 1,
+  "combined_step_deg": 5,
+  "maximum_intersection_volume_mm3": {
+    "joint1_mm3": 0.0,
+    "joint2_mm3": 0.0,
+    "root_tip_mm3": 0.0
+  },
+  "passed": true
+}

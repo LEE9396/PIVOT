@@ -1,0 +1,65 @@
+{
+  "schema": "desk-lamp-random-mass-grasp-robustness-v1",
+  "seed": 20260803,
+  "constraints": {
+    "total_mass_kg": [1.0, 3.0],
+    "base_mass_rule": "m_base >= m_link2 + m_link3",
+    "joint_limits_deg": [120.0, 90.0],
+    "initial_opening_angles_deg": [120.0, 0.0]
+  },
+  "grasp": {
+    "part": "link2",
+    "pgc_controller_kp": 6000.0,
+    "free_hinges": true
+  },
+  "trials": [
+    {
+      "part_masses_kg_link2_link3_base": [0.3066, 0.2636, 1.9372],
+      "total_mass_kg": 2.5074,
+      "base_margin_kg": 1.3670,
+      "lift_m": 0.3401,
+      "passed": true
+    },
+    {
+      "part_masses_kg_link2_link3_base": [0.0900, 0.5749, 1.9631],
+      "total_mass_kg": 2.6280,
+      "base_margin_kg": 1.2982,
+      "lift_m": 0.3395,
+      "passed": true
+    },
+    {
+      "part_masses_kg_link2_link3_base": [0.1400, 0.0679, 2.0859],
+      "total_mass_kg": 2.2939,
+      "base_margin_kg": 1.8780,
+      "lift_m": 0.3403,
+      "passed": true
+    },
+    {
+      "part_masses_kg_link2_link3_base": [0.0117, 0.1684, 0.9319],
+      "total_mass_kg": 1.1120,
+      "base_margin_kg": 0.7518,
+      "lift_m": 0.3452,
+      "passed": true
+    },
+    {
+      "part_masses_kg_link2_link3_base": [0.4459, 0.3827, 1.1217],
+      "total_mass_kg": 1.9503,
+      "base_margin_kg": 0.2931,
+      "lift_m": 0.3421,
+      "passed": true
+    },
+    {
+      "part_masses_kg_link2_link3_base": [0.3824, 0.3658, 0.8095],
+      "total_mass_kg": 1.5577,
+      "base_margin_kg": 0.0613,
+      "lift_m": 0.3435,
+      "passed": true
+    }
+  ],
+  "summary": {
+    "passed_trials": 6,
+    "total_trials": 6,
+    "minimum_lift_m": 0.3395,
+    "maximum_lift_m": 0.3452
+  }
+}

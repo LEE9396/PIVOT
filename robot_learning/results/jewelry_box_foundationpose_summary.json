@@ -1,0 +1,23 @@
+{
+  "schema": "jewelry-box-foundationpose-gpu-summary-v1",
+  "object_profile": "jewelry_box",
+  "initialization": "first-frame masks then track_one",
+  "camera_count": 3,
+  "link_count": 2,
+  "capture_rate_hz": 5.0,
+  "frame_count": 187,
+  "capture_duration_s": 38.6,
+  "first_frame_angle_errors_deg": [
+    0.4726960889118459
+  ],
+  "angle_mae_deg": 0.10957146346543913,
+  "angle_p95_deg": 0.6791588968193648,
+  "angle_max_deg": 1.509159192134689,
+  "tracking_fps": 13.116927447051339,
+  "safe_hold_request_count": 1,
+  "re_registration_count": 2,
+  "stationary_hold_count": 3,
+  "visible_hold_count": 3,
+  "pass_criterion": "angle P95 <= 5 deg and every static hold stationary with every link visible in at least two cameras",
+  "passed": true
+}
