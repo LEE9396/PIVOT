@@ -14,7 +14,7 @@ robot_scene.py 가 미리 계산해 둔 계획(JSON)을 받아 라운드마다 �
 시작되지 않는다.
 
 실행:
-    cd ~/Desktop/HTD-main/my_work
+    cd ~/Desktop/PIVOT/my_work
     # 먼저 계획을 만든다
     ../robot_learning/scripts/run_drake_env.sh python robot_scene.py \
         --object 3link --joint-range-deg 20 150 --hinge-torque 0.5 \

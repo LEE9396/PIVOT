@@ -10,7 +10,7 @@
 알고리즘이 실제로 하는 선택과 같다.
 
 실행:
-    cd ~/Desktop/HTD-main/my_work
+    cd ~/Desktop/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python explore_view.py --object 3link
     ../robot_learning/scripts/run_drake_env.sh python explore_view.py --object 2link
 """

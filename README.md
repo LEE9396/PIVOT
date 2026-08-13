@@ -25,8 +25,8 @@ URDF 를 내놓는 연구 코드입니다.
 ## 빨리 시작하기
 
 ```bash
-git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/HTD-main
-cd ~/Desktop/HTD-main
+git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT
+cd ~/Desktop/PIVOT
 ./setup/bootstrap.sh                    # 파이썬 3.12 + Drake 1.54 + 자가 진단
 
 cd my_work
@@ -92,8 +92,23 @@ docs/, progress/  이전 검증 기록
 
 ---
 
-## 비공개로 두세요
+## 제3자 자산에 대하여
 
-`third_party/HTD/THIRD_PARTY_ASSETS.md` 가 PGC-140-50 과 AFT200 자산에 대해
-"연구 수령자 밖으로 넘기기 전에 재배포 허락을 확인하라"고 적어 두었습니다.
-이 저장소는 **비공개(private)** 로 유지하고, 팀원 초대로만 공유하세요.
+`third_party/` 아래 파일들은 이 연구의 산물이 아니라 원저작자의 것입니다.
+출처와 라이선스는 [third_party/HTD/THIRD_PARTY_ASSETS.md](third_party/HTD/THIRD_PARTY_ASSETS.md)
+에 정리돼 있습니다.
+
+| 자산 | 출처 | 라이선스 |
+| --- | --- | --- |
+| RB5-850E (`rbpodo_description`) | Rainbow Robotics | Apache-2.0 |
+| Robotiq 2F-85 | [a-price/robotiq_arg85_description](https://github.com/a-price/robotiq_arg85_description) | 상단 저장소 참조 |
+| DH PGC-140-50 | DH-Robotics `dh_gripper_ros` | 원본에 라이선스 파일 없음 |
+| AIDIN AFT200-D80-C | AIDIN 공식 STEP 모델의 시각화 파생물 | 별도 CAD 배포 라이선스 확인 안 됨 |
+
+뒤 두 항목은 재배포 허락이 확인되지 않은 상태입니다. 원저작자의 요청이 있으면
+해당 파일을 내리겠습니다. 이 저장소를 쓰실 때 그 자산을 상업적으로 재배포하지
+마시고, 필요하면 원저작자에게 직접 받으세요.
+
+## 인용·문의
+
+연구 관련 문의는 이슈로 남겨 주세요. 코드는 연구용으로 자유롭게 참고하셔도 됩니다.

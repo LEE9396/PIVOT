@@ -33,8 +33,8 @@
 ## 1. 받기
 
 ```bash
-git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/HTD-main
-cd ~/Desktop/HTD-main
+git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT
+cd ~/Desktop/PIVOT
 ```
 
 폴더 이름은 아무거나 좋습니다. 코드가 자기 위치를 스스로 찾습니다.

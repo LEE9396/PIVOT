@@ -123,7 +123,7 @@ Drake가 물체의 총질량과 무게중심에서 정확한 힘·토크를 계�
 ### 실행
 
 ```bash
-cd ~/Desktop/HTD-main/my_work
+cd ~/Desktop/PIVOT/my_work
 R=../robot_learning/scripts/run_drake_env.sh
 
 # 데스크 램프 (스캔 메시)
@@ -469,7 +469,7 @@ desklamp   robotiq2f85     27.4mm   78mm     20/25     52.6s
 ## 5. 명령 모음
 
 ```bash
-cd ~/Desktop/HTD-main/my_work
+cd ~/Desktop/PIVOT/my_work
 R=../robot_learning/scripts/run_drake_env.sh
 ```
 

@@ -11,7 +11,7 @@
   - 버튼      "카메라 시점으로 보기" 를 누르면 화면이 D456 위치로 이동
 
 실행:
-    cd ~/Desktop/HTD-main/my_work
+    cd ~/Desktop/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python lab_view.py \
         --plan plan_3link.json
     # 계획 없이 배치만 보려면

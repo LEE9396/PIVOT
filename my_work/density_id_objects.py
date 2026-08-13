@@ -23,7 +23,7 @@ density_id_drake.py의 추정기(S1~S6)를 **그대로** 재사용하고, 대상
 각 part의 무게중심은 외형 도심에 놓인다.
 
 실행:
-    cd ~/Desktop/HTD-main/my_work
+    cd ~/Desktop/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python density_id_objects.py
     ../robot_learning/scripts/run_drake_env.sh python density_id_objects.py --render
 """

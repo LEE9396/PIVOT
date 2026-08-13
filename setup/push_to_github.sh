@@ -6,11 +6,11 @@
 #
 # 미리 해야 할 것 (사람이 직접, 한 번만):
 #   gh auth login          -> GitHub.com / HTTPS / 브라우저 로그인
-#                             (Chrome 에 junhyeok40@gmail.com 으로 로그인돼 있으면
-#                              화면에 뜨는 8자리 코드만 붙여 넣으면 됩니다)
+#                             (브라우저에 로그인돼 있으면 화면에 뜨는
+#                              8자리 코드만 붙여 넣으면 됩니다)
 #
-# 비공개로 만드는 이유는 third_party/HTD/THIRD_PARTY_ASSETS.md 에 있습니다.
-# PGC·AFT200 자산은 재배포 허락이 확인되지 않았습니다.
+# 처음에는 비공개로 만든다. 공개로 돌리려면 만든 뒤에
+#   gh repo edit <계정>/<이름> --visibility public --accept-visibility-change-consequences
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -66,5 +66,5 @@ echo "팀원 초대 (아이디를 넣으세요):"
 echo "    ${gh_bin} repo add-collaborator ${account}/${name} <팀원_깃허브_아이디> --permission push"
 echo
 echo "팀원 쪽에서 할 일:"
-echo "    git clone https://github.com/${account}/${name}.git ~/Desktop/HTD-main"
-echo "    cd ~/Desktop/HTD-main && ./setup/bootstrap.sh"
+echo "    git clone https://github.com/${account}/${name}.git ~/Desktop/PIVOT"
+echo "    cd ~/Desktop/PIVOT && ./setup/bootstrap.sh"

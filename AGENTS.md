@@ -7,7 +7,7 @@ AI 는 이 파일만 읽고 끝까지 갈 수 있어야 합니다.
 사람이 할 일은 이 두 줄이 전부입니다.
 
 ```bash
-git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/HTD-main && cd ~/Desktop/HTD-main
+git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT && cd ~/Desktop/PIVOT
 # 그 다음 AI 에게: "AGENTS.md 를 읽고 이 PC 에 환경을 구성해 줘"
 ```
 
@@ -134,6 +134,5 @@ my_work/
 - Drake 버전 올리기
 - `third_party/` 안을 고치기 (원본 자산입니다. 고칠 일이 있으면 `my_work/` 에서 감싸세요)
 - `assets/desk_lamp_minimal_sim/` 안을 고치기 (협업자가 준 스캔 배달물입니다)
-- 이 저장소를 **공개**로 바꾸기 — `third_party/HTD/THIRD_PARTY_ASSETS.md` 가
-  PGC·AFT200 자산에 대해 "연구 수령자 밖으로 넘기기 전 허락을 확인하라"고
-  적어 두었습니다. 비공개로 두세요.
+- `third_party/` 안의 자산을 다른 곳에 퍼 나르기 — 원저작자 것이고 일부는
+  재배포 라이선스가 확인되지 않았습니다 (`third_party/HTD/THIRD_PARTY_ASSETS.md`).

@@ -13,7 +13,7 @@ ROS1 토픽으로 바꿔 끼우면 오른쪽 화면이 그대로 실물 로봇�
     planner <--- measurement ---------- robot        (렌치 측정값)
 
 실행:
-    cd ~/Desktop/HTD-main/my_work
+    cd ~/Desktop/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python dual_view.py \
         --object 3link --joint-range-deg 20 150 --hinge-torque 0.5 --auto-scale
 

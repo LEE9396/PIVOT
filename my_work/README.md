@@ -48,7 +48,7 @@ Drake를 처음 쓰는 사람이 그대로 따라 할 수 있도록 정리한 �
 `Ctrl + Alt + T`로 터미널을 연 다음:
 
 ```bash
-cd ~/Desktop/HTD-main/my_work
+cd ~/Desktop/PIVOT/my_work
 ```
 
 VSCode를 쓰신다면 상단 메뉴의 `Terminal > New Terminal`로 열어도 됩니다.
@@ -216,7 +216,7 @@ xdg-open frames/
 → `run_drake_env.sh` 없이 그냥 `python`으로 실행했습니다. 1단계부터 다시 하세요.
 
 **`No such file or directory: ../robot_learning/scripts/run_drake_env.sh`**
-→ 폴더 위치가 틀렸습니다. `cd ~/Desktop/HTD-main/my_work`를 먼저 실행하세요.
+→ 폴더 위치가 틀렸습니다. `cd ~/Desktop/PIVOT/my_work`를 먼저 실행하세요.
 
 **브라우저에 아무것도 안 뜸**
 → 뷰어가 아직 실행 중인지 확인하세요. 터미널에서 프로그램이 끝나면 Meshcat 주소도 닫힙니다.
@@ -229,7 +229,7 @@ xdg-open frames/
 ## 8. 한눈에 보는 요약
 
 ```bash
-cd ~/Desktop/HTD-main/my_work
+cd ~/Desktop/PIVOT/my_work
 
 # 알고리즘 실행 (숫자 결과 + convergence.png)
 ../robot_learning/scripts/run_drake_env.sh python density_id_drake.py
@@ -534,7 +534,7 @@ Meshcat에서 볼 수 있는 것:
 스위치는 `dual_view.py` 와 `export_urdf.py` 양쪽에서 똑같이 씁니다.
 
 ```bash
-cd ~/Desktop/HTD-main/my_work
+cd ~/Desktop/PIVOT/my_work
 R=../robot_learning/scripts/run_drake_env.sh
 
 $R python study_continuous.py            # 격자 vs 연속 최적화
@@ -926,7 +926,7 @@ D 는 모든 방향을 한꺼번에 봐서 그 함정에 안 빠집니다.
 ## 8. 직접 돌려 보기
 
 ```bash
-cd ~/Desktop/HTD-main/my_work
+cd ~/Desktop/PIVOT/my_work
 R=../robot_learning/scripts/run_drake_env.sh
 ```
 

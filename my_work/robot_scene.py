@@ -17,7 +17,7 @@ configs/experiments/icra_realistic_lab_scene_v1.json 값을 그대로 쓴다.
 기하 출처: third_party/HTD (RB5-850E URDF, PGC-140-50 URDF, AFT200 치수)
 
 실행:
-    cd ~/Desktop/HTD-main/my_work
+    cd ~/Desktop/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python robot_scene.py --object 3link
 """
 

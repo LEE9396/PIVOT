@@ -495,7 +495,7 @@ flowchart TD
 ## 14. 실행법
 
 ```bash
-cd ~/Desktop/HTD-main/my_work
+cd ~/Desktop/PIVOT/my_work
 ```
 
 **로봇 없이 숫자만** (20초, 조작 없음)

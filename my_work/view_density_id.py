@@ -5,7 +5,7 @@
   --render    PNG로 저장. 브라우저 없이 확인 (frames/ 폴더)
 
 실행:
-    cd ~/Desktop/HTD-main/my_work
+    cd ~/Desktop/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python view_density_id.py --live
     ../robot_learning/scripts/run_drake_env.sh python view_density_id.py --render
 """
