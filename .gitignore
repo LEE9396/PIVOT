@@ -27,3 +27,6 @@ third_party/HTD/assets/d435i/
 third_party/HTD/assets/drake/d435_visual.obj
 third_party/HTD/assets/rbpodo_description/meshes/
 third_party/robotiq_arg85_description/images/
+
+# 캘리브레이션 값은 PC마다 다르다. 공유하면 안 된다 (calibration/README.md)
+calibration/*.json

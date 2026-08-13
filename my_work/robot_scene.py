@@ -102,7 +102,90 @@ CAMERA_ID = "cam_d456_front"
 CAMERAS = [c for c in _LAB["cameras"] if c["id"] == CAMERA_ID]
 if not CAMERAS:
     raise RuntimeError(f"{CAMERA_ID} 를 실험실 설정에서 찾지 못했다")
-CAMERA = CAMERAS[0]
+
+# 카메라 자세는 두 출처가 있다.
+#
+#   설정값   icra_realistic_lab_scene_v1.json 의 명목 위치. 도면상의 값이다.
+#   실측값   실제로 손-눈 캘리브레이션을 한 뒤 나온 값.
+#
+# 각도 측정 자세는 **카메라가 어디서 보느냐**로 정해지므로, 캘리브레이션을
+# 했으면 반드시 그 값을 써야 한다. 명목 위치로 계산한 자세는 실제 카메라
+# 기준으로는 최적이 아니고, 심하면 물체가 화면 밖으로 나간다.
+# 카메라는 장애물이기도 해서 충돌 판정도 같이 달라진다.
+#
+# 파일 위치는 이 순서로 찾는다.
+#   1) 환경변수 CAMERA_CALIBRATION
+#   2) calibration/camera_<id>.json   <- 캘리브레이션 결과를 여기에 둔다
+#   3) 없으면 설정값 (그리고 그렇다고 알려 준다)
+CALIBRATION_DIR = WORKSPACE / "calibration"
+
+
+def calibration_path(camera_id=CAMERA_ID):
+    import os
+    override = os.environ.get("CAMERA_CALIBRATION")
+    return Path(override) if override else (CALIBRATION_DIR
+                                            / f"camera_{camera_id}.json")
+
+
+def load_camera(camera_id=CAMERA_ID, path=None, announce=False):
+    """카메라 정보를 돌려준다. 캘리브레이션 파일이 있으면 그것이 이긴다.
+
+    파일 형식 (calibration/camera_cam_d456_front.json):
+
+        {"id": "cam_d456_front",
+         "X_WC": [[...4x4 행렬...]],          # 월드 <- 카메라 (Drake 규약)
+         "depth_intrinsics": {"fx":..., "fy":..., "cx":..., "cy":...},
+         "resolution": [1280, 720],
+         "calibrated_at": "2026-08-14", "rms_px": 0.31, "method": "..."}
+
+    X_WC 대신 position_xyz_m + look_at_xyz_m 만 적어도 된다 (대충 맞출 때).
+    Drake 카메라 규약은 z 가 전방, y 가 아래다 — look_at_pose 가 그렇게 만든다.
+    """
+    import json
+
+    base = dict(next(c for c in _LAB["cameras"] if c["id"] == camera_id))
+    base["source"] = "설정값 (명목 위치)"
+    path = Path(path) if path else calibration_path(camera_id)
+    if not path.is_file():
+        if announce:
+            print(f"  카메라: {base['source']} — 캘리브레이션 파일이 없습니다"
+                  f" ({path})")
+        return base
+    data = json.loads(path.read_text())
+    base.update({k: v for k, v in data.items() if k != "source"})
+    base["source"] = f"캘리브레이션 {path.name}"
+    if announce:
+        stamp = data.get("calibrated_at", "날짜 없음")
+        rms = data.get("rms_px")
+        print(f"  카메라: {base['source']} ({stamp}"
+              + (f", 잔차 {rms:.2f} px)" if rms is not None else ")"))
+    return base
+
+
+def camera_pose(camera):
+    """카메라의 월드 자세 X_WC. 캘리브레이션 행렬이 있으면 그것을 쓴다."""
+    matrix = camera.get("X_WC")
+    if matrix is not None:
+        matrix = np.asarray(matrix, dtype=float)
+        return RigidTransform(RotationMatrix(matrix[:3, :3]), matrix[:3, 3])
+    return look_at_pose(camera["position_xyz_m"], camera["look_at_xyz_m"])
+
+
+def save_calibration(X_WC, camera_id=CAMERA_ID, path=None, **extra):
+    """캘리브레이션 결과를 파일로 남긴다. 실물 절차에서 이걸 부르면 된다."""
+    import json
+
+    path = Path(path) if path else calibration_path(camera_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    matrix = np.eye(4)
+    matrix[:3, :3] = X_WC.rotation().matrix()
+    matrix[:3, 3] = X_WC.translation()
+    payload = dict(id=camera_id, X_WC=matrix.tolist(), **extra)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+    return path
+
+
+CAMERA = load_camera()
 CAMERA_BODY_SIZE_M = (0.124, 0.026, 0.029)   # D456 외형 (124 x 26 x 29 mm)
 CAMERA_MOUNT_RADIUS_M = 0.016                # 지지대 봉
 
@@ -293,10 +376,11 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
                 [0.30, 0.31, 0.33, 1.0])
 
     # 카메라 본체와 지지봉. 팔이 여기에 닿으면 안 되므로 충돌 대상이다.
-    for camera in CAMERAS:
-        position = np.array(camera["position_xyz_m"])
-        target = np.array(camera["look_at_xyz_m"])
-        pose = look_at_pose(position, target)
+    # 캘리브레이션을 했으면 **실측 자세**로 세운다. 명목 위치로 세워 두면
+    # 실제로는 부딪히는 자세를 통과시키게 된다.
+    for camera in ([CAMERA] if CAMERA["id"] == CAMERA_ID else CAMERAS):
+        pose = camera_pose(camera)
+        position = pose.translation()
         add_fixture(camera["id"], Box(*CAMERA_BODY_SIZE_M), pose,
                     [0.12, 0.13, 0.15, 1.0])
         # 바닥에서 카메라까지 올라오는 지지봉
@@ -390,6 +474,7 @@ class PoseChecker:
         self.plant = scene["plant"]
         self.arm = scene["arm"]
         self.gripper = scene["gripper"]
+        self.payload = scene["payload"]
         self.sensor_frame = scene["sensor_frame"]
         self.min_distance_m = min_distance_m
         # 최소거리 제약은 SceneGraph 질의가 필요하므로 diagram 을 완성한 뒤
@@ -479,6 +564,46 @@ class PoseChecker:
         """제시 위치를 지정해서 푸는 변형. 시작 자세를 찾을 때 쓴다."""
         box = (np.array(position) - tol_m, np.array(position) + tol_m)
         return self.solve(theta, g_hat, warm_start=False, workspace=box)
+
+    def solve_oriented(self, theta, R_WS, position, tol_m=0.04,
+                       tol_rad=np.deg2rad(8.0)):
+        """물체의 **방향까지** 지정해서 푼다. 각도 관측용 자세에 쓴다.
+
+        중력 방향만 묶는 solve() 와 달리 여기서는 세 축을 다 묶는다. 관측성은
+        축이 카메라에 대해 어떻게 놓였나로 정해지므로 방향 전체가 중요하다.
+        허용 오차를 8도로 넉넉히 둔 것은, 관측성이 그 정도 어긋남에는 거의
+        변하지 않는데 (재보니 10도에 3% 안쪽) 딱 맞추려 들면 IK 가 자주
+        실패하기 때문이다. 대신 성공한 자세에서 관측성을 **다시 잰다**.
+        """
+        ik = InverseKinematics(self.plant, self.context, with_joint_limits=True)
+        prog = ik.prog()
+        q = ik.q()
+        for joint, value in zip(self.object_joints, np.atleast_1d(theta)):
+            index = joint.position_start()
+            prog.AddBoundingBoxConstraint(value, value, q[index])
+        for joint in self.finger_joints:
+            index = joint.position_start()
+            prog.AddBoundingBoxConstraint(self.finger_value, self.finger_value,
+                                          q[index])
+        ik.AddOrientationConstraint(
+            self.plant.world_frame(), RotationMatrix(np.asarray(R_WS, float)),
+            self.sensor_frame, RotationMatrix(), tol_rad)
+        ik.AddPositionConstraint(
+            self.sensor_frame, np.zeros(3), self.plant.world_frame(),
+            np.asarray(position, float) - tol_m,
+            np.asarray(position, float) + tol_m)
+        ik.AddMinimumDistanceLowerBoundConstraint(self.min_distance_m, 0.01)
+
+        guess = self.plant.GetPositions(self.context).copy()
+        for joint, value in zip(self.arm_joints, self.seed_q):
+            guess[joint.position_start()] = value
+        for joint, value in zip(self.object_joints, np.atleast_1d(theta)):
+            guess[joint.position_start()] = value
+        for joint in self.finger_joints:
+            guess[joint.position_start()] = self.finger_value
+        prog.SetInitialGuess(q, guess)
+        result = Solve(prog)
+        return result.GetSolution(q) if result.is_success() else None
 
     def arm_pose_is_clear(self, arm_q, theta):
         """팔 자세를 고정한 채 물체 관절만 바꿨을 때 충돌이 없는가.
@@ -609,6 +734,281 @@ def quasi_static_duration(plant, context, payload_joints, q_start, q_end,
         else:
             hi_s = mid
     return hi_s, True
+
+
+def _body(plant, name, model=None):
+    return (plant.GetBodyByName(name) if model is None
+            else plant.GetBodyByName(name, model))
+
+
+def _frame(plant, name, model=None):
+    return (plant.GetFrameByName(name) if model is None
+            else plant.GetFrameByName(name, model))
+
+
+def observability_px_per_deg(plant, context, spec, index, model=None,
+                             camera=CAMERA):
+    """관절 index 를 1도 돌릴 때 움직이는 부위가 화면에서 몇 화소 움직이나.
+
+    FoundationPose 는 결국 **화면에서 보이는 변화**로 자세를 맞춘다. 그러니
+    각도를 조금 돌렸을 때 그림이 거의 안 바뀌는 자세라면, 그 각도는 못 재는
+    것이다. 이 값이 그대로 각도 관측성이다.
+
+        축 a 둘레로 도는 점 p 의 속도   v = a x (p - o)
+        카메라가 보는 것은 시선에 수직인 성분뿐  -> (f/z) |v - (v.z_cam) z_cam|
+
+    축이 시선과 직각이면 회전이 화면 밖(깊이 방향)으로 나가 거의 안 보인다.
+    실제로 3-link 를 돌려가며 재보니 그 자세가 가장 나빴다 (study_startpose.py:
+    joint2 기준 0.36 px/deg vs 최대 0.99 px/deg, 2.8배).
+
+    돌려주는 값의 단위는 화소/도. 클수록 좋다.
+    """
+    joint = spec.joints[index]
+    parent = _body(plant, joint.parent, model).body_frame()
+    axis_W = (parent.CalcRotationMatrixInWorld(context).matrix()
+              @ np.asarray(joint.axis, float))
+    axis_W /= np.linalg.norm(axis_W)
+    origin_W = _frame(plant, f"{joint.name}_child", model).CalcPoseInWorld(
+        context).translation()
+
+    X_WC = camera_pose(camera)
+    R_CW = X_WC.rotation().matrix().T
+    eye = X_WC.translation()
+    focal = camera["depth_intrinsics"]["fx"]
+
+    speeds = []
+    for part in spec.parts[index + 1:]:            # 이 관절보다 아래쪽 = 움직이는 쪽
+        X_WB = _body(plant, part.name, model).body_frame().CalcPoseInWorld(
+            context)
+        half = np.array(part.bbox_mm, float) * 0.5e-3
+        for sign in np.ndindex(2, 2, 2):
+            p_W = X_WB @ (half * (np.array(sign) * 2 - 1))
+            v_C = R_CW @ np.cross(axis_W, p_W - origin_W)
+            p_C = R_CW @ (p_W - eye)
+            depth = max(float(p_C[2]), 1e-3)
+            image_v = focal * (v_C[:2] - p_C[:2] * v_C[2] / depth) / depth
+            speeds.append(float(np.linalg.norm(image_v)))
+    if not speeds:
+        return 0.0
+    return float(np.mean(speeds)) * np.pi / 180.0
+
+
+def axis_view_angle_deg(plant, context, spec, index, model=None, camera=CAMERA):
+    """관절 축과 카메라 시선이 이루는 각 [deg]. 보고용."""
+    joint = spec.joints[index]
+    parent = _body(plant, joint.parent, model).body_frame()
+    axis_W = (parent.CalcRotationMatrixInWorld(context).matrix()
+              @ np.asarray(joint.axis, float))
+    axis_W /= np.linalg.norm(axis_W)
+    origin_W = _frame(plant, f"{joint.name}_child", model).CalcPoseInWorld(
+        context).translation()
+    view = origin_W - camera_pose(camera).translation()
+    view /= np.linalg.norm(view)
+    return float(np.degrees(np.arccos(np.clip(abs(axis_W @ view), 0.0, 1.0))))
+
+
+class ViewScorer:
+    """로봇 없이 물체만 띄운 가벼운 plant. 방향 후보의 점수를 매긴다.
+
+    IK 는 한 번 푸는 데 0.2~1 초라 방향 후보 수십 개를 다 풀 수는 없다.
+    관측성은 **물체가 어떻게 놓였나** 만으로 정해지므로, 먼저 여기서 공짜로
+    점수를 매겨 순위를 내고, 위쪽 몇 개만 실제로 IK 를 풀어 본다.
+    """
+
+    def __init__(self, spec, densities=None):
+        import explore_view as ev          # 순환 참조가 없다 (ev 는 rs 를 모름)
+        if densities is None:
+            densities = obj.bind_object(spec)
+        builder = DiagramBuilder()
+        self.spec = spec
+        self.plant, self.bodies = ev.build_floating(spec, densities, builder)
+        self.diagram = builder.Build()
+        self.root = self.diagram.CreateDefaultContext()
+        self.context = self.plant.GetMyMutableContextFromRoot(self.root)
+        self.base = self.bodies[spec.parts[0].name]
+        self.offset = np.array(spec.base_bbox_center_in_sensor_mm) * MM
+
+    def place(self, R_WS, position):
+        """센서 프레임(=파지점)이 position 에 오고 방향이 R_WS 가 되도록."""
+        X_WS = RigidTransform(RotationMatrix(R_WS), np.asarray(position, float))
+        self.plant.SetFreeBodyPose(self.context, self.base,
+                                   X_WS @ RigidTransform(self.offset))
+
+    def set_theta(self, theta_rad):
+        for joint, value in zip(self.spec.joints, np.atleast_1d(theta_rad)):
+            self.plant.GetJointByName(joint.name).set_angle(self.context,
+                                                            float(value))
+
+    def score(self, R_WS, position, theta_rad, index):
+        self.place(R_WS, position)
+        self.set_theta(theta_rad)
+        return observability_px_per_deg(self.plant, self.context, self.spec,
+                                        index)
+
+    def score_group(self, R_WS, position, theta_rad, indices):
+        """묶인 관절들을 한 자세로 볼 때의 점수 = 그중 **가장 나쁜** 값.
+
+        평균을 쓰면 하나가 아주 잘 보이고 다른 하나가 안 보이는 자세가
+        뽑힐 수 있다. 우리가 원하는 것은 '둘 다 읽을 수 있는' 자세다.
+        """
+        self.place(R_WS, position)
+        self.set_theta(theta_rad)
+        return min(observability_px_per_deg(self.plant, self.context,
+                                            self.spec, index)
+                   for index in indices)
+
+    def axis_in_base(self, index, theta_rad):
+        """관절 index 의 축을 바탕 링크 좌표계로. 나란한지 비교할 때 쓴다."""
+        self.place(np.eye(3), (0.0, 0.0, 1.0))
+        self.set_theta(theta_rad)
+        joint = self.spec.joints[index]
+        R_WP = self.bodies[joint.parent].body_frame().CalcRotationMatrixInWorld(
+            self.context).matrix()
+        R_WB = self.base.body_frame().CalcRotationMatrixInWorld(
+            self.context).matrix()
+        axis = R_WB.T @ R_WP @ np.asarray(joint.axis, float)
+        return axis / np.linalg.norm(axis)
+
+
+def parallel_groups(scorer, theta_rad, tol_deg=15.0):
+    """축이 나란한 관절끼리 묶는다.
+
+    축이 나란하면 한 자세에서 두 관절이 똑같이 잘 보인다. 굳이 자세를 나눌
+    이유가 없으므로 묶어서 한 번만 간다 (이동 시간과 파지 흔들림이 준다).
+    부호는 무시한다 — 축이 반대로 향해도 회전은 같은 평면에서 일어난다.
+
+    3-link 는 joint1 이 z, joint2 가 -y 라 90도 어긋나 안 묶인다.
+    4-link 처럼 z, -y, z, -y 로 번갈아 가는 물체는 두 무리가 된다.
+    """
+    axes = [scorer.axis_in_base(index, theta_rad)
+            for index in range(len(scorer.spec.joints))]
+    threshold = np.cos(np.radians(tol_deg))
+    groups = []
+    for index, axis in enumerate(axes):
+        for group in groups:
+            if abs(float(axis @ axes[group[0]])) >= threshold:
+                group.append(index)
+                break
+        else:
+            groups.append([index])
+    return groups
+
+
+def candidate_rotations(n=48, seed=0):
+    """물체를 들 방향 후보. 균일하게 흩뿌린 회전들.
+
+    무작위지만 seed 를 고정해 매번 같은 후보를 본다. 판정이 실행할 때마다
+    달라지면 '되던 자세가 안 되는' 일이 생긴다.
+    """
+    rng = np.random.default_rng(seed)
+    out = [np.eye(3)]
+    for _ in range(n - 1):
+        # 균일 무작위 회전 (Shoemake). 축 하나만 흔들면 한쪽으로 몰린다.
+        u1, u2, u3 = rng.random(3)
+        quaternion = np.array([
+            np.sqrt(1 - u1) * np.sin(2 * np.pi * u2),
+            np.sqrt(1 - u1) * np.cos(2 * np.pi * u2),
+            np.sqrt(u1) * np.sin(2 * np.pi * u3),
+            np.sqrt(u1) * np.cos(2 * np.pi * u3)])
+        out.append(RotationMatrix(
+            _quaternion_to_rotation(quaternion)).matrix())
+    return out
+
+
+def _quaternion_to_rotation(q):
+    from pydrake.common.eigen_geometry import Quaternion
+    q = np.asarray(q, float)
+    q = q / np.linalg.norm(q)
+    return Quaternion(w=q[3], x=q[0], y=q[1], z=q[2])
+
+
+def find_viewing_poses(checker, theta_rad, scorer=None, presentations=None,
+                       n_candidates=48, n_ik=6, verbose=False,
+                       merge_parallel=True, parallel_tol_deg=15.0):
+    """관절마다 하나씩, **그 관절 각도가 가장 잘 보이는** 팔 자세를 찾는다.
+
+    왜 관절마다 따로 두나
+    ---------------------
+    관절 축의 방향은 관절마다 다르다. 3-link 는 joint1 이 z, joint2 가 -y 라
+    한 자세로 둘 다 잘 보이게 할 수 없다. 카메라는 축이 시선과 직각일 때
+    그 회전을 거의 못 본다 (재보니 2.8~6.8 배 나빠진다, study_startpose.py).
+    그래서 **관절 수만큼** 자세를 만들고, 각 관절 각도는 자기 자세에서 읽는다.
+
+    어떻게 고르나
+    -------------
+      1) 가벼운 plant 에서 방향 후보 48개의 관측성을 공짜로 잰다
+      2) 점수가 높은 순으로 IK 를 풀어 본다 (도달·충돌 통과할 때까지)
+      3) 처음 성공한 것을 그 관절의 자세로 삼는다
+
+    돌려주는 것: [{"joint", "arm_q", "observability", "axis_view_deg",
+                   "position", "rotation"}, ...] — 관절 순서대로.
+    실패한 관절은 arm_q 가 None 이다 (그 각도는 파지 자세에서 읽어야 한다).
+    """
+    spec = checker.spec
+    theta = np.atleast_1d(np.asarray(theta_rad, float))
+    if scorer is None:
+        scorer = ViewScorer(spec)
+    if presentations is None:
+        center = _BOX_C
+        presentations = [center + np.array([0.0, dy, dz])
+                         for dz in (0.20, 0.12) for dy in (-0.10, 0.0)]
+    rotations = candidate_rotations(n_candidates)
+
+    groups = (parallel_groups(scorer, theta, parallel_tol_deg)
+              if merge_parallel else [[k] for k in range(len(spec.joints))])
+    if verbose and merge_parallel:
+        merged = [g for g in groups if len(g) > 1]
+        if merged:
+            print("    축이 나란해 한 자세로 묶은 관절: "
+                  + ", ".join("+".join(spec.joints[k].name for k in g)
+                              for g in merged))
+
+    out = [None] * len(spec.joints)
+    for number, group in enumerate(groups):
+        ranked = []
+        for position in presentations:
+            for R in rotations:
+                ranked.append((scorer.score_group(R, position, theta, group),
+                               position, R))
+        ranked.sort(key=lambda row: -row[0])
+        arm_q = None
+        for score, position, R in ranked[:n_ik]:
+            checker._last_solution = None
+            arm_q = checker.solve_oriented(theta, R, position)
+            if arm_q is not None:
+                break
+        for index in group:
+            joint = spec.joints[index]
+            if arm_q is None:
+                out[index] = dict(
+                    joint=joint.name, arm_q=None, observability=0.0,
+                    axis_view_deg=float("nan"), position=None, rotation=None,
+                    group=number, predicted=ranked[0][0] if ranked else 0.0)
+                continue
+            # 실제로 팔이 잡은 상태의 관측성을 다시 잰다. 물체가 IK 허용
+            # 오차만큼 틀어져 있을 수 있으므로 예측 점수를 믿지 않는다.
+            checker.plant.SetPositions(checker.context, arm_q)
+            out[index] = dict(
+                joint=joint.name, arm_q=arm_q, group=number,
+                observability=observability_px_per_deg(
+                    checker.plant, checker.context, spec, index,
+                    checker.payload),
+                axis_view_deg=axis_view_angle_deg(
+                    checker.plant, checker.context, spec, index,
+                    checker.payload),
+                position=np.asarray(position, float), rotation=R,
+                predicted=score)
+        if verbose:
+            for index in group:
+                chosen = out[index]
+                if chosen["arm_q"] is None:
+                    print(f"    {chosen['joint']}: 자세를 못 찾음 "
+                          f"(예상 최고 {chosen['predicted']:.2f} px/deg)")
+                else:
+                    print(f"    {chosen['joint']}: {chosen['observability']:.2f}"
+                          f" px/deg, 축-시선 {chosen['axis_view_deg']:.0f} deg"
+                          f"  [자세 {number + 1}/{len(groups)}]")
+    return out
 
 
 def find_starting_pose(checker, thetas, presentations=None):

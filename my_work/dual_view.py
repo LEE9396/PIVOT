@@ -49,7 +49,8 @@ DEFAULT_FRAME_DT_S = 0.03
 # 준비 — 후보 자세와 팔 자세를 미리 계산해 둔다
 # ---------------------------------------------------------------------------
 def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
-            density_scale, prior="weight", gripper="robotiq2f85"):
+            density_scale, prior="weight", gripper="robotiq2f85",
+            view_poses=True):
     """hinge=None 이면 관절이 절대 움직이지 않는다고 보고 토크 필터를 건너뛴다.
 
     이 연구는 노트북·스탠드·폴더블처럼 사용자가 각도를 맞춰 두면 그대로
@@ -135,10 +136,53 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
     keys = {tuple(np.round(t, 9)) for t in feasible}
     alg.is_feasible = lambda th: tuple(np.round(np.asarray(th), 9)) in keys
 
+    # 관절각을 읽을 자세 — 관절 하나에 하나씩. 카메라가 그 관절의 회전을
+    # 가장 잘 보는 방향으로 물체를 든다 (robot_scene.find_viewing_poses).
+    scorer = rs.ViewScorer(spec, rho_gt) if view_poses else None
+
     return dict(rho_gt=rho_gt, feasible=feasible, arm_solutions=arm_solutions,
                 start_q=start_q, presentation=presentation,
                 finger=checker.finger_value, n_grid=len(grid),
-                checker=checker, planner=planner, gripper=gripper)
+                checker=checker, planner=planner, gripper=gripper,
+                scorer=scorer, view_poses=view_poses)
+
+
+def report_viewing_poses(spec, setup, theta=None):
+    """관절별 각도 측정 자세를 표로 보여 준다.
+
+    파지 자세 하나에서 다 읽을 때와 견줘 얼마나 좋아지는지가 요점이다.
+    단위는 화소/도 — 관절을 1도 돌렸을 때 움직이는 부위가 화면에서 몇 화소
+    움직이는가. 클수록 FoundationPose 가 각도를 또렷하게 읽는다.
+    """
+    if not setup.get("view_poses"):
+        print("  각도 측정 자세: 쓰지 않음 (--no-view-poses) — 파지 자세에서 읽음")
+        return None
+    checker = setup["checker"]
+    if theta is None:
+        theta = np.asarray(setup["feasible"][len(setup["feasible"]) // 2],
+                           dtype=float)
+    poses = rs.find_viewing_poses(checker, theta, scorer=setup.get("scorer"))
+
+    # 견줄 대상: 파지(시작) 자세에서 그 관절각 그대로 읽었을 때.
+    baseline_q = np.array(setup["start_q"], dtype=float).copy()
+    for object_joint, value in zip(checker.object_joints, np.atleast_1d(theta)):
+        baseline_q[object_joint.position_start()] = float(value)
+    checker.plant.SetPositions(checker.context, baseline_q)
+
+    print(f"  관절별 각도 측정 자세  (관절각 {np.round(np.degrees(theta), 0)} deg 기준)")
+    print(f"    {'관절':<10}{'파지자세':>10}{'전용자세':>10}{'배':>7}"
+          f"   {'축-시선':>8}")
+    for index, (joint, pose) in enumerate(zip(spec.joints, poses)):
+        checker.plant.SetPositions(checker.context, baseline_q)
+        base = rs.observability_px_per_deg(checker.plant, checker.context,
+                                           spec, index, checker.payload)
+        if pose["arm_q"] is None:
+            print(f"    {joint.name:<10}{base:>9.2f}{'못 찾음':>11}")
+            continue
+        print(f"    {joint.name:<10}{base:>9.2f}{pose['observability']:>10.2f}"
+              f"{pose['observability']/max(base, 1e-9):>6.1f}배"
+              f"   {pose['axis_view_deg']:>7.0f}°")
+    return poses
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +586,8 @@ class RobotScreen:
                               for n in scene["gripper_spec"].finger_joint_names]
         self.object_joints = [self.plant.GetJointByName(j.name, scene["payload"])
                               for j in spec.joints]
+        self.payload = scene["payload"]
+        self.view_poses = bool(setup.get("view_poses", False))
         if meshcat is not None:
             AddDefaultVisualization(builder, meshcat)
         self.diagram = builder.Build()
@@ -819,13 +865,7 @@ class RobotScreen:
         actual = self.object_q_deg.copy()          # 물체가 실제로 놓인 각도
 
         # --- 3) FoundationPose 로 각도 측정 ---
-        if self.pose_sensor is not None:
-            measured, _ = self.pose_sensor.object_joint_deg()
-            measured = np.atleast_1d(np.asarray(measured, dtype=float))
-        else:
-            sigma = np.maximum(self.angle_rel_error * np.abs(actual),
-                               self.angle_floor_deg)
-            measured = actual + self.rng.normal(0.0, sigma)
+        measured = self.measure_angles(actual, deg)
         # 관절은 물리적 한계를 넘을 수 없다. 측정값이 한계를 벗어나면
         # 그건 측정 오차이므로 잘라낸다. 우리가 아는 사전 지식이다.
         lows = np.array([lo for lo, _ in self.limits_deg])
@@ -880,6 +920,100 @@ class RobotScreen:
                     object_joint_deg_measured=[float(v) for v in measured],
                     wrench=[float(v) for v in wrench],
                     aborted=False)
+
+    # -- 각도 측정 ------------------------------------------------------
+    def observability(self, index):
+        """지금 이 자세에서 관절 index 의 각도가 화면에서 얼마나 잘 보이나."""
+        return rs.observability_px_per_deg(self.plant, self.plant_context,
+                                           self.spec, index, self.payload)
+
+    def measure_angles(self, actual, commanded):
+        """관절마다 **자기 자세로 가서** 각도를 읽는다.
+
+        왜 자세를 나누나
+        ----------------
+        관절 축 방향은 관절마다 다르다. 3-link 는 joint1 이 z, joint2 가 -y 라
+        한 자세로 둘 다 잘 볼 수 없다. 축이 시선과 직각이면 회전이 화면 밖
+        (깊이 방향)으로 나가 카메라가 거의 못 본다. 파지 자세 하나에서 다
+        읽으면 joint2 는 0.37 px/deg 밖에 안 나오는데, 전용 자세에서는
+        1.51 px/deg 다 (4.1 배, study_startpose.py 로 잰 값).
+
+        시뮬레이션의 오차 모형
+        ----------------------
+        자세 추정기의 잔차를 화소 단위로 보면, 각도 오차는
+
+            sigma_angle = (화소 잔차) / (도당 화소 이동)
+
+        이다. 화소 잔차는 모르므로, **파지 자세에서 --angle-floor-deg 가
+        나오도록** 맞춰 둔다. 그러면 전용 자세로 옮겨 얻는 이득만 남는다.
+        """
+        n = len(self.spec.joints)
+        if (self.pose_sensor is None and self.angle_floor_deg <= 0.0
+                and self.angle_rel_error <= 0.0):
+            return np.asarray(actual, float).copy()
+
+        home = self.q.copy()
+        base_obs = [self.observability(k) for k in range(n)]
+        measured = np.empty(n)
+        used = []
+        # 자세를 찾을 때 쓰는 각도는 **명령한 각도** 다. 실제 각도는 아직
+        # 모르는 값이고 (그걸 재려고 가는 것이다), 실물에서는 알 방법도 없다.
+        # 명령값과 실제값의 차이는 몇 도 수준이라 관측성이 거의 안 변한다.
+        poses = (self.viewing_poses(commanded) if self.view_poses
+                 else [None] * n)
+
+        here = None          # 지금 서 있는 측정 자세의 무리 번호
+        for k in range(n):
+            pose = poses[k]
+            moved = here is not None and pose is not None \
+                and pose.get("group") == here
+            if pose is not None and pose["arm_q"] is not None and not moved:
+                # 축이 나란한 관절끼리는 한 자세로 묶여 있다. 같은 무리면
+                # 이미 그 자리에 서 있으므로 다시 가지 않는다.
+                names = "+".join(self.spec.joints[j].name for j in range(n)
+                                 if poses[j] is not None
+                                 and poses[j].get("group") == pose.get("group"))
+                moved = self.move_to(pose["arm_q"], f"{names} 각도 측정 자세")
+                here = pose.get("group") if moved else None
+                if not moved:
+                    print(f"[로봇] {names} 측정 자세로 가는 경로가 없어"
+                          f" 파지 자세에서 읽습니다")
+            obs = self.observability(k) if moved else base_obs[k]
+            used.append(obs)
+            if self.pose_sensor is not None:
+                reading, _ = self.pose_sensor.object_joint_deg()
+                measured[k] = np.atleast_1d(np.asarray(reading, float))[k]
+            else:
+                sigma = max(self.angle_rel_error * abs(actual[k]),
+                            self.angle_floor_deg) * base_obs[k] / max(obs, 1e-9)
+                measured[k] = actual[k] + self.rng.normal(0.0, sigma)
+
+        if self.view_poses:
+            gain = " ".join(
+                f"{j.name} {b:.2f}->{u:.2f} px/deg"
+                for j, b, u in zip(self.spec.joints, base_obs, used))
+            print(f"[로봇] 각도 관측성 {gain}")
+        if self.view_poses and any(p is not None and p["arm_q"] is not None
+                                   for p in poses):
+            self.move_to(home, "각도 측정 끝 — 파지 자세로 복귀")
+        return measured
+
+    def viewing_poses(self, commanded_deg):
+        """이번 라운드의 관절각에서, 관절마다 가장 잘 보이는 자세를 찾는다.
+
+        관절각이 바뀌면 축 방향도 바뀌므로 (joint2 의 축은 joint1 위에 있다)
+        라운드마다 다시 찾아야 한다. 가벼운 plant 로 점수를 먼저 매기므로
+        0.2 초쯤 걸린다.
+        """
+        try:
+            return rs.find_viewing_poses(
+                self.setup["checker"],
+                np.radians(np.asarray(commanded_deg, float)),
+                scorer=self.setup.get("scorer"))
+        except Exception as exc:                       # noqa: BLE001
+            print(f"[로봇] 각도 측정 자세를 못 찾았습니다 ({exc}) —"
+                  f" 파지 자세에서 읽습니다")
+            return [None] * len(self.spec.joints)
 
     def read_one(self, g_hat, actual_deg):
         """지금 이 자세에서 렌치 6개를 읽는다.
@@ -1070,6 +1204,11 @@ def main():
                         choices=("link_1", "link_2", "link_3"),
                         help="desklamp 전용: 어느 부위를 잡는가."
                              " link_3=연결부(Arm), link_2=베이스, link_1=Head")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="측정 잡음·경로 계획의 난수 씨앗")
+    parser.add_argument("--no-view-poses", action="store_true",
+                        help="관절별 각도 측정 자세를 쓰지 않고 파지 자세에서"
+                             " 모든 각도를 읽는다 (예전 방식)")
     parser.add_argument("--separate-ui", action="store_true",
                         help="작업자 UI 를 로봇 화면에서 떼어 따로 띄운다"
                              " (시뮬레이션 모드에서 화면 3개)")
@@ -1114,9 +1253,18 @@ def main():
           f" sigma_T {noise['sigma_t_nm']*1000:.3f} mN·m")
     setup = prepare(spec, hinge, limits, args.safety, args.steps,
                     args.min_distance_mm * rs.MM, scale, prior=args.prior,
-                    gripper=args.gripper)
+                    gripper=args.gripper, view_poses=not args.no_view_poses)
     print(f"  사용 가능한 자세 {len(setup['feasible'])}/{setup['n_grid']}")
     print(f"  시작 자세 제시 위치 {np.round(setup['presentation'], 3)} m")
+    # 각도 측정 자세는 카메라가 어디서 보느냐로 정해진다. 어느 값을 쓰고
+    # 있는지 반드시 사람이 보게 한다 — 명목값으로 실물을 돌리면 애써 고른
+    # 자세가 실제로는 최적이 아니다.
+    print(f"  카메라 {rs.CAMERA_ID}: {rs.CAMERA['source']}"
+          f"  위치 {np.round(rs.camera_pose(rs.CAMERA).translation(), 3)} m")
+    if args.hardware == "real" and "캘리브레이션" not in rs.CAMERA["source"]:
+        print("  [주의] 실물인데 카메라 캘리브레이션 파일이 없습니다."
+              " calibration/README.md 를 보세요.")
+    report_viewing_poses(spec, setup)
 
     # ---- 화면 구성 -------------------------------------------------
     #   sim    : [1] 계획   [2] 로봇 + 작업자 UI        = 2개
@@ -1182,6 +1330,7 @@ def main():
                         angle_floor_deg=args.angle_floor_deg,
                         min_distance_m=args.min_distance_mm * rs.MM,
                         plan_iters=args.plan_iters,
+                        seed=args.seed,
                         settle_s=args.settle_s)
     share = robot.inertial_share(args.move_duration)
     print(f"  준정적 이동: 한 번에 {args.move_duration:.0f}초"

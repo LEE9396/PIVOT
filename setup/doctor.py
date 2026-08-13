@@ -101,6 +101,14 @@ def _lamp():
 
 
 # ---------------------------------------------------------------- 실제로 세워 보기
+@check("카메라 자세 출처", "calibration/README.md 를 보세요.")
+def _camera():
+    import numpy as np
+    import robot_scene as rs
+    position = np.round(rs.camera_pose(rs.CAMERA).translation(), 3)
+    return f"{rs.CAMERA['source']}, 위치 {position} m"
+
+
 @check("3-link 물체로 Drake 씬 세우기", "위 항목들을 먼저 고치세요.")
 def _scene_3link():
     import density_id_objects as obj
