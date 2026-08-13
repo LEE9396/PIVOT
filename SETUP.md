@@ -33,7 +33,7 @@
 ## 1. 받기
 
 ```bash
-git clone <이 저장소 주소> ~/Desktop/HTD-main
+git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/HTD-main
 cd ~/Desktop/HTD-main
 ```
 

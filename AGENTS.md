@@ -7,7 +7,7 @@ AI 는 이 파일만 읽고 끝까지 갈 수 있어야 합니다.
 사람이 할 일은 이 두 줄이 전부입니다.
 
 ```bash
-git clone <저장소 주소> ~/Desktop/HTD-main && cd ~/Desktop/HTD-main
+git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/HTD-main && cd ~/Desktop/HTD-main
 # 그 다음 AI 에게: "AGENTS.md 를 읽고 이 PC 에 환경을 구성해 줘"
 ```
 
