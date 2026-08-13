@@ -352,15 +352,21 @@ def grasp_width_mm(name, centroid_scan, slab_mm=25.0):
     가장 좁은 방향이 죠가 물기 좋은 방향이다.
     """
     vertices = part_mesh(name)[0]
-    widths = []
+    widths, axes = [], []
     for axis in range(3):
         near = np.abs(vertices[:, axis] - centroid_scan[axis]) <= slab_mm * 1e-3
         if near.sum() < 3:
             widths.append(np.ptp(vertices[:, axis]))
+            axes.append(axis)
             continue
         others = [k for k in range(3) if k != axis]
-        widths.append(min(np.ptp(vertices[near][:, k]) for k in others))
-    return float(1000.0 * min(widths))
+        spans = [np.ptp(vertices[near][:, k]) for k in others]
+        widths.append(min(spans))
+        # 그 폭이 **어느 축 방향** 인지도 남긴다. 죠를 그 축에 맞춰야
+        # 실제로 물린다 (안 그러면 긴 축을 오므리려 든다).
+        axes.append(others[int(np.argmin(spans))])
+    best = int(np.argmin(widths))
+    return float(1000.0 * widths[best]), int(axes[best])
 
 
 def rerooted_joints(joint_rows, root):
@@ -458,6 +464,7 @@ def build_spec(pitch=0.002, com_error_mm=0.0, seed=0, grasp_at=DEFAULT_GRASP,
                 direction / np.linalg.norm(direction))
         size = (info["aabb"][1] - info["aabb"][0]) * 1000.0
         gt = GROUND_TRUTH[name]
+        width_mm, width_axis = grasp_width_mm(name, info["centroid"])
         # 메시는 스캔 좌표에 있고 몸체 프레임 원점은 도심이다.
         # 따라서 몸체 프레임 -> 메시 좌표 평행이동 = -도심(스캔 좌표).
         parts.append(Part(
@@ -470,7 +477,8 @@ def build_spec(pitch=0.002, com_error_mm=0.0, seed=0, grasp_at=DEFAULT_GRASP,
             shell_centroid_in_link_mm=tuple(centroid * 1000.0),
             color=part_color(name),
             inertia_unit=info["inertia"] / info["volume"],
-            grasp_width_mm=grasp_width_mm(name, info["centroid"]),
+            grasp_width_mm=width_mm,
+            grasp_axis=width_axis,
             visual_mesh=meshes[name]["visual"],
             visual_pieces=meshes[name]["pieces"],
             collision_meshes=meshes[name]["collision"],

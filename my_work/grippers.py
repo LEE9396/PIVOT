@@ -52,13 +52,16 @@ ROBOTIQ_MIMIC = {"finger_joint": 1.0,
 # Drake 로 실측한 표 (measure_robotiq() 로 다시 뽑을 수 있다).
 #   각도 [rad] -> 패드 사이 간격 [m], 패드 중점의 z [m]
 ROBOTIQ_ANGLE = np.array([0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35,
-                          0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.7306])
+                          0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70])
 ROBOTIQ_GAP_M = np.array([0.0785, 0.0738, 0.0690, 0.0641, 0.0590, 0.0538,
                           0.0484, 0.0430, 0.0375, 0.0319, 0.0263, 0.0206,
-                          0.0149, 0.0092, 0.0035, 0.0000])
-ROBOTIQ_TCP_Z_M = np.array([0.1150, 0.1166, 0.1182, 0.1196, 0.1209, 0.1221,
-                            0.1231, 0.1240, 0.1248, 0.1254, 0.1259, 0.1262,
-                            0.1264, 0.1265, 0.1264, 0.1262])
+                          0.0149, 0.0092, 0.0035])
+# 패드 **면의 중심** 높이다. 예전에는 손가락 링크의 몸체 원점을 썼는데
+# (0.115~0.126), 이 URDF 는 원점이 패드에서 39 mm 아래라 물체가 손가락
+# 위에 떠 붙었다. 화면으로 확인하고 고친 값이다.
+ROBOTIQ_TCP_Z_M = np.array([0.1365, 0.1381, 0.1397, 0.1411, 0.1424, 0.1435,
+                            0.1446, 0.1455, 0.1462, 0.1469, 0.1473, 0.1477,
+                            0.1479, 0.1479, 0.1478])
 
 
 def robotiq_angle_for_opening(opening_m):
@@ -165,6 +168,34 @@ GRIPPERS = {
 }
 
 
+def _pad_face_z(plant, context, fingers, cache, band_mm=2.0):
+    """두 패드가 마주보는 면의 중심 높이 [m].
+
+    각 손가락 메시를 월드로 옮긴 뒤, 죠 축(x=0) 에 가장 가까운 정점들만
+    (band_mm 안) 골라 그 평균 높이를 쓴다. 이 면이 물체에 닿는 자리다.
+    """
+    heights = []
+    for body in fingers:
+        X_WB = plant.EvalBodyPoseInWorld(context, body)
+        vertices = []
+        for name in ("inner_finger_coarse", "inner_finger_fine"):
+            path = cache / f"{name}.obj"
+            if path.is_file():
+                for line in path.read_text().splitlines():
+                    if line.startswith("v "):
+                        vertices.append([float(v) for v in line.split()[1:4]])
+                break
+        if not vertices:
+            return float("nan")
+        world = np.array([X_WB @ np.asarray(v, dtype=float) for v in vertices])
+        inner = np.abs(world[:, 0]).min()
+        band = world[np.abs(world[:, 0]) <= inner + band_mm * 1e-3]
+        # 평균이 아니라 **가운데**를 쓴다. 메시 정점이 위쪽에 몰려 있어
+        # 평균을 쓰면 TCP 가 패드 위쪽으로 15 mm 밀린다.
+        heights.append(0.5 * float(band[:, 2].min() + band[:, 2].max()))
+    return float(np.mean(heights))
+
+
 def measure_robotiq(n=17):
     """표를 다시 뽑는다. URDF 를 바꾸면 이걸 돌려 위 상수를 갱신한다."""
     from pydrake.multibody.parsing import Parser
@@ -208,8 +239,17 @@ def measure_robotiq(n=17):
             if ((pair.id_A in left_ids and pair.id_B in right_ids)
                     or (pair.id_A in right_ids and pair.id_B in left_ids)):
                 gap = pair.distance
-        z = 0.5 * (plant.EvalBodyPoseInWorld(context, left).translation()[2]
-                   + plant.EvalBodyPoseInWorld(context, right).translation()[2])
+        # TCP 는 **패드가 서로 마주보는 자리**다. 손가락 링크의 몸체 원점이
+        # 아니다. 이 URDF 는 원점이 패드에서 39 mm 아래라, 몸체 원점을 쓰면
+        # 물체가 패드보다 그만큼 안쪽에 붙어 화면에서 손가락 위에 떠 보인다.
+        #
+        # 가장 가까운 두 점을 쓰는 것도 안 된다. 마주보는 두 평면 사이의
+        # 최근접점은 그 면 어디여도 되므로 Drake 가 모서리를 돌려주고,
+        # 각도를 조금 바꾸면 값이 20 mm 씩 튄다 (실제로 그랬다).
+        #
+        # 그래서 패드 **면의 중심**을 직접 잰다. 패드 메시에서 맞은편을
+        # 향하는 면(= 죠 축에 가장 가까운 x)에 놓인 정점들의 평균 높이다.
+        z = _pad_face_z(plant, context, (left, right), cache)
         rows.append((angle, gap, z))
     return rows
 

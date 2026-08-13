@@ -192,10 +192,64 @@ CAMERA_MOUNT_RADIUS_M = 0.016                # 지지대 봉
 MIN_DISTANCE_M = 0.006     # 이 값보다 가까워지면 충돌로 본다
 ANGLE_TOL_RAD = np.deg2rad(1.0)
 
-# 물체를 그리퍼에 어떻게 물릴지. roll 은 파지축 선택.
-#  3-link 는 단면이 44x44 라 어느 축이든 같고, 2-link 는 46x40 이므로
-#  README 권고대로 40 mm 축(z)을 죠 방향에 맞춘다 -> roll 90 deg.
-GRASP_ROLL_DEG = {"2link": 90.0, "3link": 0.0}
+# 물체를 그리퍼에 어떻게 물릴지.
+#
+# 죠는 그리퍼의 x 방향으로 열린다. 그러므로 물체에서 **죠가 물어야 할 축**
+# (가장 좁은 단면 방향) 을 그리퍼 x 로 보내야 한다. 예전에는 roll 하나만
+# 주었는데, 그러면 물체의 x 축이 그대로 죠 방향에 남는다. 3-link 는 그
+# 축이 150 mm 길이 방향이라, 44 mm 로 오므린 패드가 물체 옆구리에 걸려
+# 화면에서 물체가 손가락 위에 떠 있는 것처럼 보였다.
+#
+# 가장 긴 축은 죠 사이를 가로지르도록 그리퍼 y 로 보낸다. 패드가 그 방향으로
+# 넓어서(2F-85 는 22 mm) 길쭉한 물체를 안정적으로 문다.
+GRASP_ROLL_DEG = {}          # 남겨 둔다: 특정 물체만 손으로 돌리고 싶을 때
+
+
+def grasp_axes(spec):
+    """(죠가 무는 축, 길이 축) 을 물체 좌표계의 축 번호로 돌려준다.
+
+    사양이 파지 축을 알려주면 그것을 쓴다 (스캔 물체는 메시로 단면을 재서
+    어느 축이 가장 좁은지 함께 알려준다). 없으면 AABB 에서 고른다.
+    """
+    part = spec.parts[0]
+    dims = np.asarray(part.bbox_mm, dtype=float)
+    jaw = getattr(part, "grasp_axis", None)
+    if jaw is None:
+        jaw = int(np.argmin(dims))
+    length = int(np.argmax(dims))
+    if length == jaw:                       # 정육면체 같은 경우
+        length = int(np.argmax([d if k != jaw else -1.0
+                                for k, d in enumerate(dims)]))
+    return int(jaw), int(length)
+
+
+# 길쭉한 축을 그리퍼의 어느 방향으로 둘 것인가.
+#   "z"  손목 축을 따라 뻗는다 (드라이버를 쥔 모양). 팔이 훨씬 자유롭다.
+#   "y"  죠를 가로질러 옆으로 뻗는다. 물체가 옆으로 튀어나와 자주 막힌다.
+# 재보니 3-link 는 y 로 두면 안전한 시작 자세가 아예 없고, z 로 두면
+# 25/25 가 통과했다. 그래서 기본을 z 로 둔다.
+GRASP_LONG_AXIS = "z"
+
+
+def grasp_rotation(spec, long_axis=None):
+    """물체 좌표계를 그리퍼 좌표계로 보내는 회전 R_GO.
+
+    죠 축은 반드시 그리퍼 x (죠가 열리는 방향) 로 간다. 길이 축은
+    GRASP_LONG_AXIS 에 따라 y 또는 z 로 보낸다.
+    """
+    jaw, length = grasp_axes(spec)
+    long_axis = long_axis or GRASP_LONG_AXIS
+    third = [k for k in range(3) if k not in (jaw, length)][0]
+    basis = np.zeros((3, 3))
+    basis[:, 0] = np.eye(3)[jaw]
+    if long_axis == "z":
+        basis[:, 2] = np.eye(3)[length]
+        basis[:, 1] = np.cross(basis[:, 2], basis[:, 0])
+    else:
+        basis[:, 1] = np.eye(3)[length]
+        basis[:, 2] = np.cross(basis[:, 0], basis[:, 1])
+    roll = np.deg2rad(GRASP_ROLL_DEG.get(spec.key, 0.0))
+    return RotationMatrix.MakeXRotation(roll) @ RotationMatrix(basis.T)
 
 
 def look_at_pose(eye, target):
@@ -342,9 +396,7 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
     # --- 물체를 그리퍼 파지점에 고정 (운동학적 파지) ---
     payload, parts, sensor_frame = _add_object(
         plant, spec, densities, joint_limits_rad)
-    roll = np.deg2rad(GRASP_ROLL_DEG.get(spec.key, 0.0))
-    X_pgc_sensor = RigidTransform(RotationMatrix.MakeXRotation(roll),
-                                  [0.0, 0.0, tcp_z])
+    X_pgc_sensor = RigidTransform(grasp_rotation(spec), [0.0, 0.0, tcp_z])
     X_sensor_base = RigidTransform(
         np.array(spec.base_bbox_center_in_sensor_mm) * MM)
     plant.WeldFrames(plant.GetFrameByName(gripper_spec.base_frame, gripper),
@@ -435,10 +487,8 @@ def jaw_dimension_m(spec):
     part = spec.parts[0]
     if part.grasp_width_mm is not None:
         return part.grasp_width_mm * MM
-    dims = part.bbox_mm
-    roll = GRASP_ROLL_DEG.get(spec.key, 0.0)
-    # roll=0 이면 물체 y 가 죠 방향, roll=90 이면 물체 z 가 죠 방향.
-    return (dims[1] if abs(roll) < 45.0 else dims[2]) * MM
+    jaw, _ = grasp_axes(spec)
+    return float(part.bbox_mm[jaw]) * MM
 
 
 def jaw_opening_for(spec, gripper_spec):

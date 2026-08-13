@@ -42,6 +42,9 @@ from pose_bus import LocalBus, TcpBus
 # 준정적 이동. 관절이 흐르지 않도록 천천히 옮긴다. 힌지 유지토크를 모르므로
 # 한계 기준을 세울 수 없어, 넉넉히 느린 시간을 기본으로 둔다.
 DEFAULT_MOVE_DURATION_S = 8.0
+# 관절 속도 상한 [deg/s]. 8초 이동에서 관성 토크가 중력 토크의 3.5% 였고,
+# 그때 관절 속도가 12~16 deg/s 였다. 그 언저리로 묶어 둔다.
+DEFAULT_MAX_JOINT_SPEED_DEG = 15.0
 DEFAULT_FRAME_DT_S = 0.03
 
 
@@ -583,7 +586,8 @@ class RobotScreen:
                  angle_rel_error=aa.DEFAULT_ANGLE_REL_ERROR,
                  angle_floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG, seed=0,
                  min_distance_m=rs.MIN_DISTANCE_M, plan_iters=20000,
-                 settle_s=0.3, grasp_error_m=None):
+                 settle_s=0.3, grasp_error_m=None,
+                 max_joint_speed_deg=DEFAULT_MAX_JOINT_SPEED_DEG):
         self.spec = spec
         self.setup = setup
         self.meshcat = meshcat                      # None 이면 로봇 화면 없음
@@ -605,6 +609,8 @@ class RobotScreen:
         self.adjust_dt = adjust_dt
         self.adjust_hold = adjust_hold
         self.move_duration_s = move_duration_s
+        # 관절 속도 상한 [rad/s]. 경로가 길어도 이보다 빨리 돌지 않는다.
+        self.max_joint_speed_rad = np.deg2rad(max_joint_speed_deg)
         self.frame_dt_s = frame_dt_s
         self.angle_rel_error = angle_rel_error
         self.angle_floor_deg = angle_floor_deg
@@ -703,6 +709,18 @@ class RobotScreen:
             self.console.moving(f"{what}  (경로 계획 실패 — 이동 중단)")
             print(f"[로봇] 경고: 충돌 없는 경로를 찾지 못했습니다. 이동을 건너뜁니다.")
             return False
+
+        # 시간을 고정하면 경로가 길수록 빨라진다. 우회하는 경로가 잡히면
+        # 같은 8초에 두 배를 도느라 관절 속도가 그만큼 뛴다. 준정적이라는
+        # 가정은 '천천히'가 아니라 '관성 토크가 중력 토크에 비해 작게'라는
+        # 뜻이고, 그건 속도로 정해진다. 그래서 **속도로 묶고** 필요하면
+        # 시간을 늘린다 (줄이지는 않는다).
+        length = float(np.sum(np.abs(np.diff(np.asarray(path), axis=0)).max(axis=1)))
+        if self.max_joint_speed_rad > 0.0:
+            # 사이클로이드 프로파일은 최고속도가 평균의 2배다.
+            needed = 2.0 * length / self.max_joint_speed_rad
+            if needed > duration_s:
+                duration_s = float(needed)
 
         self.console.moving(f"{what}  ({duration_s:.0f}초, 경유점 {len(path)}개)")
         steps = max(int(duration_s / self.frame_dt_s), 2)
@@ -1276,6 +1294,10 @@ def main():
                         choices=("link_1", "link_2", "link_3"),
                         help="desklamp 전용: 어느 부위를 잡는가."
                              " link_3=연결부(Arm), link_2=베이스, link_1=Head")
+    parser.add_argument("--max-joint-speed-deg", type=float,
+                        default=DEFAULT_MAX_JOINT_SPEED_DEG,
+                        help="관절 속도 상한 [deg/s]. 경로가 길면 이동 시간을"
+                             " 늘려서라도 이 속도를 넘지 않는다. 0 이면 끔.")
     parser.add_argument("--grasp-sigma-mm", type=float, default=None,
                         help="파지점이 어긋날 수 있는 크기 [mm]. 0 이면 정확히"
                              " 안다고 본다. 기본값은 sim 0, deploy 5.")
@@ -1428,6 +1450,7 @@ def main():
                         plan_iters=args.plan_iters,
                         seed=args.seed,
                         grasp_error_m=grasp_error_m,
+                        max_joint_speed_deg=args.max_joint_speed_deg,
                         settle_s=args.settle_s)
     share = robot.inertial_share(args.move_duration)
     print(f"  준정적 이동: 한 번에 {args.move_duration:.0f}초"
