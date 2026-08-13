@@ -205,7 +205,7 @@ class PlannerScreen:
                  angle_floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG,
                  select_mode="continuous", criterion="D", estimator="tls",
                  stop_rule="residual", systematic=0.3, search_attempts=12,
-                 block_radius_deg=15.0, probe_side=5):
+                 block_radius_deg=15.0, probe_side=5, grasp_sigma_m=0.0):
         self.spec = spec
         self.setup = setup
         self.meshcat = meshcat
@@ -231,6 +231,11 @@ class PlannerScreen:
         self.block_radius_rad = np.deg2rad(block_radius_deg)
         # 각도 오차 구간을 몇 칸 격자로 훑을지. 충돌 질의라 키워도 거의 공짜다.
         self.probe_side = probe_side
+        # 파지점이 얼마나 어긋날 수 있는지 [m]. 0 이면 파지점을 정확히 안다고
+        # 본다 (시뮬레이션). 실물에서는 지그를 대도 몇 mm 는 어긋나므로 켠다.
+        self.grasp_sigma_m = float(grasp_sigma_m)
+        self.grasp_hat = np.zeros(3)
+        self.total_mass_kg = float(obj.assembled_mass_kg(spec, setup["rho_gt"]))
         self.rho_gt = setup["rho_gt"]
 
         builder = DiagramBuilder()
@@ -490,19 +495,44 @@ class PlannerScreen:
         self.rounds.append((measured, wrench))
         self.Sigma = aa.posterior_covariance(self.Sigma, A, R_eff)
 
-        rho_wls = aa.constrained_map(self.blocks, alg.MU0, alg.SIGMA0,
-                                     alg.RHO_BOUNDS)
+        grasp_init = None
+        if self.grasp_sigma_m > 0.0:
+            # 파지점 어긋남을 미지수로 함께 푼다. 먼저 선형으로 풀어 두고
+            # (안정적이다) 그 값을 TLS 의 시작점으로 넘긴다. 찬 시작으로
+            # 넣으면 각도 보정과 파지점이 서로를 흉내내며 국소해에 빠진다
+            # (어긋남이 없는데도 9 mm 를 지어내며 오차 110% 가 났다).
+            rho_lin, grasp_init, Sigma_full = dc.grasp_map(
+                self.blocks, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS,
+                dc.CANONICAL_TRIAD, self.total_mass_kg,
+                grasp_sigma_m=self.grasp_sigma_m)
+            self.grasp_hat = grasp_init
+            self.Sigma = Sigma_full[:len(alg.MU0), :len(alg.MU0)]
+
+        rho_wls = (rho_lin if self.grasp_sigma_m > 0.0
+                   else aa.constrained_map(self.blocks, alg.MU0, alg.SIGMA0,
+                                           alg.RHO_BOUNDS))
         if self.estimator == "tls":
             # 각도 보정량을 밀도와 함께 푼다. 계수행렬이 틀렸다는 사실이
             # 모형 안에 있으므로 오차변수 치우침이 남지 않는다.
-            self.rho_hat, _ = dc.tls_map(
+            self.rho_hat, tls_info = dc.tls_map(
                 self.rounds, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS,
                 dc.CANONICAL_TRIAD, rho_init=rho_wls,
-                rel_error=self.angle_rel_error)
+                rel_error=self.angle_rel_error,
+                grasp_sigma_m=self.grasp_sigma_m,
+                total_mass_kg=self.total_mass_kg,
+                grasp_init=grasp_init)
+            if self.grasp_sigma_m > 0.0 and len(tls_info.get("grasp", ())) == 3:
+                self.grasp_hat = np.asarray(tls_info["grasp"], dtype=float)
         else:
             self.rho_hat = rho_wls
 
-        self.inflate = dc.residual_inflation(self.blocks, self.rho_hat)
+        # 파지점을 함께 풀었으면 그 몫도 예측에 넣고 잔차를 재야 한다.
+        grasp_offset = (dc.grasp_columns(dc.CANONICAL_TRIAD,
+                                         self.total_mass_kg) @ self.grasp_hat
+                        if self.grasp_sigma_m > 0.0 else None)
+        self.inflate = dc.residual_inflation(
+            self.blocks, self.rho_hat, offset=grasp_offset,
+            n_extra=3 if self.grasp_sigma_m > 0.0 else 0)
         if self.stop_rule == "bias":
             self.bias_cov = dc.bias_by_refit(
                 self.rounds, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS,
@@ -513,6 +543,10 @@ class PlannerScreen:
             self.Sigma, self.rho_hat,
             Cov_bias=self.bias_cov if self.stop_rule == "bias" else None,
             inflate=1.0 if self.stop_rule == "variance" else self.inflate)
+        if self.grasp_sigma_m > 0.0:
+            print(f"[왼쪽] 파지점 어긋남 추정"
+                  f" {np.round(1000 * self.grasp_hat, 2)} mm"
+                  f"  (크기 {1000 * np.linalg.norm(self.grasp_hat):.2f} mm)")
         print(f"[왼쪽] round {reply['round']} 추정 갱신"
               f"  (95% 상대반폭 {100*self.half_width():.2f}%"
               f" / 목표 {100*self.target:.2f}%"
@@ -549,7 +583,7 @@ class RobotScreen:
                  angle_rel_error=aa.DEFAULT_ANGLE_REL_ERROR,
                  angle_floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG, seed=0,
                  min_distance_m=rs.MIN_DISTANCE_M, plan_iters=20000,
-                 settle_s=0.3):
+                 settle_s=0.3, grasp_error_m=None):
         self.spec = spec
         self.setup = setup
         self.meshcat = meshcat                      # None 이면 로봇 화면 없음
@@ -592,6 +626,10 @@ class RobotScreen:
                               for j in spec.joints]
         self.payload = scene["payload"]
         self.view_poses = bool(setup.get("view_poses", False))
+        # 시뮬레이션에서 '파지점이 어긋난 척' 하기 위한 값. 실물에서는 None
+        # (실제로 어긋나 있으므로 흉내낼 필요가 없다).
+        self.grasp_error_m = (None if grasp_error_m is None
+                              else np.asarray(grasp_error_m, dtype=float))
         if meshcat is not None:
             AddDefaultVisualization(builder, meshcat)
         self.diagram = builder.Build()
@@ -1048,8 +1086,17 @@ class RobotScreen:
         시뮬레이션이면 진리 plant 가 이 방향 하나만 계산한다.
         """
         if self.wrench_sensor is None:
-            return alg.measure(np.deg2rad(actual_deg),
-                               g_dirs=[np.asarray(g_hat)])
+            wrench = alg.measure(np.deg2rad(actual_deg),
+                                 g_dirs=[np.asarray(g_hat)])
+            if self.grasp_error_m is not None:
+                # 실물처럼 파지점이 어긋난 척한다. 센서 원점이 delta 만큼
+                # 옮겨지면 토크가 그만큼 달라진다 (힘은 그대로).
+                #     tau_true = tau_model + M G (g x delta)
+                mass = alg.TRUTH_PLANT.CalcTotalMass(alg.TRUTH_CTX)
+                wrench = wrench.copy()
+                wrench[3:6] += mass * alg.G_ACC * np.cross(
+                    np.asarray(g_hat, float), self.grasp_error_m)
+            return wrench
         if self.tare is None:
             raise RuntimeError(
                 "타어링 표가 없습니다. 물체를 잡기 전에 hardware.run_tare() 로"
@@ -1229,6 +1276,12 @@ def main():
                         choices=("link_1", "link_2", "link_3"),
                         help="desklamp 전용: 어느 부위를 잡는가."
                              " link_3=연결부(Arm), link_2=베이스, link_1=Head")
+    parser.add_argument("--grasp-sigma-mm", type=float, default=None,
+                        help="파지점이 어긋날 수 있는 크기 [mm]. 0 이면 정확히"
+                             " 안다고 본다. 기본값은 sim 0, deploy 5.")
+    parser.add_argument("--grasp-error-mm", type=float, default=0.0,
+                        help="시뮬레이션에서 파지점을 일부러 이만큼 어긋뜨린다"
+                             " (실물이 그렇기 때문). 방향은 --seed 로 정해진다.")
     parser.add_argument("--seed", type=int, default=0,
                         help="측정 잡음·경로 계획의 난수 씨앗")
     parser.add_argument("--no-view-poses", action="store_true",
@@ -1320,6 +1373,23 @@ def main():
     print(f"  위 주소들을 브라우저 탭으로 나란히 열어 주세요."
           f"  (모드 {args.mode})\n")
 
+    grasp_sigma_m = (args.grasp_sigma_mm * 1e-3
+                     if args.grasp_sigma_mm is not None
+                     else (0.005 if args.mode == "deploy" else 0.0))
+    grasp_error_m = None
+    if args.grasp_error_mm > 0.0:
+        direction = np.random.default_rng(args.seed).normal(size=3)
+        grasp_error_m = direction / np.linalg.norm(direction) * (
+            args.grasp_error_mm * 1e-3)
+        print(f"  [시뮬레이션] 파지점을 일부러 {args.grasp_error_mm:.1f} mm"
+              f" 어긋뜨립니다 {np.round(1000*grasp_error_m, 2)} mm")
+    if grasp_sigma_m > 0.0:
+        print(f"  파지점 어긋남도 함께 추정합니다"
+              f" (사전분포 {1000*grasp_sigma_m:.1f} mm)")
+    elif args.grasp_error_mm > 0.0:
+        print(f"  [주의] 어긋뜨려 놓고 추정은 끄셨습니다 —"
+              f" 치우침이 그대로 남습니다 (--grasp-sigma-mm 5 로 켜세요)")
+
     planner = PlannerScreen(spec, setup, planner_meshcat, args.pace,
                             args.target, args.angle_error,
                             args.angle_floor_deg,
@@ -1328,7 +1398,8 @@ def main():
                             systematic=args.systematic,
                             search_attempts=args.search_attempts,
                             block_radius_deg=args.block_radius_deg,
-                            probe_side=args.probe_side)
+                            probe_side=args.probe_side,
+                            grasp_sigma_m=grasp_sigma_m)
     print(f"  설정: 후보={args.select}  기준={args.criterion}-최적"
           f"  추정기={args.estimator.upper()}  정지={args.stop_rule}")
     if args.bus == "tcp":
@@ -1356,6 +1427,7 @@ def main():
                         min_distance_m=args.min_distance_mm * rs.MM,
                         plan_iters=args.plan_iters,
                         seed=args.seed,
+                        grasp_error_m=grasp_error_m,
                         settle_s=args.settle_s)
     share = robot.inertial_share(args.move_duration)
     print(f"  준정적 이동: 한 번에 {args.move_duration:.0f}초"

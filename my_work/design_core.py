@@ -202,7 +202,8 @@ def wls_map(blocks, mu0, Sigma0, bounds):
 
 def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
             rel_error=aa.DEFAULT_ANGLE_REL_ERROR,
-            floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG, max_nfev=400):
+            floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG, max_nfev=400,
+            grasp_sigma_m=0.0, total_mass_kg=None, grasp_init=None):
     """총최소제곱(구조화 TLS = 오차변수 최대우도).
 
     rounds = [(theta_measured_i, y_i), ...]
@@ -234,28 +235,123 @@ def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
     sig_theta = [np.sqrt(np.diag(aa.angle_covariance(
         np.atleast_1d(th), rel_error, floor_deg))) for th, _ in rounds]
 
+    # 파지점 어긋남도 같이 풀 것인가. 각도 보정 delta_i 뒤에 3개를 더 붙인다.
+    # 둘은 서로 다른 것을 고친다 — 각도는 라운드마다 다르고, 파지점은 모든
+    # 라운드에 똑같이 실린다. 한쪽만 고치면 다른 쪽 치우침이 그대로 남는다.
+    n_grasp = 3 if (grasp_sigma_m and total_mass_kg) else 0
+    grasp_cols = (grasp_columns(g_dirs, total_mass_kg) if n_grasp else None)
+
     lo, hi = bounds
+    n_angle = R * n_joint
     rho0 = np.asarray(rho_init if rho_init is not None else mu0, dtype=float)
-    x0 = np.concatenate([np.clip(rho0, lo, hi), np.zeros(R * n_joint)])
-    x_lo = np.concatenate([np.full(n_part, lo), np.full(R * n_joint, -np.inf)])
-    x_hi = np.concatenate([np.full(n_part, hi), np.full(R * n_joint, np.inf)])
+    grasp0 = (np.zeros(3) if grasp_init is None
+              else np.asarray(grasp_init, dtype=float))
+    x0 = np.concatenate([np.clip(rho0, lo, hi), np.zeros(n_angle),
+                         grasp0[:n_grasp]])
+    x_lo = np.concatenate([np.full(n_part, lo),
+                           np.full(n_angle, -np.inf),
+                           np.full(n_grasp, -0.05)])
+    x_hi = np.concatenate([np.full(n_part, hi),
+                           np.full(n_angle, np.inf),
+                           np.full(n_grasp, 0.05)])
 
     def residual(x):
         rho = x[:n_part]
-        deltas = x[n_part:].reshape(R, n_joint)
+        deltas = x[n_part:n_part + n_angle].reshape(R, n_joint)
+        grasp = x[n_part + n_angle:]
+        offset = grasp_cols @ grasp if n_grasp else 0.0
         parts = []
         for (theta, y), delta, sig in zip(rounds, deltas, sig_theta):
             A = regressor(np.atleast_1d(theta) + delta, g_dirs)
-            parts.append((y - A @ rho) * w_sensor)
+            parts.append((y - A @ rho - offset) * w_sensor)
             parts.append(delta / sig)
         parts.append(L0 @ (rho - mu0))
+        if n_grasp:
+            parts.append(grasp / grasp_sigma_m)
         return np.concatenate(parts)
 
     res = least_squares(residual, x0, bounds=(x_lo, x_hi), max_nfev=max_nfev)
     rho_hat = res.x[:n_part]
-    return rho_hat, dict(delta=res.x[n_part:].reshape(R, n_joint),
+    return rho_hat, dict(delta=res.x[n_part:n_part + n_angle].reshape(R, n_joint),
+                         grasp=res.x[n_part + n_angle:],
                          cost=float(res.cost), nfev=int(res.nfev),
                          jac=res.jac)
+
+
+# ---------------------------------------------------------------------------
+# 4-b. 파지점이 어긋난 몫도 함께 푼다
+# ---------------------------------------------------------------------------
+# 시뮬레이션에서는 "센서 원점이 물체의 이 점에 있다" 고 정확히 줄 수 있다.
+# 실물에서는 못 준다. 지그를 대도 몇 mm 는 어긋나고, 그 어긋남 delta 는
+# **모든 부위의 모멘트팔을 똑같이 밀어 놓는다.** 라운드를 늘려도 안 없어지는
+# 치우침이다 (도심 오차 5 mm 가 Arm 질량 42% 를 틀리게 만든 것과 같은 구조).
+#
+# 그런데 이 몫은 **모형 안에 넣을 수 있다.** 센서 원점에서 잰 토크는
+#
+#     tau_true = sum_i m_i (c_i - delta) x g = tau_model - M (delta x g)
+#              = tau_model + M G [g]_x delta
+#
+# 이고 총질량 M 은 저울로 이미 안다. 즉 delta 는 **선형 미지수 3개**로
+# 들어온다. 힘 성분에는 안 나타난다 (F = M g 는 어디서 재든 같다).
+#
+# 중력 방향 하나에서 [g]_x 의 계수는 g 에 수직한 평면 2차원만 잡는다.
+# 직교 3방향을 다 쓰면 3차원이 다 잡히므로 delta 는 원리상 식별된다.
+GRASP_SIGMA_M = 0.005          # 지그를 대고 잡았을 때 남는 어긋남 [m]
+
+
+def grasp_columns(g_dirs, total_mass_kg):
+    """파지점 어긋남 delta 가 렌치에 만드는 몫. (6J x 3)"""
+    blocks = []
+    for g_hat in np.asarray(g_dirs, dtype=float):
+        skew = np.array([[0.0, -g_hat[2], g_hat[1]],
+                         [g_hat[2], 0.0, -g_hat[0]],
+                         [-g_hat[1], g_hat[0], 0.0]])
+        blocks.append(np.vstack([np.zeros((3, 3)),
+                                 total_mass_kg * alg.G_ACC * skew]))
+    return np.vstack(blocks)
+
+
+def augmented(A, g_dirs, total_mass_kg):
+    """[밀도 열들 | 파지점 열들]. 미지수는 [rho; delta] 가 된다."""
+    return np.hstack([A, grasp_columns(g_dirs, total_mass_kg)])
+
+
+def grasp_map(blocks, mu0, Sigma0, bounds, g_dirs, total_mass_kg,
+              grasp_sigma_m=GRASP_SIGMA_M, grasp_bound_m=0.05):
+    """밀도와 파지점 어긋남을 **함께** 푼다.
+
+    blocks = [(A_i, y_i, R_i), ...]  — 기존 WLS 와 같은 입력.
+
+    delta 에는 사전분포를 준다. 지그로 대는 정확도가 얼마인지는 사람이 아는
+    값이고 (기본 5 mm), 그 안에서만 움직이게 눌러 두어야 밀도와 헷갈리지
+    않는다. 사전분포가 없으면 delta 가 밀도 오차를 흡수해 버린다.
+
+    돌려주는 것: (rho_hat, delta_hat, Sigma_full)
+    """
+    n_part = len(mu0)
+    lo, hi = bounds
+    rows, ys, weights = [], [], []
+    for A, y, R in blocks:
+        L = np.linalg.cholesky(np.linalg.inv(np.atleast_2d(R)))
+        rows.append(L.T @ augmented(A, g_dirs, total_mass_kg))
+        ys.append(L.T @ np.asarray(y, dtype=float))
+    # 사전분포 항 (rho 와 delta 각각)
+    L0 = np.linalg.cholesky(np.linalg.inv(Sigma0)).T
+    prior_rows = np.hstack([L0, np.zeros((n_part, 3))])
+    prior_y = L0 @ mu0
+    grasp_rows = np.hstack([np.zeros((3, n_part)), np.eye(3) / grasp_sigma_m])
+    rows += [prior_rows, grasp_rows]
+    ys += [prior_y, np.zeros(3)]
+
+    M = np.vstack(rows)
+    b = np.concatenate(ys)
+    x_lo = np.concatenate([np.full(n_part, lo), np.full(3, -grasp_bound_m)])
+    x_hi = np.concatenate([np.full(n_part, hi), np.full(3, grasp_bound_m)])
+
+    from scipy.optimize import lsq_linear
+    result = lsq_linear(M, b, bounds=(x_lo, x_hi))
+    Sigma_full = np.linalg.inv(M.T @ M)
+    return result.x[:n_part], result.x[n_part:], Sigma_full
 
 
 def tls_covariance(info, n_part):
@@ -358,19 +454,27 @@ def bias_by_refit(rounds, mu0, Sigma0, bounds, g_dirs, rho_hat,
     return S @ S.T
 
 
-def residual_inflation(blocks, rho_hat, dof_floor=1):
+def residual_inflation(blocks, rho_hat, dof_floor=1, offset=None,
+                       n_extra=0):
     """잔차가 모형보다 크면 그만큼 불확실성을 부풀린다.
 
     모형이 맞으면 백색화 잔차 제곱합 / 자유도 = 1 이어야 한다. 이게 3 이면
     "내 잡음 모형이 실제보다 sqrt(3) 배 낙관적이었다"는 뜻이고, GT 없이
     데이터만으로 알 수 있다. 1 미만이면 부풀리지 않는다(줄이지도 않는다).
+
+    offset 을 주면 그 몫을 예측값에 더해서 잔차를 잰다. 파지점 어긋남을
+    함께 풀 때 반드시 필요하다 — 안 넣으면 어긋남이 통째로 잔차로 잡혀
+    팽창이 100배까지 뛰고, 정지 조건이 영영 만족되지 않는다 (실제로 그랬다).
+    n_extra 는 늘어난 미지수 개수로, 자유도에서 빼 준다.
     """
     total, rows = 0.0, 0
     for A, y, R in blocks:
         r = y - A @ rho_hat
+        if offset is not None:
+            r = r - offset
         total += float(r @ np.linalg.solve(R, r))
         rows += len(y)
-    dof = max(rows - len(rho_hat), dof_floor)
+    dof = max(rows - len(rho_hat) - n_extra, dof_floor)
     return max(1.0, np.sqrt(total / dof))
 
 
