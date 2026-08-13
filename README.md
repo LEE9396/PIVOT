@@ -36,6 +36,7 @@ cd my_work
 
 자세한 설치·문제 해결은 [SETUP.md](SETUP.md).
 AI 에게 시킬 거라면 [AGENTS.md](AGENTS.md) 를 읽히세요.
+`git pull` 뒤 무엇이 달라졌는지는 [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

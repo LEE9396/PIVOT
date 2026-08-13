@@ -48,6 +48,10 @@ DEFAULT_FRAME_DT_S = 0.03
 # ---------------------------------------------------------------------------
 # 준비 — 후보 자세와 팔 자세를 미리 계산해 둔다
 # ---------------------------------------------------------------------------
+# 전용 자세로 옮겨서 얻는 이득이 이 배수보다 작으면 그냥 파지 자세에서 읽는다.
+MIN_VIEW_GAIN = 1.15
+
+
 def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
             density_scale, prior="weight", gripper="robotiq2f85",
             view_poses=True):
@@ -962,9 +966,31 @@ class RobotScreen:
         poses = (self.viewing_poses(commanded) if self.view_poses
                  else [None] * n)
 
+        # 옮겨서 **더 나빠지면 옮기지 않는다.** 파지 자세가 이미 그 관절을 잘
+        # 보는 경우가 있다 (램프는 두 축이 거의 나란하고 파지 자세가 이미
+        # 4.4 px/deg 라, 전용 자세로 가면 오히려 4.2 로 떨어졌다). 이동은
+        # 시간이 들고 파지가 흔들릴 기회도 주므로, 이득이 확실할 때만 간다.
+        worth = {}
+        for k in range(n):
+            pose = poses[k]
+            if pose is None or pose["arm_q"] is None:
+                continue
+            group = pose.get("group")
+            ratio = pose["observability"] / max(base_obs[k], 1e-9)
+            worth[group] = min(worth.get(group, np.inf), ratio)
+        skipped = {g for g, ratio in worth.items() if ratio < MIN_VIEW_GAIN}
+        for group in sorted(skipped):
+            names = "+".join(self.spec.joints[j].name for j in range(n)
+                             if poses[j] is not None
+                             and poses[j].get("group") == group)
+            print(f"[로봇] {names}: 파지 자세가 이미 충분해 그대로 읽습니다"
+                  f" (전용 자세 이득 {worth[group]:.2f}배)")
+
         here = None          # 지금 서 있는 측정 자세의 무리 번호
         for k in range(n):
             pose = poses[k]
+            if pose is not None and pose.get("group") in skipped:
+                pose = None
             moved = here is not None and pose is not None \
                 and pose.get("group") == here
             if pose is not None and pose["arm_q"] is not None and not moved:
@@ -993,8 +1019,7 @@ class RobotScreen:
                 f"{j.name} {b:.2f}->{u:.2f} px/deg"
                 for j, b, u in zip(self.spec.joints, base_obs, used))
             print(f"[로봇] 각도 관측성 {gain}")
-        if self.view_poses and any(p is not None and p["arm_q"] is not None
-                                   for p in poses):
+        if here is not None:              # 어딘가로 갔으면 돌아온다
             self.move_to(home, "각도 측정 끝 — 파지 자세로 복귀")
         return measured
 

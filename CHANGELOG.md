@@ -1,0 +1,110 @@
+# 바뀐 것들
+
+팀원이 `git pull` 한 뒤 무엇이 달라졌는지 보는 곳입니다.
+새로 받는 분은 [SETUP.md](SETUP.md) 부터 보세요.
+
+---
+
+## 2026-08-14
+
+### 관절각을 관절마다 자기 자리에서 읽습니다 (동작이 바뀝니다)
+
+**무엇이 문제였나.** 각도는 카메라(FoundationPose)가 읽는데, **관절 축이
+시선과 직각이면 회전이 화면 밖(깊이 방향)으로 나가 거의 안 보입니다.**
+예전에는 물체를 잡은 자세 하나에서 모든 관절 각도를 읽었는데, 3-link의
+joint2는 그 자세에서 0.37 px/deg 밖에 안 나왔습니다. 1도와 3도를 구별하기
+어려운 수준입니다.
+
+**무엇이 바뀌었나.** 관절마다 그 관절이 가장 잘 보이는 자세를 따로 만들고,
+각 관절의 각도를 자기 자세에서 읽습니다. 축이 나란한 관절끼리는 한 자세로
+묶습니다.
+
+**얼마나 좋아지나.** 3-link를 같은 seed로 켜고/끄고 4번씩 돌린 결과입니다.
+
+| seed | 라운드 (켬/끔) | 부위 최대오차 (켬/끔) | 각도오차 (켬/끔) |
+| --- | --- | --- | --- |
+| 0 | 2 / 2 | 0.040% / 0.040% | 0.16° / 0.47° |
+| 1 | 2 / 3 | 0.030% / 0.070% | 2.24° / 2.40° |
+| 2 | 4 / 6 | 0.070% / 0.130% | 1.94° / 2.89° |
+| 3 | 2 / 6 | 0.050% / 0.240% | 1.63° / 4.34° |
+
+평균 최대오차 **0.048% vs 0.120%**, 라운드 **2.5 vs 4.25회**.
+
+**어느 방향이 좋은지는 재서 정했습니다.** `my_work/study_startpose.py` 가
+D456을 실험실 배치대로 세우고 물체를 돌려가며, 관절 1도당 화면 변화를 두
+가지 방법으로 잽니다. 축이 시선과 직각인 자세가 가장 나쁘고(2.8~6.8배),
+최적은 축을 카메라로 똑바로 향하는 것도 아닙니다. 그래서 규칙을 정하는 대신
+**잰 값 자체를 최대화**합니다.
+
+**옮겨서 나빠지면 옮기지 않습니다.** 파지 자세가 이미 그 관절을 잘 보는
+경우가 있습니다 — 데스크 램프는 두 관절 축이 거의 나란하고 파지 자세에서
+이미 4.4 px/deg 라, 전용 자세로 가면 오히려 4.2로 떨어졌습니다. 이득이
+1.15배 미만이면 그냥 파지 자세에서 읽습니다 (`dual_view.MIN_VIEW_GAIN`).
+
+- 새 파일: `my_work/study_startpose.py`, `my_work/study_startpose.png`
+- 새 함수: `robot_scene.observability_px_per_deg`, `ViewScorer`,
+  `find_viewing_poses`, `parallel_groups`
+- 되돌리려면: `dual_view.py --no-view-poses`
+
+### 카메라 캘리브레이션을 파이프라인이 씁니다 (실물 쪽 필수)
+
+각도를 읽는 자세는 **카메라가 어디서 보느냐**로 정해집니다. 도면상의 명목
+위치로 계산해 두고 실제 카메라가 10 cm 옆에 있으면, 고른 자세가 최적이
+아니고 심하면 물체가 화면 밖으로 나갑니다. 카메라는 팔이 부딪힐 수 있는
+**장애물**이기도 해서 충돌 판정도 함께 어긋납니다.
+
+```bash
+cd my_work
+R=../robot_learning/scripts/run_drake_env.sh
+$R python calibrate_camera.py --matrix <4x4, 숫자 16개> --rms-px 0.31
+$R python calibrate_camera.py --show --check-poses     # 확인
+```
+
+`calibration/camera_cam_d456_front.json` 이 있으면 자동으로 이깁니다.
+실행할 때마다 어느 값을 쓰는지 화면에 찍히고, 실물 모드인데 파일이 없으면
+경고합니다. 자세한 것은 [calibration/README.md](calibration/README.md).
+
+**캘리브레이션 값은 PC마다 다르므로 git에 올리지 않습니다** (`.gitignore`).
+팀원끼리 파일을 주고받지 마세요.
+
+- 새 파일: `my_work/calibrate_camera.py`, `calibration/README.md`
+
+### 램프 스캔이 실제 색으로 보입니다
+
+0813 `desk_lamp_minimal_sim` 배달물의 정점 색을 화면에 반영했습니다.
+Drake는 메시 하나에 단색 하나만 입히므로(Meshcat으로 나가는 재질에
+`vertexColors=false`가 박혀 나갑니다), 색이 비슷한 면끼리 6무리로 묶어
+조각으로 나누고 무리마다 평균색을 줍니다.
+
+색이 보랏빛인 것은 촬영 조명색이 스캔에 함께 구워졌기 때문입니다.
+`export DESK_LAMP_WHITE_BALANCE=1` 로 보정할 수 있습니다.
+
+배달물 경로는 세 곳을 찾습니다: `DESK_LAMP_DELIVERY` 환경변수 →
+저장소 안 `assets/desk_lamp_minimal_sim` → `~/Downloads`.
+
+### 고친 것
+
+- **Robotiq 2F-85로 바꾸면서 남아 있던 PGC 전용 관절 이름** 때문에 sim 모드가
+  시작도 못 하고 죽던 문제 (`finger1_joint` 하드코딩 → 그리퍼 정의에서 읽음)
+- `requirements/drake.txt` 에 **scipy 누락** — 총최소제곱(TLS) 추정기가 쓰는데
+  잠금 파일에 없어서 새 PC에서 설치하면 그 자리에서 깨졌습니다
+- 로그로 넘겨 돌릴 때 마지막 URDF 질문에서 `EOFError` 로 죽던 문제
+
+### 새로 생긴 실행 옵션
+
+| 옵션 | 뜻 |
+| --- | --- |
+| `--no-view-poses` | 관절별 각도 측정 자세를 쓰지 않음 (예전 방식) |
+| `--seed` | 측정 잡음·경로 계획의 난수 씨앗 |
+| `DESK_LAMP_WHITE_BALANCE=1` | 스캔 색의 조명 치우침 보정 |
+| `DESK_LAMP_DELIVERY=경로` | 램프 배달물이 저장소 밖에 있을 때 |
+| `CAMERA_CALIBRATION=경로` | 캘리브레이션 파일을 다른 곳에 뒀을 때 |
+
+---
+
+## 2026-08-13 — 저장소 공개
+
+- 두 PC(작업 PC / 로봇 PC)에서 `git clone` 만으로 환경을 세울 수 있도록 정리
+- `setup/bootstrap.sh` 한 줄 설치, `setup/doctor.py` 12개 항목 자가 진단
+- `SETUP.md`, `AGENTS.md`(AI용), `README.md`
+- 폴더 이름 `HTD-main` → `PIVOT`

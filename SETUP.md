@@ -94,13 +94,64 @@ cd my_work
 ### 시뮬레이션 검증 (PC 한 대, 데스크 램프)
 
 ```bash
-cd my_work
+cd ~/Desktop/PIVOT/my_work
 ../robot_learning/scripts/run_drake_env.sh python dual_view.py \
     --mode sim --object desklamp
 ```
 
-화면 두 개가 뜹니다 — `http://localhost:7000` (계획·탐색), `http://localhost:7001`
-(로봇 + 작업자 UI). 브라우저 탭 두 개로 나란히 열고 UI의 시작 버튼을 누릅니다.
+**터미널에 뜨는 두 주소를 브라우저 탭 두 개로 여세요.**
+
+```
+[1] 계획·탐색 화면      http://localhost:7000     ← 알고리즘이 자세를 고르는 곳
+[2] 로봇 + 작업자 UI    http://localhost:7001     ← RB5가 램프를 들고 도는 곳
+```
+
+둘 다 연 뒤 [2] 화면의 **`두 화면을 모두 연 뒤 눌러 시작`** 버튼을 누르면
+시작합니다. 준비(후보 자세 계산)에 40~60초 걸리고, 그 뒤 한 라운드가
+1~2분입니다. 보통 **2라운드**에서 끝납니다.
+
+한 라운드에서 이런 순서로 움직입니다.
+
+```
+파지 자세 → 관절각 조정 → 각도 측정 자세 → 중력 3방향 측정 → 복귀
+```
+
+램프는 두 관절 축이 거의 나란해서 각도 측정 자세가 **하나로 묶입니다.**
+게다가 파지 자세가 이미 잘 보는 편이라(4.4 px/deg) 그냥 그 자리에서 읽고
+넘어가는 라운드도 있습니다 — 그럴 때는 `파지 자세가 이미 충분해 그대로
+읽습니다` 라고 찍힙니다. 3-link는 축이 90° 어긋나 자세가 둘로 나뉩니다.
+
+끝나면 부위별 밀도와 **실측 GT 대비 오차**가 찍힙니다. 마지막에 URDF를
+만들지 물어봅니다.
+
+```
+  link_3 (연결부)  밀도  374.2 +/- 2.3 kg/m^3   [GT  373  오차 0.21%]
+  link_2 (베이스)  밀도 2389.7 +/- 0.8 kg/m^3   [GT 2390  오차 0.01%]
+  link_1 (Head)    밀도  190.4 +/- 0.3 kg/m^3   [GT  190  오차 0.03%]
+```
+
+**눈으로 볼 때 쓸 만한 옵션**
+
+```bash
+# 사람이 슬라이더로 각도를 맞추는 대신 자동으로 (구경만 할 때)
+... --auto-adjust
+
+# 로봇 움직임을 느리게 (기본 8초, 12초면 여유 있게 보입니다)
+... --move-duration 12
+
+# 브라우저를 열 새도 없이 바로 시작 (녹화·로그용)
+... --autostart --auto-adjust
+
+# 램프 색이 보랏빛으로 보이는 게 거슬리면 (스캔에 조명색이 구워져 있습니다)
+DESK_LAMP_WHITE_BALANCE=1 ... python dual_view.py --mode sim --object desklamp
+```
+
+**숫자만 빠르게 보고 싶다면** 화면 없이 도는 것도 있습니다.
+
+```bash
+../robot_learning/scripts/run_drake_env.sh python desk_lamp.py          # 8번 반복 채점
+../robot_learning/scripts/run_drake_env.sh python lamp_view.py          # 램프만 3D로
+```
 
 ### 실물 로봇 검증 (PC 두 대, 커스텀 물체)
 
