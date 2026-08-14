@@ -986,6 +986,9 @@ class RobotScreen:
         actual = np.asarray(self.driver.joint_positions(), dtype=float)
         for joint, value in zip(self.arm_joints, actual):
             self.q[joint.position_start()] = value
+        # 화면을 실제 자세로 '옮겨 놓는' 것이지 로봇이 움직인 게 아니다.
+        # 기준선을 같이 옮겨 두지 않으면 순간이동 감시가 헛경고를 낸다.
+        self._last_published = None
         start = np.array([self.setup["start_q"][j.position_start()]
                           for j in self.arm_joints])
         print(f"[로봇] 현재 팔 자세를 읽었습니다"

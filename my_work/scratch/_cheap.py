@@ -14,6 +14,12 @@ IK 가 거는 제약은 세 가지다.
 맞다면: theta 가 흔들려도 팔 자세는 그대로 두고 충돌만 다시 보면 된다.
 IK 최적화(비싸고 초기추측에 흔들림)를 충돌 질의(싸고 결정적)로 바꿀 수 있다.
 """
+
+import sys as _sys, pathlib as _pathlib
+# 이 폴더는 my_work 밖이라 형제 모듈이 안 보인다. run_drake_env.sh 가
+# PYTHONPATH 를 지우므로 (ROS 오염 제거) 환경변수로는 못 넣는다.
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import time
 import numpy as np
 import angle_aware as aa, density_id_drake as alg, density_id_objects as obj

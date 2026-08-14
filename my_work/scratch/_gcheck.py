@@ -1,4 +1,10 @@
 """Robotiq 2F-85 로 세 물체의 후보 자세가 얼마나 나오는지."""
+
+import sys as _sys, pathlib as _pathlib
+# 이 폴더는 my_work 밖이라 형제 모듈이 안 보인다. run_drake_env.sh 가
+# PYTHONPATH 를 지우므로 (ROS 오염 제거) 환경변수로는 못 넣는다.
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import io, contextlib, time
 import numpy as np
 import density_id_objects as obj, robot_scene as rs, dual_view as dv

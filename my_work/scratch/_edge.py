@@ -1,4 +1,10 @@
 """가설 검증: 정보이득이 고르는 '극단 자세' 가 정말 IK 가 약한 구역인가."""
+
+import sys as _sys, pathlib as _pathlib
+# 이 폴더는 my_work 밖이라 형제 모듈이 안 보인다. run_drake_env.sh 가
+# PYTHONPATH 를 지우므로 (ROS 오염 제거) 환경변수로는 못 넣는다.
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import numpy as np
 import angle_aware as aa, density_id_drake as alg, density_id_objects as obj
 import design_core as dc, desk_lamp as lamp, robot_scene as rs

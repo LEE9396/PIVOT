@@ -40,6 +40,106 @@ AI 에게 시킬 거라면 [AGENTS.md](AGENTS.md) 를 읽히세요.
 
 ---
 
+## 어떻게 돌리나 — 두 가지 검증
+
+같은 알고리즘 코드를 두 가지로 검증합니다. **Drake 가 대신하던 셋**(팔을
+움직이는 것 · 힘을 계산하는 것 · 각도를 읽는 것)이 실물로 바뀔 뿐,
+**알고리즘 코드는 한 줄도 안 바뀝니다.**
+
+모든 명령은 `my_work/` 에서, 반드시 이 래퍼를 앞에 붙입니다.
+그냥 `python` 을 부르면 pydrake 임포트가 조용히 깨집니다.
+
+```bash
+cd ~/Desktop/PIVOT/my_work
+R=../robot_learning/scripts/run_drake_env.sh
+```
+
+### ① 시뮬레이션 검증 — 장비 없이
+
+알고리즘이 맞는지 여기서 걸러냅니다. 정답을 알고 있으므로 채점이 됩니다.
+
+```bash
+# 숫자만 보기 (20초, 조작 없음) — 최종 산출물 URDF 까지 만든다
+$R python export_urdf.py --object desklamp
+$R python export_urdf.py --object 3link
+
+# 전 과정을 화면으로 (3~4분) — 브라우저 탭 두 개를 나란히 연다
+$R python dual_view.py --mode sim --object desklamp
+$R python dual_view.py --mode sim --object 3link --joint-range-deg 0 180
+
+# 사람 조작 없이 자동으로 (검사용)
+$R python dual_view.py --mode sim --object 3link --autostart --auto-adjust
+```
+
+화면은 `localhost:7000`(계획·탐색)과 `localhost:7001`(로봇 + 작업자 UI).
+원격 PC 라면 `ssh -L 7000:localhost:7000 -L 7001:localhost:7001 사용자@PC`.
+
+설계 선택을 바꿔 보려면 `--select` `--criterion` `--estimator` `--stop-rule`.
+각 선택지를 비교한 실험은 `study_*.py` 여덟 개입니다.
+
+### ② 실물 로봇 검증 — PC 한 대면 됩니다
+
+**시작 전에 반드시 끝나 있어야 하는 것 넷.** 이걸 안 하면 알고리즘이
+아무리 정확해도 답이 틀립니다.
+
+| | 무엇 | 왜 |
+| --- | --- | --- |
+| 1 | [카메라 캘리브레이션](calibration/README.md) | 안 하면 도면상 명목 위치로 각도 측정 자세를 계산합니다 |
+| 2 | **타어링** | 센서는 그리퍼(2F-85 는 0.4 kg)까지 다 읽습니다. 램프 전체가 0.56 kg 입니다 |
+| 3 | `hardware.py` 채우기 | `Rb5Driver` `Aft200Sensor` `FoundationPoseSensor` |
+| 4 | 저울로 총무게 | 사전분포와 파지점 어긋남 풀이에 들어갑니다 |
+
+```bash
+# 0) 장비 없이 배선만 확인 — 실물 코드가 지나가는 길을 그대로 밟는다
+$R python dual_view.py --mode deploy --bus local --hardware sim \
+    --object 3link --autostart --auto-adjust
+
+# 1) 카메라 캘리브레이션 (보정판을 그리퍼에 볼트로 고정한 상태)
+python3 calib_detect.py --serve --port 5566 --square-mm <자로 잰 값>   # 터미널 1
+$R python calibrate_camera.py --run --poses 20                        # 터미널 2
+
+# 2) 실제 실험
+$R python dual_view.py --mode deploy --bus local --hardware real \
+    --object desklamp --max-rounds 8 --move-duration 8
+```
+
+실험 중 순서는 이렇습니다. 로봇은 2~5 단계 동안 **절대 움직이지 않습니다.**
+
+```
+1. 작업자가 물체를 그리퍼에 물린다     서보 오프 · 버튼으로 확인
+2. 로봇이 시작 자세로 이동             실제 팔 자세를 읽어 경로를 계획한다
+3. 작업자가 물체 관절각을 손으로 맞춘다  로봇 정지 · 신호등 초록
+4. 각도 확인 → 손 뗌 확인               버튼 두 개
+5. FoundationPose 가 실제 각도를 읽는다
+6. 천천히 이동하며 중력 3방향 측정      신호등 빨강
+   └ 목표 불확실성에 도달할 때까지 3~6 반복 → URDF
+```
+
+> 검출기(`calib_detect.py`)만 시스템 python 에서 돕니다. opencv 가 필요한
+> 곳이 거기뿐이라 고정된 Drake 환경을 안 건드리려는 것이고,
+> FoundationPose 도 같은 구조입니다.
+
+로봇을 계획 프로세스에서 떼고 싶으면 `--bus tcp` + `robot_node.py` 를 쓰지만,
+**대개 필요 없습니다.** 이유는 [VERIFICATION.md](my_work/VERIFICATION.md) 2장.
+
+### 산출물
+
+```
+my_work/outputs/estimated_desklamp.urdf    <- 최종 산출물
+```
+
+램프는 배달물 원본 URDF 를 그대로 두고 **링크별 질량·무게중심·관성텐서만**
+바꿔 넣습니다. 형상·관절·충돌메시는 원본 그대로입니다.
+
+```bash
+./view_urdf.sh                    # Drake 뷰어로 열어 본다
+```
+
+절차의 근거와 세부는 [my_work/VERIFICATION.md](my_work/VERIFICATION.md),
+알고리즘 설명은 [my_work/ALGORITHM.md](my_work/ALGORITHM.md).
+
+---
+
 ## 지금까지 나온 결과
 
 실물 스캔한 스탠드 램프(3부위, 총 562 g)를 시뮬레이션에서 돌린 결과입니다.
