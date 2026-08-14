@@ -698,7 +698,8 @@ class RobotScreen:
             self._max_jump_deg = max(getattr(self, "_max_jump_deg", 0.0), jump)
             if jump > self.jump_warn_deg:
                 print(f"[로봇] 경고: 화면이 {jump:.1f} deg 건너뜁니다"
-                      f" (한 프레임 한계 {self.jump_warn_deg:.0f} deg)"
+                      f" (프레임 {getattr(self, '_frame_index', -1)},"
+                      f" 한계 {self.jump_warn_deg:.0f} deg)"
                       f" — 순간이동처럼 보입니다")
         self._last_published = self.q.copy()
         self.plant.SetPositions(self.plant_context, self.q)
@@ -737,6 +738,14 @@ class RobotScreen:
         duration_s = duration_s or self.move_duration_s
         target = np.array([full_q[j.position_start()] for j in self.arm_joints])
         start = np.array([self.q[j.position_start()] for j in self.arm_joints])
+        if self._last_published is not None:
+            shown = np.array([self._last_published[j.position_start()]
+                              for j in self.arm_joints])
+            gap = np.degrees(np.abs(start - shown)).max()
+            if gap > 1.0:
+                print(f"[진단] 이동 시작점이 화면과 {gap:.1f} deg 다릅니다"
+                      f" — 화면 {np.round(np.degrees(shown), 1)}"
+                      f" / 시작 {np.round(np.degrees(start), 1)}")
 
         # RRT-Connect 로 충돌 없는 경로를 찾는다. 직선 보간은 두 끝점만
         # 안전할 뿐 사이를 보장하지 않는다 (물체가 테이블을 관통했다).
@@ -758,6 +767,11 @@ class RobotScreen:
             if needed > duration_s:
                 duration_s = float(needed)
 
+        first = np.degrees(np.abs(np.asarray(path[0]) - start)).max()
+        last = np.degrees(np.abs(np.asarray(path[-1]) - target)).max()
+        if max(first, last) > 1.0:
+            print(f"[진단] 경로가 어긋납니다: path[0]-start {first:.1f} deg,"
+                  f" path[-1]-target {last:.1f} deg, 경유점 {len(path)}")
         self.console.moving(f"{what}  ({duration_s:.0f}초, 경유점 {len(path)}개)")
         steps = max(int(duration_s / self.frame_dt_s), 2)
         waypoints = pp.ArmPathPlanner.resample(path, steps + 1)
@@ -775,6 +789,7 @@ class RobotScreen:
 
         worst, worst_pair = np.inf, None
         for step in range(steps + 1):
+            self._frame_index = step
             fraction = step / steps
             # 사이클로이드 프로파일로 호길이를 따라간다 (시작·끝 속도 0)
             s = fraction - np.sin(2.0 * np.pi * fraction) / (2.0 * np.pi)

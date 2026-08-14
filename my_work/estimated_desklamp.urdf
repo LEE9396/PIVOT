@@ -5,8 +5,8 @@
      가정: 각 부위 내부 밀도 균일, 측정 중 관절 고정.
      추정 밀도 [kg/m^3] (95% 구간):
        link_3: 373.8 +/- 2.4
-       link_2: 2389.9 +/- 0.8
-       link_1: 190.5 +/- 0.3
+       link_2: 2390.1 +/- 0.8
+       link_1: 190.5 +/- 0.4
   -->
   <link name="link_3">
     <visual>
@@ -23,8 +23,8 @@
     </collision>
     <inertial>
       <origin xyz="-0.022877 0.104836 0.115039"/>
-      <mass value="0.082087"/>
-      <inertia ixx="0.000960591" ixy="0.000000000" ixz="0.000000000" iyy="0.000546905" iyz="0.000000000" izz="0.000480981"/>
+      <mass value="0.082086"/>
+      <inertia ixx="0.000960574" ixy="0.000000000" ixz="0.000000000" iyy="0.000546895" iyz="0.000000000" izz="0.000480973"/>
     </inertial>
   </link>
   <link name="link_2">
@@ -42,8 +42,8 @@
     </collision>
     <inertial>
       <origin xyz="0.174167 0.215217 -0.076682"/>
-      <mass value="0.396004"/>
-      <inertia ixx="0.001438469" ixy="0.000000000" ixz="0.000000000" iyy="0.002869094" iyz="0.000000000" izz="0.003807577"/>
+      <mass value="0.396025"/>
+      <inertia ixx="0.001438544" ixy="0.000000000" ixz="0.000000000" iyy="0.002869245" iyz="0.000000000" izz="0.003807778"/>
     </inertial>
   </link>
   <link name="link_1">
@@ -61,8 +61,8 @@
     </collision>
     <inertial>
       <origin xyz="-0.046702 0.019600 0.036277"/>
-      <mass value="0.084023"/>
-      <inertia ixx="0.000210424" ixy="0.000000000" ixz="0.000000000" iyy="0.000424467" iyz="0.000000000" izz="0.000327016"/>
+      <mass value="0.084003"/>
+      <inertia ixx="0.000210375" ixy="0.000000000" ixz="0.000000000" iyy="0.000424369" iyz="0.000000000" izz="0.000326940"/>
     </inertial>
   </link>
   <joint name="joint_2_3" type="revolute">

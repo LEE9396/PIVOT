@@ -119,6 +119,13 @@ class ArmPathPlanner:
 
         tree_a, parents_a = [start], [-1]
         tree_b, parents_b = [goal], [-1]
+        # 두 트리를 번갈아 키우느라 매 반복마다 a 와 b 를 맞바꾼다. 그래서
+        # 연결이 성사된 순간의 tree_a 가 **출발 쪽이 아닐 수 있다.** 이걸
+        # 안 따지면 경로가 거꾸로 나온다 — 로봇이 목표 자세로 순간이동한 뒤
+        # 거꾸로 되짚어 와서 출발점에 멈춘다 (측정 자세에 도착하지 못한다).
+        # 실제로 그렇게 돌고 있었다: 화면이 134도 건너뛰고, 이동이 끝난 뒤
+        # 팔은 출발 자세에 있었다.
+        a_is_start = True
         for _ in range(max_iters):
             if self.rng.random() < goal_bias:
                 sample = tree_b[int(self.rng.integers(len(tree_b)))]
@@ -136,9 +143,18 @@ class ArmPathPlanner:
                         path_a = self._trace(tree_a, parents_a, new_a)
                         path_b = self._trace(tree_b, parents_b, new_b)
                         path = path_a + path_b[::-1][1:]
-                        return self.shortcut(path)
+                        if not a_is_start:
+                            path = path[::-1]
+                        path = self.shortcut(path)
+                        # 마지막으로 한 번 더 확인한다. 방향이 틀린 경로는
+                        # 조용히 잘못 움직이므로 여기서 반드시 잡아야 한다.
+                        if (np.linalg.norm(path[0] - start)
+                                > np.linalg.norm(path[-1] - start)):
+                            path = path[::-1]
+                        return path
             tree_a, tree_b = tree_b, tree_a
             parents_a, parents_b = parents_b, parents_a
+            a_is_start = not a_is_start
         return None
 
     @staticmethod

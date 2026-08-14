@@ -118,6 +118,18 @@ def robotiq_urdf_string(opening_m, include_visuals=True, model_name="robotiq"):
         multiplier = ROBOTIQ_MIMIC.get(name, 0.0)
         if multiplier and joint.get("type") == "revolute":
             # 회전을 origin 의 rpy 로 구워 넣고 관절을 굳힌다.
+            #
+            # 예전에는 "축이 다 y 니까 pitch 에 더하면 된다" 고 줄여 썼는데
+            # 부호가 반대였다. 그래서 **오므리라고 할수록 벌어졌다** —
+            # 19.4 mm 를 요청하면 실제로는 116.5 mm 로 활짝 열렸다
+            # (화면에서 물체가 죠 사이에 떠 있는 것처럼 보인 원인).
+            #
+            # 이제 줄여 쓰지 않고 회전을 제대로 곱한다. URDF 관절은
+            #     자식자세 = origin * Rot(축, 각도)
+            # 이므로 origin 의 회전에 축 회전을 곱해 넣으면 된다.
+            from pydrake.common.eigen_geometry import AngleAxis
+            from pydrake.math import RollPitchYaw, RotationMatrix
+
             axis = joint.find("axis")
             direction = np.fromstring(axis.get("xyz"), sep=" ")
             direction = direction / np.linalg.norm(direction)
@@ -125,9 +137,11 @@ def robotiq_urdf_string(opening_m, include_visuals=True, model_name="robotiq"):
             if origin is None:
                 origin = ET.SubElement(joint, "origin", xyz="0 0 0")
             rpy = np.fromstring(origin.get("rpy", "0 0 0"), sep=" ")
-            # 이 URDF 의 관절 축은 모두 y 축이라 pitch 하나로 표현된다.
-            rpy[1] += multiplier * angle * direction[1] * -1.0
-            origin.set("rpy", " ".join(f"{v:.9g}" for v in rpy))
+            rotated = (RotationMatrix(RollPitchYaw(rpy))
+                       @ RotationMatrix(AngleAxis(multiplier * angle,
+                                                  direction)))
+            origin.set("rpy", " ".join(
+                f"{v:.9g}" for v in RollPitchYaw(rotated).vector()))
         joint.set("type", "fixed")
         for tag in ("axis", "limit", "mimic", "dynamics"):
             for child in list(joint.findall(tag)):
