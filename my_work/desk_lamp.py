@@ -423,13 +423,23 @@ def pinch_grasp(name, min_width_mm=12.0, max_width_mm=70.0):
         spans = [(float(np.ptp((vertices - center) @ axes[k])), k)
                  for k in range(3)]
         spans.sort()
-        # 폭은 **파지점 근처** 에서 잰다. 조각 전체의 최대 폭을 쓰면 패드가
-        # 실제 단면보다 넓게 벌어져 물체가 죠 사이에서 논다.
+        # 폭은 **파지점 근처의 진짜 표면** 에서 잰다.
+        #   - 조각 전체의 최대 폭을 쓰면 패드가 단면보다 넓게 벌어진다.
+        #   - 볼록 조각은 껍질이라 실제 표면보다 뚱뚱하다. 그래서 폭만은
+        #     화면에 보이는 원본 메시에서 잰다. 안 그러면 패드가 표면에서
+        #     몇 mm 떠 있어 "쥐지 않고 떠 있는" 그림이 된다.
         along = (vertices - center) @ axes[spans[2][1]]
         near = vertices[np.abs(along) <= 0.015]
         if len(near) < 4:
             near = vertices
         width = 1000.0 * float(np.ptp((near - center) @ axes[spans[0][1]]))
+        surface = part_mesh(name)[0]
+        along_s = (surface - center) @ axes[spans[2][1]]
+        across_s = (surface - center) @ axes[spans[1][1]]
+        band = surface[(np.abs(along_s) <= 0.015) & (np.abs(across_s) <= 0.015)]
+        if len(band) >= 4:
+            width = min(width, 1000.0 * float(
+                np.ptp((band - center) @ axes[spans[0][1]])))
         if not (min_width_mm <= width <= max_width_mm):
             continue
         length = spans[2][0]

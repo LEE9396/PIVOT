@@ -587,7 +587,8 @@ class RobotScreen:
                  angle_floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG, seed=0,
                  min_distance_m=rs.MIN_DISTANCE_M, plan_iters=20000,
                  settle_s=0.3, grasp_error_m=None,
-                 max_joint_speed_deg=DEFAULT_MAX_JOINT_SPEED_DEG):
+                 max_joint_speed_deg=DEFAULT_MAX_JOINT_SPEED_DEG,
+                 check_motion=True):
         self.spec = spec
         self.setup = setup
         self.meshcat = meshcat                      # None 이면 로봇 화면 없음
@@ -611,6 +612,12 @@ class RobotScreen:
         self.move_duration_s = move_duration_s
         # 관절 속도 상한 [rad/s]. 경로가 길어도 이보다 빨리 돌지 않는다.
         self.max_joint_speed_rad = np.deg2rad(max_joint_speed_deg)
+        # 한 프레임에 이만큼 넘게 튀면 알린다. 8초 이동에서 관절이 최대
+        # 15 deg/s 로 도니 30 ms 프레임에서는 0.5 deg 가 정상이다.
+        self.jump_warn_deg = 5.0
+        # 이동 중 실제로 부딪히는지 프레임마다 확인할지. 질의가 프레임마다
+        # 들어가 조금 느려지지만, 계획과 실행이 어긋나는지 알려면 필요하다.
+        self.check_motion = check_motion
         self.frame_dt_s = frame_dt_s
         self.angle_rel_error = angle_rel_error
         self.angle_floor_deg = angle_floor_deg
@@ -643,6 +650,7 @@ class RobotScreen:
         self.plant_context = self.plant.GetMyMutableContextFromRoot(self.context)
 
         self.q = self.plant.GetPositions(self.plant_context).copy()
+        self._last_published = None
         for joint in self.finger_joints:
             self.q[joint.position_start()] = setup["finger"]
         self.limits_deg = [(float(np.degrees(lo)), float(np.degrees(hi)))
@@ -658,6 +666,7 @@ class RobotScreen:
         self.planner = pp.ArmPathPlanner(
             self.plant, self.plant.GetMyContextFromRoot(self.plan_root),
             self.arm_joints, min_distance_m, self.q, seed=seed)
+        self.min_distance_m = min_distance_m
         self.plan_iters = plan_iters
         self.plan_cache = {}
         self.samples_per_hold = obj.DEFAULT_SAMPLES_PER_HOLD
@@ -679,9 +688,36 @@ class RobotScreen:
 
     # -- 표시 ----------------------------------------------------------
     def publish(self):
+        # 순간이동 감시. 화면 프레임 사이에 관절이 크게 튀면 사람 눈에는
+        # "순간이동" 으로 보이고, 실물이라면 위험한 명령이다. 계획된 경로를
+        # 따라가는 동안에는 한 프레임에 몇 도씩만 움직여야 한다.
+        if self._last_published is not None:
+            jump = np.degrees(np.max(np.abs(
+                [self.q[j.position_start()] - self._last_published[j.position_start()]
+                 for j in self.arm_joints])))
+            self._max_jump_deg = max(getattr(self, "_max_jump_deg", 0.0), jump)
+            if jump > self.jump_warn_deg:
+                print(f"[로봇] 경고: 화면이 {jump:.1f} deg 건너뜁니다"
+                      f" (한 프레임 한계 {self.jump_warn_deg:.0f} deg)"
+                      f" — 순간이동처럼 보입니다")
+        self._last_published = self.q.copy()
         self.plant.SetPositions(self.plant_context, self.q)
         if self.meshcat is not None:
             self.diagram.ForcedPublish(self.context)
+
+    def clearance(self):
+        """지금 자세에서 가장 가까운 두 형상 사이의 거리 [m]."""
+        query = self.plant.get_geometry_query_input_port().Eval(self.plant_context)
+        pairs = query.ComputeSignedDistancePairwiseClosestPoints(
+            self.min_distance_m)
+        if not pairs:
+            return self.min_distance_m, None
+        worst = min(pairs, key=lambda pair: pair.distance)
+        inspector = query.inspector()
+        names = tuple(
+            self.plant.GetBodyFromFrameId(inspector.GetFrameId(gid)).name()
+            for gid in (worst.id_A, worst.id_B))
+        return worst.distance, names
 
     def set_arm_from(self, full_q):
         for joint in self.arm_joints:
@@ -737,6 +773,7 @@ class RobotScreen:
             self.publish()
             return True
 
+        worst, worst_pair = np.inf, None
         for step in range(steps + 1):
             fraction = step / steps
             # 사이클로이드 프로파일로 호길이를 따라간다 (시작·끝 속도 0)
@@ -745,7 +782,24 @@ class RobotScreen:
             for joint, value in zip(self.arm_joints, waypoints[index]):
                 self.q[joint.position_start()] = value
             self.publish()
+            if self.check_motion:
+                # 계획은 '믿는 형상' 으로 했지만 화면에 있는 것은 실제 형상이다.
+                # 둘이 어긋나면 여기서 잡힌다.
+                distance, pair = self.clearance()
+                if distance < worst:
+                    worst, worst_pair = distance, pair
             time.sleep(self.frame_dt_s)
+        if self.check_motion:
+            print(f"[로봇] {what}: {duration_s:.1f}초, 경유점 {len(path)}개,"
+                  f" 프레임 최대 {getattr(self, '_max_jump_deg', 0.0):.2f} deg,"
+                  f" 최소 간격 {1000*worst:.1f} mm")
+            self._max_jump_deg = 0.0
+        if self.check_motion and worst < 0.0:
+            print(f"[로봇] 경고: 이동 중 {1000*abs(worst):.1f} mm 파고들었습니다"
+                  f" {worst_pair}")
+        elif self.check_motion and worst < self.min_distance_m:
+            print(f"[로봇] 이동 중 최소 간격 {1000*worst:.1f} mm {worst_pair}"
+                  f" (기준 {1000*self.min_distance_m:.0f} mm)")
         for joint, value in zip(self.arm_joints, path[-1]):
             self.q[joint.position_start()] = value
         self.publish()
@@ -923,6 +977,11 @@ class RobotScreen:
         self.adjust(deg, target["round"])
 
         actual = self.object_q_deg.copy()          # 물체가 실제로 놓인 각도
+        # 각도를 재러 가는 이동도 **지금 물체 형상** 으로 계획해야 한다.
+        # 예전에는 이 값이 지난 라운드 각도로 남아 있어서, 이번 라운드의
+        # 물체 모양과 다른 형상으로 경로를 짰다. 그 경로는 실제로는 물체가
+        # 다른 곳에 있으므로 부딪힐 수 있다.
+        self.believed_q_deg = deg.copy()
 
         # --- 3) FoundationPose 로 각도 측정 ---
         measured = self.measure_angles(actual, deg)
