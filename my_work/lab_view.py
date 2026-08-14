@@ -13,7 +13,7 @@
 실행:
     cd ~/Desktop/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python lab_view.py \
-        --plan plan_3link.json
+        --plan outputs/plan_3link.json
     # 계획 없이 배치만 보려면
     ../robot_learning/scripts/run_drake_env.sh python lab_view.py --object 3link
 """

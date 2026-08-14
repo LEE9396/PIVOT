@@ -418,45 +418,64 @@ $R python calibrate_camera.py --show --check-poses
 정답을 모르므로 **불확실성만 보고** 멈춥니다. 잔차(예측과 실측의 차이)가
 모형보다 크면 그만큼 불확실성을 부풀립니다 — 정답 없이 데이터만으로 계산됩니다.
 
-### 두 PC를 TCP/IP로 잇기
+### PC 는 한 대면 됩니다 (권장)
 
-Drake가 있는 파이썬과 로봇 드라이버(ROS1 등)가 있는 파이썬은 보통 다릅니다.
-한 프로세스에 억지로 넣으면 환경이 섞여 깨집니다. **나눠 두면 양쪽 다
-깨끗하고, 로봇을 다른 PC에 두는 것도 그대로 됩니다.**
+**두 대를 쓸 이유가 없습니다.** 예전에는 "Drake 파이썬과 로봇 드라이버
+파이썬이 다르니 나눈다"고 적어 두었는데, 이 이유는 성립하지 않습니다.
+`robot_node.py` 도 `pydrake` 를 import 하고 `dual_view.prepare()` 를 돌립니다
+(IK·RRT·충돌 검사). 즉 **로봇 쪽도 Drake 환경이 그대로 필요합니다.**
 
-```
-[작업 PC]  dual_view.py --mode deploy --bus tcp
-              화면 [1] 계획·탐색
-              포트 5555에서 로봇 쪽 연결을 기다림
-                    |
-                    |  JSON 한 줄씩
-                    v
-[로봇 PC]  robot_node.py --host <작업PC> --port 5555
-              화면 [2] 작업자 UI
-              RB5 + AFT200 + FoundationPose
-```
+장비 셋은 모두 바깥에 있는 것에 붙는 얇은 클라이언트입니다.
 
-**터미널 1 — 작업 PC**
+| 장비 | 붙는 방식 | Drake 환경에 들어오나 |
+| --- | --- | --- |
+| RB5-850E | 컨트롤러의 TCP 소켓 API | 소켓만 열면 됨 |
+| AFT200-D80 | 1000 Hz 스트림 | 스트림만 읽으면 됨 |
+| FoundationPose | **별도 노드** (CUDA·PyTorch 자기 환경) | 안 들어옴 — 소켓으로 붙임 |
+
+FoundationPose 는 어차피 자기 환경에서 도는 노드입니다(`hardware.py` 의
+`FoundationPoseSensor` 설명). 그러니 무거운 의존성이 파이프라인 프로세스로
+들어올 일이 없고, 나눠야 할 것은 **PC 가 아니라 프로세스**였습니다.
 
 ```bash
+# 한 대에서, 한 프로세스로 (가장 단순)
+$R python dual_view.py --mode deploy --bus local --hardware real \
+    --object desklamp --max-rounds 8
+```
+
+**두 대로 나누면 오히려 손해입니다.** `prepare()` 가 양쪽에서 **각각**
+돕니다(램프 기준 25~50초). 게다가 두 쪽이 서로 다른 플래그로 뜨면
+(`--gripper`, `--grasp-part`, `--steps`, `--min-distance-mm`) 계획 쪽이 검사한
+장면과 로봇 쪽이 충돌·경로에 쓰는 장면이 **조용히 달라집니다.** 프로토콜이
+`arm_solutions` 를 넘겨주긴 하지만, 로봇 쪽 `move_to` 는 자기 장면으로
+경로를 다시 계획하기 때문입니다.
+
+### 그래도 나누고 싶다면 — 한 대에서 두 프로세스
+
+로봇 드라이버를 계획 프로세스에서 떼어 두고 싶으면, 같은 PC 에서 프로세스만
+나누면 됩니다. PC 두 대와 코드가 완전히 같고 주소만 `127.0.0.1` 입니다.
+
+```bash
+# 터미널 1
 $R python dual_view.py --mode deploy --bus tcp --bus-port 5555 \
-    --object 3link --joint-range-deg 0 180 \
-    --angle-error 0 --angle-floor-deg 2 --max-rounds 8
-```
+    --object 3link --joint-range-deg 0 180 --max-rounds 8
 
-**터미널 2 — 로봇 PC**
-
-```bash
-python robot_node.py --host 192.168.0.10 --port 5555 \
+# 터미널 2 — 플래그를 터미널 1 과 반드시 똑같이 맞출 것
+$R python robot_node.py --host 127.0.0.1 --port 5555 \
     --object 3link --joint-range-deg 0 180 \
     --hardware real --move-duration 8
 ```
 
-방화벽을 여세요.
+진짜로 PC 두 대가 필요한 경우는 하나뿐입니다 — **로봇이 물리적으로 다른
+망에 있어 작업 PC 에서 컨트롤러에 못 닿을 때.** 그때만 터미널 2 의
+`--host` 를 작업 PC 주소로 바꾸고 방화벽을 엽니다.
 
 ```bash
 sudo ufw allow 5555/tcp
 ```
+
+한 대로 갈 때 그 PC 가 갖춰야 하는 것: 로봇 컨트롤러·F/T 와 같은 망,
+FoundationPose 노드를 돌릴 GPU (또는 그 노드에 소켓으로 닿을 것).
 
 ### 주고받는 내용
 

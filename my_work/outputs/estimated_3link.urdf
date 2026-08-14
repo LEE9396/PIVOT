@@ -4,9 +4,9 @@
      부위별 밀도를 로봇 측정으로 추정해 생성한 sim-ready 자산.
      가정: 각 부위 내부 밀도 균일, 측정 중 관절 고정.
      추정 밀도 [kg/m^3] (95% 구간):
-       link0_base: 5199.4 +/- 3.5
-       link1_elbow: 1292.5 +/- 5.5
-       link2_tip: 641.0 +/- 3.3
+       link0_base: 5200.7 +/- 3.8
+       link1_elbow: 1399.7 +/- 8.8
+       link2_tip: 699.7 +/- 2.6
   -->
   <link name="link0_base">
     <visual>
@@ -23,46 +23,46 @@
     </collision>
     <inertial>
       <origin xyz="0.075000 0.000000 0.000000"/>
-      <mass value="1.498054"/>
-      <inertia ixx="0.000483372" ixy="0.000000000" ixz="0.000000000" iyy="0.003050537" iyz="0.000000000" izz="0.003050537"/>
+      <mass value="1.498432"/>
+      <inertia ixx="0.000483494" ixy="0.000000000" ixz="0.000000000" iyy="0.003051307" iyz="0.000000000" izz="0.003051307"/>
     </inertial>
   </link>
   <link name="link1_elbow">
     <visual>
-      <origin xyz="0.057000 -0.027000 0.000000"/>
+      <origin xyz="0.049974 -0.023672 0.000000"/>
       <geometry>
         <box size="0.110000 0.044000 0.044000"/>
       </geometry>
     </visual>
     <collision>
-      <origin xyz="0.057000 -0.027000 0.000000"/>
+      <origin xyz="0.049974 -0.023672 0.000000"/>
       <geometry>
         <box size="0.110000 0.044000 0.044000"/>
       </geometry>
     </collision>
     <inertial>
-      <origin xyz="0.057000 -0.027000 0.000000"/>
-      <mass value="0.269366"/>
-      <inertia ixx="0.000086915" ixy="0.000000000" ixz="0.000000000" iyy="0.000315068" iyz="0.000000000" izz="0.000315068"/>
+      <origin xyz="0.049974 -0.023672 0.000000"/>
+      <mass value="0.332706"/>
+      <inertia ixx="0.000120332" ixy="0.000055338" ixz="0.000000000" iyy="0.000458008" iyz="0.000000000" izz="0.000484221"/>
     </inertial>
   </link>
   <link name="link2_tip">
     <visual>
-      <origin xyz="0.044500 0.000000 -0.027000"/>
+      <origin xyz="0.032692 0.000000 -0.019836"/>
       <geometry>
         <box size="0.085000 0.044000 0.044000"/>
       </geometry>
     </visual>
     <collision>
-      <origin xyz="0.044500 0.000000 -0.027000"/>
+      <origin xyz="0.032692 0.000000 -0.019836"/>
       <geometry>
         <box size="0.085000 0.044000 0.044000"/>
       </geometry>
     </collision>
     <inertial>
-      <origin xyz="0.044500 0.000000 -0.027000"/>
-      <mass value="0.104015"/>
-      <inertia ixx="0.000033562" ixy="0.000000000" ixz="0.000000000" iyy="0.000079407" iyz="0.000000000" izz="0.000079407"/>
+      <origin xyz="0.032692 0.000000 -0.019836"/>
+      <mass value="0.154569"/>
+      <inertia ixx="0.000058606" ixy="0.000000000" ixz="0.000036202" iyy="0.000168322" iyz="0.000000000" izz="0.000146357"/>
     </inertial>
   </link>
   <joint name="joint1" type="revolute">
@@ -70,13 +70,13 @@
     <child link="link1_elbow"/>
     <origin xyz="0.152000 0.027000 0.000000"/>
     <axis xyz="0.0 0.0 1.0"/>
-    <limit lower="0.000000" upper="2.967100" effort="10" velocity="1"/>
+    <limit lower="0.000000" upper="3.141593" effort="10" velocity="1"/>
   </joint>
   <joint name="joint2" type="revolute">
     <parent link="link1_elbow"/>
     <child link="link2_tip"/>
     <origin xyz="0.114000 -0.027000 0.027000"/>
     <axis xyz="0.0 -1.0 0.0"/>
-    <limit lower="0.000000" upper="2.967100" effort="10" velocity="1"/>
+    <limit lower="0.000000" upper="3.141593" effort="10" velocity="1"/>
   </joint>
 </robot>

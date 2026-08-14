@@ -92,7 +92,7 @@ def main():
                     default=aa.DEFAULT_ANGLE_REL_ERROR)
     ap.add_argument("--starts", type=int, default=8)
     ap.add_argument("--estimator", default="tls", choices=("tls", "wls"))
-    ap.add_argument("--plot", default="study_criterion.png")
+    ap.add_argument("--plot", default="figures/study_criterion.png")
     args = ap.parse_args()
 
     g_dirs = dc.CANONICAL_TRIAD

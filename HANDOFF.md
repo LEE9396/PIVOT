@@ -82,6 +82,9 @@ my_work/
   grippers.py           PGC-140 / Robotiq 2F-85 정의와 실측표
   calibrate_camera.py   손-눈 캘리브레이션 결과를 파이프라인에 물리는 도구
   study_*.py            설계 선택지 비교 실험 여덟 개
+  figures/              study_*.py 가 남기는 그림 (문서가 근거로 참조)
+  outputs/              파이프라인 산출물 — URDF·계획·검증 기록 (다시 만들 수 있음)
+  scratch/              한 번 쓰고 남긴 진단 스크립트. 아무 데서도 import 안 함
 setup/                  bootstrap.sh (설치), doctor.py (12항목 자가 진단)
 assets/                 협업자가 준 램프 스캔 배달물
 calibration/            카메라 캘리브레이션 결과 (PC마다 다름, git에 안 올림)

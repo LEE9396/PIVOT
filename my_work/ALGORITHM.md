@@ -484,11 +484,11 @@ flowchart TD
 
 | 파일 | 비교 대상 | 결과 그림 |
 | --- | --- | --- |
-| `study_continuous.py` | 격자 vs 연속 최적화 | `study_continuous.png` |
-| `study_tilt.py` | 어느 방향으로 기울일까 | `study_tilt.png` |
-| `study_tls.py` | WLS vs TLS | `study_tls.png` |
-| `study_criterion.py` | D vs A vs E 기준 | `study_criterion.png` |
-| `study_stopping.py` | 언제 멈출까 | `study_stopping.png` |
+| `study_continuous.py` | 격자 vs 연속 최적화 | `figures/study_continuous.png` |
+| `study_tilt.py` | 어느 방향으로 기울일까 | `figures/study_tilt.png` |
+| `study_tls.py` | WLS vs TLS | `figures/study_tls.png` |
+| `study_criterion.py` | D vs A vs E 기준 | `figures/study_criterion.png` |
+| `study_stopping.py` | 언제 멈출까 | `figures/study_stopping.png` |
 
 ---
 

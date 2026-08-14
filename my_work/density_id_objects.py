@@ -1046,7 +1046,7 @@ def validate(spec, hinge, n_rounds=6, n_random_seeds=10,
     return dict(spec=spec, rmse_active=rmse_a, rmse_random=rmse_r, rho_gt=rho_gt)
 
 
-def plot(results, path="density_id_objects.png"):
+def plot(results, path="figures/density_id_objects.png"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt

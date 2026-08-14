@@ -18,10 +18,10 @@ robot_scene.py 가 미리 계산해 둔 계획(JSON)을 받아 라운드마다 �
     # 먼저 계획을 만든다
     ../robot_learning/scripts/run_drake_env.sh python robot_scene.py \
         --object 3link --joint-range-deg 20 150 --hinge-torque 0.5 \
-        --auto-scale --plan plan_3link.json
+        --auto-scale --plan outputs/plan_3link.json
     # 그 계획을 실행한다
     ../robot_learning/scripts/run_drake_env.sh python operator_ui.py \
-        --plan plan_3link.json
+        --plan outputs/plan_3link.json
 """
 
 import argparse
@@ -39,7 +39,19 @@ import density_id_drake as alg
 import density_id_objects as obj
 import robot_scene as rs
 
-ANGLE_TOL_DEG = 3.0          # 작업자가 맞춰야 하는 허용 오차
+# 작업자가 맞춰야 하는 허용 오차.
+#
+# 이 값은 "작업자 손재주" 가 아니라 **각도를 읽는 쪽의 정확도** 로 정해진다.
+# 판정은 FoundationPose 가 읽은 각도로 하기 때문이다(dual_view.adjust_manually).
+# 그러니 이 값이 FoundationPose 자체 오차보다 작으면 작업자가 아무리 잘
+# 맞춰도 통과할 수 없고, 라운드가 무한히 반복된다.
+#
+# 3 도로 두었다가 5 도로 올렸다. 실물 FoundationPose 오차가 3 도를 넘을 수
+# 있다고 보기 때문이다. 대신 이 창을 넓히면 **실제 각도가 목표에서 그만큼
+# 벗어난 채로 로봇이 움직인다**. 그래서 후보 검사도 같이 넓혀야 한다
+# (dual_view.PlannerScreen.angle_probes 참고). 한쪽만 고치면, 검사는
+# 안 해 본 각도에서 로봇이 움직이게 된다.
+ANGLE_TOL_DEG = 5.0
 STATUS_PATH = "/status/lamp"
 MOVE_STEPS = 60              # 이동 애니메이션 분할 수
 MOVE_DT_S = 0.02

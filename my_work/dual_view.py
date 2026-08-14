@@ -285,12 +285,26 @@ class PlannerScreen:
                           self.angle_floor_deg)
 
     def angle_probes(self, theta):
-        """각도 측정 오차 95 % 구간을 격자로 훑는 점들.
+        """실제 물체 각도가 놓일 수 있는 범위를 격자로 훑는 점들.
 
         모서리만 보면 안 된다. IK 도달 영역은 매끄러운 덩어리가 아니라
         구멍이 점점이 박힌 지형이라, 모서리는 우연히 구멍을 피하고 실제
         측정값이 구멍에 빠진다. 실제로 -87.45 도에서 통과한 후보가
         -86.90 도에서 실패해 라운드가 통째로 날아갔다.
+
+        범위는 **두 몫의 합**이다. 예전에는 앞의 것만 봤다.
+
+          1.96 sigma      FoundationPose 가 각도를 잘못 읽는 몫
+          ANGLE_TOL_DEG   작업자 조정을 통과시키는 창
+
+        둘째 몫이 왜 들어가야 하나. 조정 통과 판정은 **읽은 각도** 로 하고
+        (adjust_manually), 그 판정은 목표에서 ANGLE_TOL_DEG 까지 벗어난
+        각도를 통과시킨다. 즉 로봇은 목표가 아니라 '통과된 각도' 에서
+        움직인다. 그 각도까지 충돌 검사를 해 두지 않으면, 검사한 적 없는
+        형상으로 로봇이 이동하게 된다.
+
+        시뮬레이션에서는 이 몫이 0 이라 안 보인다 — adjust_automatically 가
+        목표에 정확히 맞춰 주기 때문이다. 실물에서만 드러난다.
         """
         bounds = [j.limits_rad for j in self.spec.joints]
         lows = np.array([lo for lo, _ in bounds])
@@ -298,8 +312,9 @@ class PlannerScreen:
         theta = np.atleast_1d(theta)
         sigma = np.sqrt(np.diag(aa.angle_covariance(
             theta, self.angle_rel_error, self.angle_floor_deg)))
-        axes = [np.linspace(t - 1.96 * s, t + 1.96 * s, self.probe_side)
-                for t, s in zip(theta, sigma)]
+        reach = 1.96 * sigma + np.deg2rad(ANGLE_TOL_DEG)
+        axes = [np.linspace(t - r, t + r, self.probe_side)
+                for t, r in zip(theta, reach)]
         grid = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(
             -1, len(theta))
         return np.clip(grid, lows, highs)
@@ -952,25 +967,90 @@ class RobotScreen:
         self.console.clear()
 
     # -- 본체 ----------------------------------------------------------
+    def sync_from_robot(self):
+        """팔이 지금 실제로 어디 있는지 읽어 화면과 계획기의 출발점을 맞춘다.
+
+        예전에는 시작 자세에 있다고 **가정** 했다. 시뮬레이션에서는 그게
+        사실이지만 실물에서는 아니다. 전원을 켠 자리, 지난 세션이 끝난
+        자리, 작업자가 티치펜던트로 옮겨 둔 자리 — 어디든 될 수 있다.
+
+        가정이 틀리면 첫 이동이 조용히 위험해진다. move_to 는 '내가 아는
+        자세' 를 출발점으로 경로를 계획하는데, 그게 start_q 로 박혀 있으면
+        RRT 는 start_q -> start_q 를 풀어 경유점 하나를 내놓고, 드라이버는
+        그 한 점으로 팔을 **계획에 없는 직선으로** 보낸다. 실제 자세가
+        멀수록 크게 튄다.
+        """
+        if self.driver is None:
+            self.set_arm_from(self.setup["start_q"])
+            return
+        actual = np.asarray(self.driver.joint_positions(), dtype=float)
+        for joint, value in zip(self.arm_joints, actual):
+            self.q[joint.position_start()] = value
+        start = np.array([self.setup["start_q"][j.position_start()]
+                          for j in self.arm_joints])
+        print(f"[로봇] 현재 팔 자세를 읽었습니다"
+              f" {np.round(np.degrees(actual), 1)} deg"
+              f"  (시작 자세와 최대 {np.degrees(np.abs(actual - start)).max():.1f} deg 차이)")
+
+    def await_grasp(self):
+        """작업자가 물체를 그리퍼에 물리는 단계. 이 동안 로봇은 정지한다.
+
+        왜 여기가 따로 있어야 하나. 시뮬레이션에서는 물체가 그리퍼에
+        **용접돼** 있어 파지라는 단계가 아예 없다. 실물에서는 누군가
+        물체를 물려야 하고, 그 사람이 로봇 작업영역 안에 들어간다.
+
+        순서가 중요하다. 물체를 문 **뒤에** 시작 자세로 가야 한다.
+          - 경로계획의 충돌 모형은 '물체를 든 팔' 이다. 빈 손으로 먼저
+            움직이면 계획과 실제가 다르고, 물체를 든 뒤 그 자세가 여유를
+            지킨다는 보장도 없다.
+          - 작업자가 로봇 옆에 있는 동안 로봇이 움직이면 안 된다.
+        """
+        if self.driver is None or not self.manual:
+            return
+        self.driver.stop()
+        self.driver.servo_off()
+        self.console.stopped("로봇 정지 — 물체를 그리퍼에 물려 주세요")
+        print("[로봇] 서보를 껐습니다. 이제 다음을 하세요.")
+        print("        1) 그리퍼를 열고 물체의 파지 부위를 죠 사이에 넣습니다")
+        print(f"        2) 그리퍼를 개구 {1000*self.setup['finger']:.0f} 근처로"
+              f" 오므려 물립니다 (타어링 때와 같은 개구량이어야 합니다)")
+        print("        3) 물체에서 손을 떼고 작업영역 밖으로 나옵니다")
+        confirm = self.console.button("물체를 물렸고 손을 뗐습니다")
+        self.console.wait_for(confirm)
+        self.console.clear()
+        self.driver.servo_on()
+        # 서보가 꺼진 동안 중력으로 처졌을 수 있다. 다시 읽는다.
+        self.sync_from_robot()
+        distance, pair = self.clearance()
+        if distance < self.min_distance_m:
+            print(f"[로봇] 경고: 지금 자세의 최소 간격이"
+                  f" {1000*distance:.1f} mm 로 기준"
+                  f" {1000*self.min_distance_m:.0f} mm 에 못 미칩니다 {pair}."
+                  f" 경로계획이 실패할 수 있습니다 —"
+                  f" 팔을 조금 띄운 뒤 다시 시작하세요.")
+
     def begin(self):
         """두 화면이 같이 시작하도록 시작 버튼을 기다린다.
 
         조정이 자동이어도 이 버튼만은 기다린다. 그래야 탭 두 개를 연 뒤
         왼쪽 탐색을 처음부터 볼 수 있다. --autostart 로 건너뛴다.
         """
-        self.set_arm_from(self.setup["start_q"])
+        self.sync_from_robot()
         self.set_object_deg(self.object_q_deg)
         self.publish()
         if self.autostart:
             print("[로봇] --autostart 라 바로 시작합니다.")
-            return
-        button = self.console.button("두 화면을 모두 연 뒤 눌러 시작")
-        print("[로봇] 왼쪽·오른쪽 화면을 모두 연 뒤 오른쪽 화면의"
-              " 시작 버튼을 누르세요.")
-        start = self.ui.GetButtonClicks(button)
-        while self.ui.GetButtonClicks(button) == start:
-            time.sleep(0.05)
-        self.console.clear()
+        else:
+            button = self.console.button("두 화면을 모두 연 뒤 눌러 시작")
+            print("[로봇] 왼쪽·오른쪽 화면을 모두 연 뒤 오른쪽 화면의"
+                  " 시작 버튼을 누르세요.")
+            start = self.ui.GetButtonClicks(button)
+            while self.ui.GetButtonClicks(button) == start:
+                time.sleep(0.05)
+            self.console.clear()
+        # 파지가 먼저, 이동이 나중. execute() 첫머리의 '시작 자세로 이동'이
+        # 물체를 든 상태에서 일어나야 한다.
+        self.await_grasp()
 
     def execute(self, target):
         """왼쪽이 고른 자세 하나를 실행하고 측정값을 만든다.
@@ -1320,7 +1400,9 @@ def main():
                              " 절대 움직이지 않는다고 가정한다")
     parser.add_argument("--safety", type=float, default=obj.DEFAULT_SAFETY)
     parser.add_argument("--auto-scale", action="store_true")
-    parser.add_argument("--min-distance-mm", type=float, default=6.0)
+    parser.add_argument("--min-distance-mm", type=float,
+                        default=rs.MIN_DISTANCE_M / rs.MM,
+                        help="충돌로 보는 최소 간격. 자세와 경로 모두 지킨다.")
     parser.add_argument("--samples-per-hold", type=int,
                         default=obj.DEFAULT_SAMPLES_PER_HOLD,
                         help="정지 자세에서 평균낼 F/T 샘플 수"
@@ -1570,7 +1652,7 @@ def main():
               f"   [GT {gt:7.0f}  오차 {100*abs(est-gt)/gt:5.2f}%]{mark}")
     print("=" * 66)
 
-    out = Path(args.urdf_out or f"estimated_{spec.key}.urdf")
+    out = Path(args.urdf_out or Path("outputs") / f"estimated_{spec.key}.urdf")
     try:
         answer = input(f"\n이 값으로 sim-ready URDF 를 만들까요? [{out}] (y/N): ")
     except EOFError:            # 로그로 넘겨 돌릴 때 (키보드가 없다)
@@ -1578,8 +1660,7 @@ def main():
         print(f"\n입력이 없어 자동으로 '{answer}' 로 답합니다.")
     if answer.strip().lower() in ("y", "yes"):
         import export_urdf as eu
-        eu.write_urdf(eu.build_urdf(spec, planner.rho_hat, planner.Sigma), out)
-        print(f"  저장 -> {out}")
+        eu.export(spec, planner.rho_hat, out, planner.Sigma)
         for row in eu.verify_urdf(out, spec, planner.rho_hat):
             print(f"    {row['name']:<13} 되읽기 검증"
                   f"  질량오차 {row['mass_err']:.1e} kg"

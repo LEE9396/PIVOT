@@ -79,7 +79,7 @@ def main():
     ap.add_argument("--rounds", type=int, nargs="*", default=[1, 2, 3, 5, 8])
     ap.add_argument("--angle-rel-error", type=float,
                     default=aa.DEFAULT_ANGLE_REL_ERROR)
-    ap.add_argument("--plot", default="study_tls.png")
+    ap.add_argument("--plot", default="figures/study_tls.png")
     args = ap.parse_args()
 
     spec = (obj.OBJECTS[args.object] if args.object in obj.OBJECTS

@@ -246,7 +246,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--object", choices=("2link", "3link"), default="3link")
     parser.add_argument("--theta-deg", type=float, nargs="*", default=None)
-    parser.add_argument("--plot", default="study_startpose.png")
+    parser.add_argument("--plot", default="figures/study_startpose.png")
     args = parser.parse_args()
 
     spec = obj.OBJECTS[args.object]

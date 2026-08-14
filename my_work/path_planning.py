@@ -24,10 +24,15 @@ DEFAULT_EDGE_RES_RAD = 0.05      # 간선 검사 해상도
 DEFAULT_MAX_ITERS = 4000
 DEFAULT_GOAL_BIAS = 0.10
 
-# IK 는 최소거리 제약을 경계에 딱 붙여 푼다. 목표 자세가 정확히 6.0000 mm
-# 로 나오므로, 계획기가 같은 값을 요구하면 부동소수점 차이로 탈락한다.
-# 그래서 계획기 문턱을 조금 낮춰 IK 해가 항상 유효하도록 한다.
-PLANNER_MARGIN_RATIO = 0.9
+# 계획기는 요구 간격을 **그대로** 지킨다.
+#
+# 예전에는 여기서 문턱을 10% 낮췄다. IK 가 최소거리 제약을 경계에 딱 붙여
+# 풀어서, 계획기가 같은 값을 요구하면 시작·목표 자세가 부동소수점 차이로
+# 탈락했기 때문이다. 그런데 그 방법은 **보장하는 값 자체를 깎는다** —
+# 10 mm 를 요구해도 경로는 9 mm 까지 파고들 수 있었다.
+#
+# 지금은 반대로 IK 쪽이 IK_SLACK_M 만큼 더 요구한다(robot_scene). 만드는
+# 쪽이 여유를 갖고 나오므로 계획기는 문턱을 깎을 이유가 없다.
 
 
 class ArmPathPlanner:
@@ -40,9 +45,7 @@ class ArmPathPlanner:
         self.context = context
         self.arm_joints = arm_joints
         self.indices = [joint.position_start() for joint in arm_joints]
-        # IK 해가 경계에 붙어 있으므로 계획기 문턱을 약간 낮춘다.
-        self.min_distance_m = min_distance_m * PLANNER_MARGIN_RATIO
-        self.required_distance_m = min_distance_m
+        self.min_distance_m = min_distance_m
         self.fixed = np.asarray(fixed_positions, dtype=float).copy()
         self.edge_resolution = edge_resolution_rad
         self.step = step_rad

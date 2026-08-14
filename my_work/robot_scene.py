@@ -189,7 +189,33 @@ CAMERA = load_camera()
 CAMERA_BODY_SIZE_M = (0.124, 0.026, 0.029)   # D456 외형 (124 x 26 x 29 mm)
 CAMERA_MOUNT_RADIUS_M = 0.016                # 지지대 봉
 
-MIN_DISTANCE_M = 0.006     # 이 값보다 가까워지면 충돌로 본다
+# 이 값보다 가까워지면 충돌로 본다. **자세와 경로 모두** 이 값을 지킨다.
+#
+# 실물에서는 6 mm 로 부족하다. 시뮬레이션에서 재는 간격은 '모형 사이의'
+# 간격인데, 실물에는 모형에 없는 오차가 겹쳐 쌓이기 때문이다.
+#
+#   손-눈 보정 잔차        2~3 mm     (calibrate_camera 를 돌려도 남는다)
+#   FoundationPose 자세     2~3 mm     (관절각 ±5% 가 끝단에서 만드는 어긋남)
+#   파지점 어긋남           ~5 mm      (GRASP_SIGMA_M, 지그를 대도 남는다)
+#   스캔 형상 오차          1~2 mm
+#
+# 이 중 파지점 어긋남은 이미 추정기가 미지수로 풀지만(design_core.grasp_columns),
+# 그건 **렌치를 고치는** 것이지 충돌 검사에 반영되지는 않는다. 충돌 검사는
+# 명목 형상만 본다. 그래서 여유를 형상 쪽에 따로 주어야 한다.
+MIN_DISTANCE_M = 0.010
+
+# IK 에만 얹는 추가 여유.
+#
+# IK 는 최소거리 제약을 **경계에 딱 붙여** 푼다. 문턱을 10 mm 로 주면 해가
+# 10.0000 mm 로 나오고, 그러면 같은 문턱을 쓰는 경로계획기와 이동 감시가
+# 부동소수점 차이만으로 그 해를 탈락시킨다.
+#
+# 예전에는 계획기 문턱을 10% 낮춰(PLANNER_MARGIN_RATIO) 피했는데, 그러면
+# 실제로 보장되는 간격이 문턱보다 작아진다 — 10 mm 를 요구해도 경로는
+# 9 mm 까지 파고들 수 있었다. 여유는 **지켜야 하는 쪽을 낮추는 게 아니라
+# 만드는 쪽을 높여서** 주는 것이 맞다. 그래서 IK 만 1 mm 더 요구한다.
+IK_SLACK_M = 0.001
+
 ANGLE_TOL_RAD = np.deg2rad(1.0)
 
 # 물체를 그리퍼에 어떻게 물릴지.
@@ -538,7 +564,10 @@ class PoseChecker:
         self.gripper = scene["gripper"]
         self.payload = scene["payload"]
         self.sensor_frame = scene["sensor_frame"]
+        # min_distance_m 은 '지켜야 하는 값', ik_distance_m 은 'IK 에게
+        # 요구하는 값'. 둘을 나눠 두어야 IK 해가 검사를 통과한다.
         self.min_distance_m = min_distance_m
+        self.ik_distance_m = min_distance_m + IK_SLACK_M
         # 최소거리 제약은 SceneGraph 질의가 필요하므로 diagram 을 완성한 뒤
         # 그 안의 plant 서브컨텍스트를 써야 한다.
         self.diagram = scene["builder"].Build()
@@ -599,7 +628,9 @@ class PoseChecker:
             lower, upper,
         )
         # 충돌 회피 — 이것이 "motion planning 으로 충돌 없는 자세만" 조건.
-        ik.AddMinimumDistanceLowerBoundConstraint(self.min_distance_m, 0.01)
+        # 문턱보다 IK_SLACK_M 만큼 더 요구한다. 해가 경계에 붙어 나오므로,
+        # 딱 문턱으로 주면 검증하는 쪽에서 부동소수점 차이로 떨어진다.
+        ik.AddMinimumDistanceLowerBoundConstraint(self.ik_distance_m, 0.01)
 
         guess = self.plant.GetPositions(self.context).copy()
         if warm_start and self._last_solution is not None:
@@ -654,7 +685,7 @@ class PoseChecker:
             self.sensor_frame, np.zeros(3), self.plant.world_frame(),
             np.asarray(position, float) - tol_m,
             np.asarray(position, float) + tol_m)
-        ik.AddMinimumDistanceLowerBoundConstraint(self.min_distance_m, 0.01)
+        ik.AddMinimumDistanceLowerBoundConstraint(self.ik_distance_m, 0.01)
 
         guess = self.plant.GetPositions(self.context).copy()
         for joint, value in zip(self.arm_joints, self.seed_q):
@@ -1251,7 +1282,9 @@ def main():
                         help="관절 구동범위. 2개(전 관절 공통) 또는 관절당 2개")
     parser.add_argument("--steps", type=int, default=5,
                         help="관절당 격자 점 수")
-    parser.add_argument("--min-distance-mm", type=float, default=6.0)
+    parser.add_argument("--min-distance-mm", type=float,
+                        default=MIN_DISTANCE_M / MM,
+                        help="충돌로 보는 최소 간격. 자세와 경로 모두 지킨다.")
     parser.add_argument("--plan", type=Path, default=None,
                         help="탐색 계획을 JSON 으로 저장한다")
     parser.add_argument("--rounds", type=int, default=4)

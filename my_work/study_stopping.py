@@ -112,7 +112,7 @@ def main():
                     help="R3 규칙이 가정하는 계통 몫. 실물에서 우리가 정하는 값")
     ap.add_argument("--estimator", default="both",
                     choices=("tls", "wls", "both"))
-    ap.add_argument("--plot", default="study_stopping.png")
+    ap.add_argument("--plot", default="figures/study_stopping.png")
     args = ap.parse_args()
 
     spec = (obj.OBJECTS[args.object] if args.object in obj.OBJECTS

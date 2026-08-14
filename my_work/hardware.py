@@ -56,6 +56,17 @@ class RobotDriver(ABC):
         """서보를 끈다. 사람이 작업 영역에 들어갈 때. 기본은 stop 과 같다."""
         self.stop()
 
+    def servo_on(self):
+        """서보를 다시 켠다. 사람이 작업 영역에서 나온 뒤.
+
+        servo_off 와 반드시 짝으로 쓴다. 끄기만 하는 인터페이스는 덫이다 —
+        작업자가 물체를 물린 뒤 로봇이 다시 움직여야 하는데 켤 방법이 없다.
+
+        켠 직후에는 **joint_positions 를 다시 읽어야 한다.** 서보가 꺼진
+        동안 중력으로 처져서 실제 각도가 껐을 때와 다를 수 있고, 그 차이를
+        모르면 첫 경로가 엉뚱한 곳에서 출발한다.
+        """
+
 
 class WrenchSensor(ABC):
     """손목 F/T. 정지 상태에서 여러 샘플을 평균낸다."""
@@ -202,7 +213,13 @@ class Rb5Driver(RobotDriver):
       joint_positions : 드라이버의 조인트 상태 토픽/API 에서 6개 각도
       follow          : 경유점을 궤적으로 만들어 전송하고 도착까지 대기
                         (RRT 가 준 경유점을 그대로 쓰면 된다)
-      stop / servo_off: 즉시 정지 + 서보 오프
+      stop / servo_off/ servo_on : 즉시 정지, 서보 오프/온
+
+    joint_positions 는 세션 맨 앞에서도 불린다
+      파이프라인은 팔이 어디 있는지 **가정하지 않는다**. 작업자가 물체를
+      물리는 동안 로봇은 전원을 켠 자리에 그대로 서 있고, 거기서 시작
+      자세까지 경로를 계획해 이동한다. 그러니 이 함수는 세션 시작 시점에
+      실제 각도를 돌려줘야 한다 (dual_view.RobotScreen.sync_from_robot).
 
     안전
       - follow 는 반드시 **블로킹** 이어야 한다. 도착 전에 반환하면 작업자가
@@ -219,6 +236,8 @@ class Rb5Driver(RobotDriver):
     def joint_positions(self): ...
     def follow(self, waypoints, duration_s): ...
     def stop(self): ...
+    def servo_off(self): ...
+    def servo_on(self): ...
 
 
 class Aft200Sensor(WrenchSensor):

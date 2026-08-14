@@ -15,10 +15,11 @@
 실행:
     cd ~/Desktop/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python export_urdf.py \
-        --object 3link --out estimated_3link.urdf
+        --object 3link --out outputs/estimated_3link.urdf
 """
 
 import argparse
+import os
 import xml.etree.ElementTree as ET
 from dataclasses import replace
 from pathlib import Path
@@ -52,10 +53,20 @@ def part_inertial(part, rho, extras=()):
     inertial 에 합쳐 넣는다. 이걸 빼먹으면 시뮬레이터가 힌지 없는 물체를
     돌리게 되고, 애써 추정한 값이 그만큼 틀어진다.
     """
-    dims_m = tuple(d * MM for d in part.bbox_mm)
     mass = rho * part.volume_m3
     com = np.array(part.bbox_center_in_link_mm) * MM
-    inertia = box_inertia_about_com(mass, dims_m)
+
+    if part.inertia_unit is not None:
+        # 스캔 메시에서 온 부위. 도심 기준 **단위질량당** 관성텐서를 이미
+        # 들고 있으므로 질량만 곱하면 된다.
+        #
+        # 여기서 직육면체 공식을 쓰면 안 된다. 램프 Arm 은 AABB 가
+        # 70x256x274 mm 인데 실제 재료는 그 1/3 이라, 상자로 보면 관성이
+        # 통째로 부풀려진다. 게다가 상자 공식은 관성적(慣性積)을 0 으로
+        # 놓는데, 굽은 팔은 링크 축에 정렬돼 있지 않아 실제로 0 이 아니다.
+        inertia = mass * np.asarray(part.inertia_unit, dtype=float)
+    else:
+        inertia = box_inertia_about_com(mass, tuple(d * MM for d in part.bbox_mm))
 
     if not extras:
         return mass, com, inertia
@@ -158,6 +169,147 @@ def build_urdf(spec, rho_hat, Sigma=None, name=None, mesh_dir=None,
     return robot
 
 
+# ---------------------------------------------------------------------------
+# 원본 URDF 에 물성만 채워 넣기
+#
+# 스캔 배달물은 이미 형상(메시·볼록분해·관절)을 제대로 들고 있고, 비어 있는
+# 것은 **물성뿐**이다. 배달물의 <inertial> 은 밀도 1000 kg/m^3 로 계산한
+# 자리표시자다 (질량이 부피 그대로다: link_1 441.02 cm^3 -> 0.4410195 kg).
+#
+# 그러니 우리가 할 일은 새 물체를 짓는 게 아니라 그 자리표시자를 추정값으로
+# 바꾸는 것이다. build_urdf 로 만들면 메시가 AABB 상자로 퇴화하고, 파지
+# 부위를 뿌리로 다시 세운 트리가 나가고, 배달물의 볼록분해가 통째로 버려진다.
+# 시뮬레이터에 그 상자를 넘기면 램프 Arm 이 실제 재료의 3배 굵기가 된다.
+# ---------------------------------------------------------------------------
+def _rewrite_mesh_paths(root, source, out):
+    """메시 경로가 새 위치에서도 풀리도록 고친다.
+
+    배달물 URDF 의 filename 은 배달물 폴더 기준 상대경로다("visuals/...").
+    산출물을 my_work/ 에 두면 그 상대경로가 깨진다. 배달물 폴더는 건드리지
+    않는 것이 규칙이므로(AGENTS.md), 대신 경로를 산출물 기준으로 다시 쓴다.
+    """
+    source_dir = Path(source).resolve().parent
+    out_dir = Path(out).resolve().parent
+    n = 0
+    for mesh in root.iter("mesh"):
+        name = mesh.get("filename")
+        if name is None or name.startswith(("package://", "/")):
+            continue
+        absolute = (source_dir / name).resolve()
+        mesh.set("filename", os.path.relpath(absolute, out_dir))
+        n += 1
+    return n
+
+
+def _set_inertial(link, mass, com, inertia):
+    """링크의 <inertial> 을 갈아끼운다. 없으면 만든다.
+
+    URDF 규약상 <inertia> 는 <origin> 프레임 기준이고 그 원점이 무게중심이다.
+    균일밀도 가정이라 무게중심은 외형 도심이고, 배달물이 적어 둔 origin 과
+    같아야 한다 (main 에서 실제로 대조해 확인한다).
+    """
+    inertial = link.find("inertial")
+    if inertial is None:
+        inertial = ET.SubElement(link, "inertial")
+    for child in list(inertial):
+        inertial.remove(child)
+    ET.SubElement(inertial, "origin",
+                  xyz=" ".join(f"{v:.9g}" for v in com), rpy="0 0 0")
+    ET.SubElement(inertial, "mass", value=f"{mass:.9g}")
+    ET.SubElement(inertial, "inertia",
+                  ixx=f"{inertia[0, 0]:.9g}", ixy=f"{inertia[0, 1]:.9g}",
+                  ixz=f"{inertia[0, 2]:.9g}", iyy=f"{inertia[1, 1]:.9g}",
+                  iyz=f"{inertia[1, 2]:.9g}", izz=f"{inertia[2, 2]:.9g}")
+
+
+def inject_into_source(source, spec, rho_hat, out, Sigma=None):
+    """배달물 URDF 를 그대로 두고 <inertial> 만 추정값으로 바꾼다.
+
+    형상·관절·트리 구조·볼록분해는 배달물 것을 **한 글자도 안 바꾼다**.
+    바뀌는 것은 링크마다 질량·무게중심·관성텐서 셋뿐이다.
+
+    돌려주는 것: 링크별 (이름, 질량, 원본대비 origin 차이[m]) 목록.
+    """
+    tree = ET.parse(source)
+    root = tree.getroot()
+
+    extras = hinge_extras(spec, rho_hat)
+    wanted = {}
+    for part, rho in zip(spec.parts, rho_hat):
+        wanted[part.name] = part_inertial(part, rho, extras[part.name])
+
+    std = np.sqrt(np.diag(Sigma)) if Sigma is not None else None
+    header = ["로봇이 물체를 잡고 손목 F/T 를 재서 추정한 물성을 채워 넣었다.",
+              f"원본: {Path(source).resolve()}",
+              "형상·관절·충돌메시는 원본 그대로이며, 링크별 질량·무게중심·",
+              "관성텐서만 바뀌었다. 가정: 부위 내부 밀도 균일.",
+              "밀도는 '스캔 겉모양 부피로 나눈 유효 밀도'라 물리 밀도가 아니다."]
+    if std is not None:
+        header.append("추정 밀도 [kg/m^3] (95% 구간):")
+        for part, rho, sd in zip(spec.parts, rho_hat, std):
+            header.append(f"  {part.name}: {rho:.1f} +/- {1.96 * sd:.1f}")
+    root.insert(0, ET.Comment("\n     " + "\n     ".join(header) + "\n  "))
+
+    rows, seen = [], set()
+    for link in root.iter("link"):
+        name = link.get("name")
+        if name not in wanted:
+            continue
+        mass, com, inertia = wanted[name]
+        before = link.find("inertial/origin")
+        moved = (np.linalg.norm(
+            np.array([float(v) for v in before.get("xyz").split()]) - com)
+            if before is not None and before.get("xyz") else float("nan"))
+        _set_inertial(link, mass, com, inertia)
+        rows.append(dict(name=name, mass=mass, origin_shift_m=moved))
+        seen.add(name)
+
+    missing = set(wanted) - seen
+    if missing:
+        raise KeyError(f"원본 URDF 에 없는 링크: {sorted(missing)}. "
+                       "배달물과 spec 의 링크 이름이 어긋났다.")
+    n_mesh = _rewrite_mesh_paths(root, source, out)
+    write_urdf(root, out)
+    return rows, n_mesh
+
+
+def source_urdf_for(spec):
+    """이 물체의 원본(배달물) URDF. 없으면 None — 그때는 build_urdf 로 짓는다.
+
+    3-link·2-link 는 CAD 치수에서 만든 물체라 원본 URDF 가 없고, 실제로
+    직육면체라 상자로 내보내도 맞다.
+    """
+    if spec.key != "desklamp":
+        return None
+    import desk_lamp
+    return desk_lamp.URDF
+
+
+def export(spec, rho_hat, out, Sigma=None, log=print):
+    """산출물 URDF 를 만든다. 원본이 있으면 거기에 물성만 채운다.
+
+    호출하는 쪽(dual_view, main)이 둘 다 이 함수를 쓴다. 모드 선택을 한
+    군데로 모아 두어야 화면으로 돌릴 때와 숫자만 돌릴 때가 안 갈라진다.
+    """
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    source = source_urdf_for(spec)
+    if source is None:
+        write_urdf(build_urdf(spec, rho_hat, Sigma), out)
+        log(f"  URDF 저장 -> {out}  (CAD 치수에서 새로 지음)")
+        return None
+
+    rows, n_mesh = inject_into_source(source, spec, rho_hat, out, Sigma)
+    log(f"  URDF 저장 -> {out}")
+    log(f"    원본 {source} 의 형상·관절을 그대로 두고 물성만 채웠습니다"
+        f" (링크 {len(rows)}개, 메시 경로 {n_mesh}개 재작성)")
+    for row in rows:
+        # origin 차이가 크면 배달물과 우리 도심 계산이 어긋났다는 뜻이다.
+        note = ("" if not (row["origin_shift_m"] > 1e-6)
+                else f"   [주의] 무게중심이 원본과 {1000*row['origin_shift_m']:.2f} mm 다름")
+        log(f"    {row['name']:<8} 질량 {1000*row['mass']:7.2f} g{note}")
+    return rows
+
+
 def write_urdf(root, path):
     raw = ET.tostring(root, encoding="unicode")
     pretty = minidom.parseString(raw).toprettyxml(indent="  ")
@@ -201,7 +353,8 @@ def verify_urdf(path, spec, rho_hat):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--object", choices=tuple(obj.OBJECTS), default="3link")
+    parser.add_argument("--object", choices=tuple(obj.OBJECTS) + ("desklamp",),
+                        default="3link")
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--target", type=float, default=0.01,
                         help="정지 조건: 95%% 상대 반폭")
@@ -223,7 +376,11 @@ def main():
     parser.add_argument("--systematic", type=float, default=0.3)
     args = parser.parse_args()
 
-    spec = obj.OBJECTS[args.object]
+    if args.object == "desklamp":
+        import desk_lamp
+        spec = desk_lamp.build_spec()
+    else:
+        spec = obj.OBJECTS[args.object]
     # 관절은 사용자가 맞춰 두면 고정된다는 전제라 힌지 토크 필터를 쓰지 않는다.
     rho_gt = obj.bind_object(spec)
     obj.set_measurement_averaging(args.samples_per_hold,
@@ -261,9 +418,9 @@ def main():
           f"{'' if result['converged'] else '  — 목표 미달'}")
 
     Sigma = np.diag((result["half"] * result["rho_hat"] / 1.96) ** 2)
-    out = args.out or Path(f"estimated_{spec.key}.urdf")
-    write_urdf(build_urdf(spec, result["rho_hat"], Sigma), out)
-    print(f"\n  URDF 저장 -> {out}")
+    out = args.out or Path("outputs") / f"estimated_{spec.key}.urdf"
+    print()
+    export(spec, result["rho_hat"], out, Sigma)
 
     extras = hinge_extras(spec, result["rho_hat"])
     print(f"\n  {'부위':<13}{'밀도':>10}{'질량':>11}{'무게중심 x':>13}{'Izz':>14}"

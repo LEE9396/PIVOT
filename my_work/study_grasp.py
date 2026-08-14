@@ -105,7 +105,7 @@ def main():
     parser.add_argument("--object", choices=("2link", "3link"), default="3link")
     parser.add_argument("--seeds", type=int, default=12)
     parser.add_argument("--rounds", type=int, default=6)
-    parser.add_argument("--plot", default="study_grasp.png")
+    parser.add_argument("--plot", default="figures/study_grasp.png")
     args = parser.parse_args()
 
     spec = obj.OBJECTS[args.object]

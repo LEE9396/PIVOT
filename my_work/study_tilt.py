@@ -61,7 +61,7 @@ def main():
     ap.add_argument("--theta-deg", type=float, nargs="*", default=None,
                     help="평가할 관절각. 생략하면 구동범위 중앙")
     ap.add_argument("--rotations", type=int, default=200)
-    ap.add_argument("--plot", default="study_tilt.png")
+    ap.add_argument("--plot", default="figures/study_tilt.png")
     args = ap.parse_args()
 
     spec = obj.OBJECTS[args.object]

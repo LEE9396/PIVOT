@@ -345,8 +345,8 @@ def main():
         ax.grid(True, which="both", alpha=0.3)
         ax.legend()
         fig.tight_layout()
-        fig.savefig("convergence.png", dpi=150)
-        print("\nsaved plot -> convergence.png")
+        fig.savefig("figures/convergence.png", dpi=150)
+        print("\nsaved plot -> figures/convergence.png")
     except ImportError:
         pass
 

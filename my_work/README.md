@@ -35,11 +35,11 @@ Drake를 처음 쓰는 사람이 그대로 따라 할 수 있도록 정리한 �
 | --- | --- |
 | `density_id_drake.py` | 알고리즘 본체 (desk lamp 예제) |
 | `view_density_id.py` | 시각화 뷰어 |
-| `convergence.png` | 실행하면 생기는 수렴 그래프 |
+| `figures/convergence.png` | 실행하면 생기는 수렴 그래프 |
 | `frames/` | 렌더링하면 생기는 자세별 이미지 |
 | `density_id_objects.py` | **실제 2-link / 3-link 물체 검증** (9장 참조) |
 | `check_object_geometry.py` | 위 모델이 CAD 치수와 맞는지 확인 |
-| `results_objects.txt` | 검증 결과 기록 |
+| `outputs/results_objects.txt` | 검증 결과 기록 |
 
 ---
 
@@ -87,7 +87,7 @@ round |   active: theta*     RMSE  maxRel% | random RMSE ...
 final estimate (active selection):
   base           true  2700.0  est  2697.9  err  0.08%
   ...
-saved plot -> convergence.png
+saved plot -> figures/convergence.png
 ```
 
 ### 출력 읽는 법
@@ -103,13 +103,13 @@ saved plot -> convergence.png
 
 ## 3. 결과 그래프 보기
 
-2단계를 실행하면 같은 폴더에 `convergence.png`가 생깁니다.
+2단계를 실행하면 `figures/convergence.png` 가 생깁니다.
 
 ```bash
-xdg-open convergence.png
+xdg-open figures/convergence.png
 ```
 
-VSCode에서는 왼쪽 파일 목록에서 `convergence.png`를 클릭하면 바로 열립니다.
+VSCode에서는 왼쪽 파일 목록에서 `figures/convergence.png`를 클릭하면 바로 열립니다.
 
 가로축이 측정 횟수, 세로축이 밀도 오차(로그 스케일)입니다.
 파란 실선(active)이 주황 점선(random)보다 아래에 있으면 알고리즘이 이긴 것입니다.
@@ -231,7 +231,7 @@ xdg-open frames/
 ```bash
 cd ~/Desktop/PIVOT/my_work
 
-# 알고리즘 실행 (숫자 결과 + convergence.png)
+# 알고리즘 실행 (숫자 결과 + figures/convergence.png)
 ../robot_learning/scripts/run_drake_env.sh python density_id_drake.py
 
 # 3D로 보기 (브라우저에서 localhost:7000)
@@ -334,7 +334,7 @@ cd ~/Desktop/PIVOT/my_work
 
 실험이 성립하는 최소 토크는 **2-link 0.036 N·m, 3-link 0.190 N·m**입니다.
 이 아래로는 추를 다 빼도 관절이 미끄러져 어떤 밀도로도 실험할 수 없습니다.
-자세한 내용은 `results_mg_plastic_hinge.txt` 참조.
+자세한 내용은 `outputs/results_mg_plastic_hinge.txt` 참조.
 
 ## 10. 로봇이 실제로 잡고 하는 측정 (작업자 절차)
 
@@ -348,7 +348,7 @@ cd ~/Desktop/PIVOT/my_work
 ../robot_learning/scripts/run_drake_env.sh python robot_scene.py \
   --object 3link --joint-range-deg 20 150 \
   --hinge-torque 0.5 --auto-scale --steps 5 --rounds 4 \
-  --plan plan_3link.json
+  --plan outputs/plan_3link.json
 ```
 
 세 가지를 모두 통과한 자세만 남깁니다.
@@ -370,7 +370,7 @@ cd ~/Desktop/PIVOT/my_work
 
 ```bash
 ../robot_learning/scripts/run_drake_env.sh python operator_ui.py \
-  --plan plan_3link.json
+  --plan outputs/plan_3link.json
 ```
 
 라운드마다 이 순서로 진행됩니다.
@@ -454,7 +454,7 @@ planner  <--- measurement ----------  robot     렌치 측정값
 ### 씬을 직접 확인하기
 
 ```bash
-../robot_learning/scripts/run_drake_env.sh python lab_view.py --plan plan_3link.json
+../robot_learning/scripts/run_drake_env.sh python lab_view.py --plan outputs/plan_3link.json
 ```
 
 Meshcat에서 볼 수 있는 것:

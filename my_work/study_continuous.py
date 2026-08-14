@@ -87,7 +87,7 @@ def main():
     ap.add_argument("--starts", type=int, default=8)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--max-joints", type=int, default=5)
-    ap.add_argument("--plot", default="study_continuous.png")
+    ap.add_argument("--plot", default="figures/study_continuous.png")
     args = ap.parse_args()
 
     spec = (obj.OBJECTS[args.object] if args.object in obj.OBJECTS

@@ -1,10 +1,21 @@
 """실물 로봇 쪽 프로세스. 계획 쪽과는 TCP/IP 로만 이야기한다.
 
-왜 프로세스를 나누나
---------------------
-Drake 가 있는 파이썬과 로봇 드라이버(ROS1 등)가 있는 파이썬은 보통 다르다.
-한 프로세스에 억지로 넣으면 환경이 섞여 예고 없이 깨진다. 나눠 두면
-양쪽 다 깨끗하고, 로봇을 다른 PC 에 두는 것도 그대로 된다.
+**먼저 읽을 것: 이 파일은 대개 필요 없다.**
+--------------------------------------------
+PC 한 대로 돌릴 거라면 `dual_view.py --mode deploy --bus local --hardware real`
+하나면 된다. 이 파일은 **로봇을 계획 쪽에서 프로세스로 떼어야 할 때만** 쓴다.
+
+예전 설명은 "Drake 파이썬과 로봇 드라이버 파이썬이 다르니 나눈다" 였는데,
+그 이유는 성립하지 않는다. 아래를 보면 알 수 있듯 이 파일도 pydrake 를
+import 하고 dual_view.prepare() 를 돌린다 — 즉 **이쪽도 Drake 환경이 그대로
+필요하다.** 실제로 무거운 것은 FoundationPose 인데, 그건 어차피 자기 환경에서
+도는 별도 노드라 어느 쪽 프로세스에도 안 들어온다.
+
+나눌 때의 대가도 알아 두어야 한다.
+  - prepare() 가 양쪽에서 각각 돈다 (램프 기준 25~50초씩).
+  - 양쪽 플래그(--gripper --grasp-part --steps --min-distance-mm)가 다르면
+    계획 쪽이 검사한 장면과 여기서 경로를 계획하는 장면이 **조용히 달라진다.**
+    반드시 같은 값으로 띄울 것.
 
     [작업 PC]  dual_view.py --mode deploy --bus tcp
                   화면 [1] 계획·탐색
@@ -60,7 +71,9 @@ def main():
     ap.add_argument("--move-duration", type=float,
                     default=dv.DEFAULT_MOVE_DURATION_S)
     ap.add_argument("--settle-s", type=float, default=0.5)
-    ap.add_argument("--min-distance-mm", type=float, default=6.0)
+    ap.add_argument("--min-distance-mm", type=float,
+                    default=rs.MIN_DISTANCE_M / rs.MM,
+                    help="충돌로 보는 최소 간격. 자세와 경로 모두 지킨다.")
     ap.add_argument("--plan-iters", type=int, default=20000)
     ap.add_argument("--samples-per-hold", type=int,
                     default=obj.DEFAULT_SAMPLES_PER_HOLD)
