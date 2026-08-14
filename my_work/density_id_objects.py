@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from pydrake.geometry import Box, Convex, Mesh
-from pydrake.math import RigidTransform
+from pydrake.math import RigidTransform, RotationMatrix
 from pydrake.multibody.plant import AddMultibodyPlantSceneGraph, MultibodyPlant
 from pydrake.multibody.tree import (
     FixedOffsetFrame,
@@ -488,6 +488,14 @@ def register_part_visual(plant, body, part, dims_m, prefix=""):
     때문에 필요하다 (mesh_props.split_by_color).
     """
     pose = RigidTransform(np.array(part.mesh_offset_m))
+    if str(part.visual_mesh or "").lower().endswith(".gltf"):
+        # glTF 규약은 y 가 위다. Drake 는 그 규약대로 x 축 +90도를 돌려 읽는데,
+        # 스캔 배달물은 .ply/.obj 와 같은 z-up 좌표로 만들어져 있어서 그대로
+        # 두면 부위가 90도 돌아간 자리에 그려진다 (링크가 분해돼 보인다).
+        # 같은 부위를 glTF 와 OBJ 로 각각 그려 화면 위치를 재서 확인했다:
+        # x 축 -90도를 주면 두 그림이 화소 위치·깊이까지 겹친다.
+        pose = RigidTransform(RotationMatrix.MakeXRotation(-np.pi / 2),
+                              np.array(part.mesh_offset_m))
     if getattr(part, "visual_pieces", ()):
         for index, (path, rgba) in enumerate(part.visual_pieces):
             plant.RegisterVisualGeometry(
