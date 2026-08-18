@@ -4,6 +4,7 @@
 무슨 연구인지, 코드가 어떻게 짜여 있는지, 지금 어디까지 왔는지 알 수 있도록 썼습니다.
 
 > **AI에게**: 이 파일을 읽은 뒤 [AGENTS.md](AGENTS.md)로 환경을 세우고,
+> 파이프라인 전체 지도는 [my_work/PIPELINE.md](my_work/PIPELINE.md),
 > 자세한 알고리즘은 [my_work/ALGORITHM.md](my_work/ALGORITHM.md),
 > 검증 절차는 [my_work/VERIFICATION.md](my_work/VERIFICATION.md)를 보세요.
 

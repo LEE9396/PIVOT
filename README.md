@@ -136,7 +136,9 @@ my_work/outputs/estimated_desklamp.urdf    <- 최종 산출물
 ```
 
 절차의 근거와 세부는 [my_work/VERIFICATION.md](my_work/VERIFICATION.md),
-알고리즘 설명은 [my_work/ALGORITHM.md](my_work/ALGORITHM.md).
+파이프라인이 어떤 순서로 무엇을 하는지는
+[my_work/PIPELINE.md](my_work/PIPELINE.md), 알고리즘 자체의 설명은
+[my_work/ALGORITHM.md](my_work/ALGORITHM.md).
 
 ---
 
@@ -172,6 +174,7 @@ my_work/outputs/estimated_desklamp.urdf    <- 최종 산출물
 ```
 my_work/          알고리즘·화면·실물 연결 (연구 코드는 전부 여기)
   VERIFICATION.md   두 검증 방법 설명   <- 먼저 읽기
+  PIPELINE.md       파이프라인 지도 — 단계별로 왜/무엇을/어디에
   ALGORITHM.md      알고리즘 설명 (고등학생 수준)
   README.md         코드 파일 하나하나의 설명
 setup/            새 PC 환경 구성 (bootstrap.sh, doctor.py)
