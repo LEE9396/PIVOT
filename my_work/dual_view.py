@@ -1349,25 +1349,55 @@ def simulated_hardware():
 
 
 def connect_hardware(args):
-    """실물 장비를 붙인다. 아직 구현이 없으면 무엇을 채워야 하는지 알려준다.
+    """실물 장비를 붙인다. 반환: (RobotDriver, WrenchSensor, PoseSensor, TareTable)
 
-    반환: (RobotDriver, WrenchSensor, PoseSensor, TareTable)
+    안전 로직(속도 상한·준정적 시간·도착 검증·서보 상태기계·타어링 유효기간·
+    센서 부호 규약)은 전부 hardware_real 에 구현돼 있고 장비 없이 검증된다.
 
-    타어링은 **물체를 잡기 전에** 끝나 있어야 한다. 모형의 y 는 물체만
-    만드는 렌치인데 센서는 그리퍼·마운트·손가락까지 다 읽기 때문이다.
+        ../robot_learning/scripts/run_drake_env.sh python hardware_real.py --check
+
+    벤더 API 가 들어오는 곳은 hardware_real.RbpodoBackend 의 네 함수뿐이다.
+
+    --arm-backend fake 를 주면 **가짜 팔로 실물 경로 전체를 리허설**한다.
+    타어링·안전검사·작업자 UI 가 실제와 같은 순서로 돌므로, 센서가 오기 전에
+    배선과 절차를 확인할 수 있다.
     """
-    import hardware as hw
+    import hardware_real as hr
 
+    backend_kind = getattr(args, "arm_backend", "rbpodo")
+    tare = hr.TimedTare()
+
+    if backend_kind == "fake":
+        print("  [리허설] 가짜 팔로 실물 경로를 돕니다. 장비는 안 씁니다.")
+        driver = hr.Rb5Driver(hr.FakeArm())
+        wrench, pose, _ = simulated_hardware()[1:]
+        return driver, wrench, pose, tare
+
+    driver = hr.Rb5Driver(hr.RbpodoBackend(
+        host=getattr(args, "robot_host", "192.168.0.10")))
+    wrench = hr.Aft200Sensor(sample_fn=_ft_sample_fn(args))
+    pose = hr.FoundationPoseSensor(
+        pose_fn=_pose_fn(args),
+        n_joint=getattr(args, "n_object_joint", 1),
+        default_sigma_deg=getattr(args, "angle_error", 0.05) * 100.0)
+    return driver, wrench, pose, tare
+
+
+def _ft_sample_fn(args):
+    """AFT200 한 샘플을 돌려주는 함수. ★ 팀이 채울 곳 (한 줄)."""
     raise NotImplementedError(
-        "\n실물 배포에 필요한 것 (hardware.py 참고):\n"
-        "  1) RB5 드라이버        -> hw.Rb5Driver\n"
-        "     follow() 는 도착할 때까지 막혀야 합니다.\n"
-        "  2) AFT200 렌치 센서    -> hw.Aft200Sensor\n"
-        "  3) FoundationPose      -> hw.FoundationPoseSensor\n"
-        "  4) 타어링              -> hw.run_tare(...) 로 중력 3방향 공회전 렌치\n"
-        "     물체를 잡기 전에 재야 합니다.\n"
-        "이 함수 안에서 넷을 만들어 돌려주면 나머지 파이프라인은 그대로 돕니다.\n"
-        "로봇 쪽을 다른 PC/ROS1 에서 돌리려면 --bus tcp 를 쓰세요.")
+        "AFT200 스트림에서 한 샘플 [Fx Fy Fz Tx Ty Tz] 를 돌려주는 함수를 "
+        "여기서 만들어 주세요. 평균·이상치 제거·부호 검사는 "
+        "hardware_real.Aft200Sensor 가 이미 합니다.")
+
+
+def _pose_fn(args):
+    """FoundationPose 에서 (각도 deg, 불확실성 deg) 를 돌려주는 함수.
+    ★ 팀이 채울 곳 (한 줄)."""
+    raise NotImplementedError(
+        "FoundationPose 노드에서 (관절각 deg, sigma deg) 를 돌려주는 함수를 "
+        "여기서 만들어 주세요. 차원·유한성·stale 검사는 "
+        "hardware_real.FoundationPoseSensor 가 이미 합니다.")
 
 
 def main():
@@ -1378,6 +1408,10 @@ def main():
     parser.add_argument("--object",
                         choices=tuple(obj.OBJECTS) + ("desklamp",),
                         default="3link")
+    parser.add_argument("--arm-backend", choices=("rbpodo", "fake"),
+                        default="rbpodo",
+                        help="fake=장비 없이 실물 경로를 리허설")
+    parser.add_argument("--robot-host", default="192.168.0.10")
     parser.add_argument("--joint-range-deg", type=float, nargs="+", default=None)
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--max-rounds", type=int, default=8)
