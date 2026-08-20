@@ -12,11 +12,25 @@ D / A / E 중 뭘 써야 하는지는 파트가 2~3개일 때는 거의 안 갈�
   - 힌지는 표면 장착이라 축이 중심선에서 27 mm 벗어나 있다
   - 관절 축은 z, -y, z, -y ... 로 번갈아 든다
   - 외부 부피는 bbox 의 약 98 % (리세스 공제)
+  - **관절마다 실측 힌지 41 g 이 달린다** (실물 2-link / 3-link 와 같은 부품)
+
+힌지를 왜 반드시 넣는가
+-----------------------
+힌지를 빼면 합성 물체가 실물과 **다른 문제**가 된다. 실물 3-link 는 미지수가
+5개(부위 3 + 힌지 2)인데, 힌지 없는 합성 P=3 은 3개뿐이다. 그러면 P=2..8
+스윕이 실물보다 쉬운 문제를 재게 되어 두 실험을 나란히 놓을 수 없다.
+
+게다가 힌지를 추정 벡터에서 빼면 그 질량 몫이 부위 밀도로 흘러들어 라운드를
+늘려도 안 없어지는 치우침이 된다 (3-link 에서 23 %, study_hinge.py).
+
+힌지를 넣으면 미지수가 P + (P-1) = 2P-1 이 되고, 실물과 정확히 맞는다.
+  P=2 -> 3 개 (실물 2-link 와 같음)
+  P=3 -> 5 개 (실물 3-link 와 같음)
 """
 
 import numpy as np
 
-from density_id_objects import Joint, ObjectSpec, Part
+from density_id_objects import MEASURED_HINGE_KG, Joint, ObjectSpec, Part
 
 CROSS_MM = 44.0
 GAP_MM = 4.0
@@ -40,8 +54,25 @@ def densities(n_part, low=700.0, high=5200.0):
     return list(np.round(np.geomspace(high, low, n_part), 1))
 
 
-def make_spec(n_part, rho_gt=None, limits_rad=(0.0, np.pi)):
-    """파트 n_part 개짜리 직렬 물체 사양."""
+def n_unknowns(n_part):
+    """추정 벡터의 길이 = 부위 n_part 개 + 힌지 (n_part-1) 개 = 2*n_part - 1."""
+    return 2 * n_part - 1
+
+
+def round_lower_bound(n_part):
+    """THEORY.md 정리 3: rank <= 1 + min(3R, n) 이므로 R >= ceil((n-1)/3).
+
+    n = 2*n_part - 1 이므로 R >= ceil((2*n_part - 2)/3).
+    P=2 -> 1, P=3 -> 2 로 실물 관측 라운드 수와 일치한다.
+    """
+    return int(np.ceil((n_unknowns(n_part) - 1) / 3.0))
+
+
+def make_spec(n_part, rho_gt=None, limits_rad=(0.0, np.pi), hinge_kg=MEASURED_HINGE_KG):
+    """파트 n_part 개짜리 직렬 물체 사양. 관절마다 실측 힌지가 달린다.
+
+    hinge_kg=0.0 을 주면 힌지 없는 예전 사양이 된다 (study_hinge.py 의 대조군).
+    """
     lengths = link_lengths(n_part)
     rho_gt = list(rho_gt) if rho_gt is not None else densities(n_part)
 
@@ -81,6 +112,7 @@ def make_spec(n_part, rho_gt=None, limits_rad=(0.0, np.pi)):
                 origin_in_parent_link_mm=origin,
                 axis=axis,
                 limits_rad=tuple(limits_rad),
+                hinge_mass_kg=hinge_kg,
             ))
 
     return ObjectSpec(
@@ -94,8 +126,12 @@ def make_spec(n_part, rho_gt=None, limits_rad=(0.0, np.pi)):
 
 
 if __name__ == "__main__":
+    print(f"{'P':>2} {'관절':>4} {'미지수':>6} {'하한R':>5} {'부위질량':>9} "
+          f"{'힌지질량':>9} {'총질량':>9}")
     for n in range(2, 9):
         spec = make_spec(n)
-        total = sum(p.mass_kg for p in spec.parts)
-        print(f"P={n}  관절 {len(spec.joints)}개  총질량 {1000*total:6.1f} g  "
-              f"GT {[p.rho_gt for p in spec.parts]}")
+        part_kg = sum(p.mass_kg for p in spec.parts)
+        hinge_kg = sum(j.hinge_mass_kg for j in spec.joints)
+        print(f"{n:>2} {len(spec.joints):>4} {n_unknowns(n):>6} "
+              f"{round_lower_bound(n):>5} {1000*part_kg:>8.1f}g "
+              f"{1000*hinge_kg:>8.1f}g {1000*(part_kg+hinge_kg):>8.1f}g")

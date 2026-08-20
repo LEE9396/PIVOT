@@ -36,49 +36,31 @@ import nlink
 
 def closed_loop(spec, rho_gt, kind, target, max_rounds, seed, rel,
                 g_dirs, n_starts, estimator="tls"):
-    """한 기준으로 폐루프를 돌린다. GT 는 채점용으로만 반환한다."""
-    rng = np.random.default_rng(seed)
-    floor_deg = aa.DEFAULT_ANGLE_FLOOR_DEG
-    bounds = [j.limits_rad for j in spec.joints]
-    Sigma = alg.SIGMA0.copy()
-    rho_hat = alg.MU0.copy()
-    blocks, rounds = [], []
+    """한 기준으로 폐루프를 돌린다. GT 는 채점용으로만 쓴다.
+
+    루프 자체는 design_core.closed_loop 하나뿐이다. 예전에는 여기 사본이
+    있었는데, 정지 판단에 half.max() 를 써서 **힌지 행까지 최대값에 넣고**
+    있었다. 힌지는 사전분포 반폭이 2 % 로 고정이라 목표가 1 % 면 부위가 다
+    수렴해도 루프가 안 끝난다 (design_core.stopping_width 의 주석 참고).
+    nlink 가 힌지를 갖게 되면서 그 차이가 드러났다.
+    """
+    out = dc.closed_loop(spec, target=target, max_rounds=max_rounds, seed=seed,
+                         rel_error=rel, g_dirs=g_dirs, criterion=kind,
+                         estimator=estimator, n_starts=n_starts,
+                         n_wanted=len(spec.parts))
+
+    n_part = len(spec.parts)
     history = []
-
-    for round_index in range(1, max_rounds + 1):
-        theta, _ = dc.continuous_best(
-            bounds,
-            lambda t: dc.utility(t, rho_hat, Sigma, g_dirs, kind, rel),
-            n_starts=n_starts, seed=seed + round_index)
-
-        sigma = np.sqrt(np.diag(aa.angle_covariance(theta, rel, floor_deg)))
-        actual = np.atleast_1d(theta) + rng.normal(0.0, sigma)
-        measured = actual + rng.normal(0.0, sigma)
-        y = alg.measure(actual, g_dirs=list(g_dirs), rng=rng)
-
-        A = dc.regressor(measured, g_dirs)
-        R = dc.effective_cov(measured, rho_hat, g_dirs, rel, floor_deg)
-        blocks.append((A, y, R))
-        rounds.append((measured, y))
-        Sigma = dc.posterior(Sigma, A, R)
-
-        rho_wls = dc.wls_map(blocks, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS)
-        if estimator == "tls":
-            rho_hat, _ = dc.tls_map(rounds, alg.MU0, alg.SIGMA0,
-                                    alg.RHO_BOUNDS, g_dirs,
-                                    rho_init=rho_wls, rel_error=rel,
-                                    floor_deg=floor_deg)
-        else:
-            rho_hat = rho_wls
-
-        half = dc.half_width(Sigma, rho_hat)
+    for record in out["history"]:
+        rho = record["rho"]
         history.append(dict(
-            round=round_index, theta=np.degrees(np.atleast_1d(theta)),
-            half=float(half.max()),
-            error=float(np.max(np.abs(rho_hat - rho_gt) / rho_gt)),   # 채점용
-            worst_part=int(np.argmax(half))))
-        if half.max() <= target:
-            break
+            round=record["round"],
+            theta=np.degrees(np.atleast_1d(record["theta"])),
+            half=float(record["worst"]),
+            # 채점도 부위만 본다. 힌지는 저울로 이미 아는 값이다.
+            error=float(np.max(np.abs(rho[:n_part] - rho_gt[:n_part])
+                               / rho_gt[:n_part])),
+            worst_part=int(np.argmax(record["half"][:n_part]))))
     return history
 
 
