@@ -23,6 +23,7 @@ import json
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, Rectangle, Polygon
 from matplotlib import colormaps
@@ -199,7 +200,7 @@ def build(key):
     Y = lambda v: v / H
 
     TOP = H - 0.44
-    fig.text(X(0.35), Y(TOP), f"Per-link density — does the {hinge_g:.0f} g hinge matter?",
+    fig.text(X(0.35), Y(TOP), f"Per-link density",
              ha="left", va="center", fontfamily=SANS, fontsize=17,
              fontweight="bold", color="#0f131a")
     fig.text(X(12.25), Y(TOP), d["label"], ha="right", va="center",
