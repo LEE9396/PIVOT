@@ -202,7 +202,7 @@ def wls_map(blocks, mu0, Sigma0, bounds):
 
 def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
             rel_error=aa.DEFAULT_ANGLE_REL_ERROR,
-            floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG, max_nfev=400,
+            floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG, max_nfev=None,
             grasp_sigma_m=0.0, total_mass_kg=None, grasp_init=None):
     """총최소제곱(구조화 TLS = 오차변수 최대우도).
 
@@ -270,6 +270,10 @@ def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
             parts.append(grasp / grasp_sigma_m)
         return np.concatenate(parts)
 
+    # max_nfev 를 고정하면 안 된다. 미지수가 P + R*J 로 라운드에 비례해 늘어나고,
+    # 수치 미분이라 야코비안 한 번에 미지수 개수만큼 평가가 든다. 400 으로 묶어
+    # 두었더니 p=6 (미지수 86) 이 547 회면 수렴하는데 잘려서 오차가 1.11 % 대신
+    # 13.36 % 로 나왔다. None 이면 scipy 가 100*n 을 쓴다 — 문제 크기에 맞춰 준다.
     res = least_squares(residual, x0, bounds=(x_lo, x_hi), max_nfev=max_nfev)
     rho_hat = res.x[:n_part]
     return rho_hat, dict(delta=res.x[n_part:n_part + n_angle].reshape(R, n_joint),
