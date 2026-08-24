@@ -264,39 +264,159 @@
 ## 5. 논문 절 구성
 
 ```
-   I.   Introduction ................. 0.9쪽   Fig.1
-   II.  Related Work ................. 0.7쪽   소절 4개
-   III. Method ....................... 2.1쪽   A~F, Fig.2
-   IV.  Experiments .................. 1.9쪽   A~F, Fig.3~4, Tab.I~III
-   V.   Conclusion ................... 0.3쪽
-        References ................... 0.6쪽
+   I.   Introduction ................. 0.90쪽   Fig.1
+   II.  Related Work ................. 0.70쪽   소절 3개
+   III. Method ....................... 2.15쪽   소절 5개, Fig.2
+   IV.  Experiments .................. 2.20쪽   소절 5개, Fig.3~4, Tab.I~III
+   V.   Conclusion ................... 0.30쪽
+        References ................... 0.60쪽
+   ────────────────────────────────────────────
+                                       6.85쪽  -> 자르는 순서로 6쪽 (PAPER_STRUCTURE 9장)
 ```
 
-### III. Method
+> ⚠ **Contribution 4번 문구 확인 필요.** 지금 *"a simulation sweep to eight
+> links"* 인데, 닫힌 루프를 p=6 까지만 돌리면 **"to six links"** 로 고치거나
+> *"a diagnostic sweep to eight links"* 로 표현을 나눠야 한다.
+> (SNR·상수 C·모멘트팔 진단은 p=8 까지 이미 있고 비용이 0 이다.)
 
-| | 소절 | 내용 |
-| --- | --- | --- |
-| A | Problem Formulation | 측정 모형, 기호. **형상 가정을 정량화**(도심 1mm→2.4%, 부피 10%→6%). 주 지표는 질량 |
-| B | Articulated Asset Reconstruction | RORA 기반, metric scale 은 RGB-D+마커. 힌지를 미지수로 편입. 파지점 δ |
-| C | **What Quasi-Static Sensing Can Determine** | Lemma 1, Cor 1~2, Prop 1~3, Remark. 0.65쪽 |
-| D | Estimation under Angle Uncertainty | EIV → TLS. **+ 잔차 일관성 문단** (아래 6장) |
-| E | Active Configuration Selection | D-최적, 관절각만 탐색, 형상 의존 가용성 판정 |
-| F | Asset Compilation | URDF inertial 교체, 시뮬레이터 재검증 |
+### II. Related Work — 소절 3개
 
-### IV. Experiments — **순서가 중요하다. 주 결과(asset)가 먼저**
+**세 소절이 우리 파이프라인의 세 입력에 그대로 대응한다.** 전부 "무엇을
+산출하는 연구인가" 로 기준이 통일돼 있다.
 
-| | 소절 | 내용 |
-| --- | --- | --- |
-| A | Experimental Setup | 장비, 물체 4개와 역할 (Tab. I) |
-| B | Baselines and Metrics | PUGS·SiPhy·PhysX-Omni + **강체 변형·단일 자세 변형**(Cor.2 가 예측한 실패를 직접 보임) |
-| C | **Sim-Ready Asset Quality** ★ | Tab. II. 추측(수십~수백%) vs 측정(한 자릿%) |
-| D | Do the Identifiability Predictions Hold? | rank 표, 3-link 가 핵심, 7.9e-16 |
-| E | **Scaling to n Links, and Where It Stops** | E-1 설정 / E-2 어디까지 / **E-3 왜 멈추나(본체)** / E-4 실용=물리 한계 |
-| F | Ablation Study | 4-9 의 표 |
+| | 소절 | 다루는 것 | 대응 |
+| --- | --- | --- | --- |
+| A | Articulated Asset Reconstruction | ScrewSplat, ArtSplat, **RORA** — 형상·part·관절을 얻는다 | III-A 의 입력 |
+| B | Physical Property Estimation from Vision and Interaction | 추측하는 쪽(NeRF2Physics, GaussianProperty, PUGS, PhysGS, SiPhy, PhysX-*, UniPhysGen) + 측정하는 쪽(Sum of Its Parts, Scalable Real2Sim, RigPI) | 이 논문이 푸는 문제 |
+| C | Optimal Excitation and Active Exploration | Gautier·Khalil, Swevers, Wensing, ASID, Hausman | III-D 의 도구 |
 
-> **IV-E 는 결과에 독립적으로 짜여 있다.** 실험이 잘 되든 안 되든 E-1·E-3·E-4 는
-> 그대로이고 E-2 의 숫자만 바뀐다. 그리고 **E-3(왜 멈추나)이 더 두꺼운 내용이다** —
-> 이런 종류의 식별이 언제 무너지는지 규정한 선행연구가 없다.
+**A 를 '재구성' 으로 정의한 것이 핵심이다.** '자산 생성' 으로 잡으면
+PhysX-Omni 처럼 형상과 물성을 동시에 만드는 연구가 A·B 양쪽에 걸쳐 기준이
+흐려진다. 산출물로 나누면 깔끔하다.
+
+**B 에 반드시 들어가야 할 두 가지**
+
+1. **관절체 asset 에 물성을 채워 넣는 연구들** (ArtVIP=수작업, RoboSimGS=MLLM,
+   Asset2Sim=VLM+시뮬레이터 피드백). 우리 응용 공간과 가장 가깝다.
+   **인용 안 하면 "실측 기반은 없다" 는 주장의 신뢰도가 떨어진다.** 먼저
+   인용하고 "전부 주어진 것이지 측정된 것이 아니다" 라고 쓰면 주장이 강해진다.
+
+2. **rank 4 문단** — Related Work 전체에서 가장 강한 자리.
+   "정지 렌치는 총질량과 무게중심만 분해하므로 고정 configuration 은 최대
+   네 개의 밀도 조합만 식별한다. 물체를 강체로 두면 남는 방향을 사전지식으로
+   메울 수밖에 없다" — **세 편의 선행연구가 왜 각각 다른 사전지식을 썼는지를
+   한 원인으로 설명한다.**
+
+**C 는 마지막에 둔다.** "설계 변수가 로봇 궤적이지 물체 형상이 아니다" 로
+끝나므로 Method 로 그대로 이어진다.
+
+**분량**: A 1문단 + B 2문단 + C 2문단 = 5문단. 0.7쪽에 빠듯하다. 넘치면
+**A 의 ScrewSplat·ArtSplat 를 한 절로 축약** — 실제로 쓰는 것은 RORA 하나다.
+
+### III. Method — 소절 5개
+
+| | 소절 | 내용 | 쪽 |
+| --- | --- | --- | ---: |
+| A | Problem Formulation | 측정 모형·기호. **RORA 를 입력으로 받는다**는 것과 metric scale(RGB-D+마커)이 여기 들어간다 — '주어진 것'을 정의하는 자리 | 0.35 |
+| B | Geometric Quantities and Their Uncertainty | 부피·도심 적분, watertight 검사, 볼록 분해 우회, 힌지 편입, 파지점 δ. **요구되는 것은 mesh 정확도가 아니라 도심 정확도** (램프 1mm→2.4%, 2mm→6.1% / 부피 10%→6%) | 0.25 |
+| C | What Quasi-Static Sensing Can Determine | Lemma 1, Cor 1~2, Prop 1~3, Remark | 0.60 |
+| D | Active Selection under Manipulation Constraints | 볼드 소제목 4개로 나눔 (아래) | 0.50 |
+| E | Estimation, Stopping, and Compilation | TLS/EIV, **잔차 일관성**(6장), 정지 조건, URDF 컴파일 | 0.45 |
+
+**왜 RORA 를 별도 소절로 두지 않는가**: 소절 번호는 보통 '우리가 한 것' 에
+붙는다. 0.15쪽짜리 소절을 남의 것에 배정하면 목차에서 그것부터 눈에 띈다.
+**Problem Formulation 이 '무엇이 주어지는가' 를 정의하는 자리**이므로 거기가
+맞다. 대신 부피·도심은 별도 소절로 올려 **가정이 제목을 갖게** 한다 —
+"Geometric Quantities and *Their Uncertainty*" 라는 제목 자체가 숨기는 게
+아니라 다루는 것으로 읽힌다.
+
+**D 안의 볼드 소제목**
+
+```
+   **Choosing the next configuration.**   D-최적. Cor.1 에 의해 삼면체가
+       목적함수에서 빠지므로 관절각만 탐색. 다중 시작 연속 최적화.
+
+   **Verifying it is realizable.**        theta 가 물체의 형상을 바꾸므로
+       후보마다 다시 판정 — 고전 여기설계에 없는 결합. 파지·IK, 각도 오차
+       구간에 대한 강건성, 그리고 **지금 라운드의 형상으로 계획한** 충돌 없는
+       경로. 지난 라운드 형상으로 계획하면 이동 중 충돌한다.
+
+   **Reading the joint angles.**          관절 축이 시선과 직각이면
+       0.37 px/deg 로 카메라가 1도와 3도를 구별 못 한다. 관절마다 가장 잘
+       보이는 자세에서 읽는다 (4.1배 차이). 각도 오차가 지배적 병목이므로
+       이 장치가 없으면 앞뒤가 안 맞는다.
+
+   **Safety.**                            사람이 관절을 맞추는 동안 로봇 정지.
+       확인 두 번 뒤 이동. 관성력이 중력의 1% 미만이 되도록 이동 시간.
+```
+
+### IV. Experiments — 소절 5개. **주 결과(asset)가 먼저**
+
+| | 소절 | 내용 | 쪽 |
+| --- | --- | --- | ---: |
+| A | Setup, Baselines, and Metrics | 볼드 소제목 4개 (아래) | 0.40 |
+| B | **Sim-Ready Asset Quality** ★ | Tab. II. 추측(수십~수백%) vs 측정(한 자릿%) | 0.60 |
+| C | Do the Predictions Hold? | rank 표, 3-link 가 핵심, 7.9e-16 | 0.35 |
+| D | Scaling to n Links, and Where It Stops | D-1~D-4 (아래) | 0.50 |
+| E | Ablations | 4-9 의 표 | 0.35 |
+
+**A + B 를 합친 이유**: Setup 과 Baselines/Metrics 는 둘 다 준비 단계라 합치는
+것이 관례다. 소절 하나를 아끼고 결과가 더 빨리 나온다.
+
+**순서를 유지하는 이유**: 주 목적이 asset 이므로 B 가 먼저 오고 C·D 가
+"왜 이 방법이 그렇게 생겼는지" 를 뒷받침한다. **이론 검증을 앞에 두면
+분석 논문으로 읽힌다.**
+
+#### A 안의 볼드 소제목
+
+```
+   **Objects.**    Tab. I 을 장비보다 **먼저** — 리뷰어가 "무엇으로 검증했나"
+                   를 먼저 궁금해하고, 물체마다 다른 것을 검증한다는 설계가
+                   표 하나로 전달된다.
+   **Platform.**   RB5-850E + AFT200-D80-C + Robotiq 2F-85 + D456, Drake.
+                   타어링·핸드아이 캘리브레이션은 매 세션 전.
+   **Baselines.**  추측하는 쪽: PUGS, SiPhy, PhysX-Omni
+                   측정하되 형상 고정: 강체 변형, 단일 자세 변형
+                   <- 후자가 Cor.2 가 예측한 실패를 직접 보이는 자리
+   **Metrics.**    부위별 상대 **질량** 오차(밀도 아님), 목표 도달 라운드,
+                   소요 시간, 95% 구간 적용률
+```
+
+#### B 의 물체별 검증 방식
+
+```
+   커스텀 2개   CAD 정답 대비 절대 오차
+   램프         분해 실측 GT (396/82/84 g). **부피는 배수법으로 실측**
+                ("보정했다" 가 "실측했다" 가 되어 모호함이 사라진다)
+   노트북       기지 추 50 g 차분으로 부위 귀속 검증
+                (부피 오차가 차분에서 상쇄되므로 절대 GT 보다 강한 증거)
+```
+
+#### D 의 4단 구성 — **결과에 독립적**
+
+```
+   D-1  설정        합성 사슬. p=2,3 이 실물과 미지수·rank·라운드까지 일치
+   D-2  어디까지    Fig.3 — 라운드 vs p, 하한을 점선으로 겹침
+   D-3  왜 멈추나 ★ SNR 은 충분(p=8 말단 2.3) -> 1/sqrt(R) 로 정상 감소
+                    -> 상수 C 가 링크마다 2배 -> 필요 라운드 4배
+                    -> 사슬이 되말려 **p=4 부터 부위 간격이 60mm -> 5mm**
+   D-4  실용=물리   p>=4 는 마찰 힌지로 제작 불가 (하류 밀도가 프린트 하한 아래)
+```
+
+> **되든 안 되든 D-1·D-3·D-4 는 그대로이고 D-2 의 숫자만 바뀐다.**
+> 그리고 D-3 이 더 두꺼운 내용이다 — 이런 종류의 식별이 언제 무너지는지
+> 규정한 선행연구가 없다.
+
+#### E 에 새로 들어갈 두 줄
+
+```
+   잔차에 각도 보정 미반영   팽창 79배, 정지 조건 영영 미충족
+   TLS 반복 상한 400 고정    p=6 오차 13.36% -> 1.11% (547회면 수렴)
+```
+
+둘 다 **"부위가 2~3개일 때는 안 드러나다가 늘면서 조용히 부족해진 설정"** 이다.
+성격이 같으므로 묶어서 교훈 한 문장을 달면 다른 연구자에게 값어치가 있다.
+
 
 ---
 
