@@ -3,8 +3,18 @@
 > **새 대화에서 이 파일 하나만 읽으면 논문 초안을 쓸 수 있도록** 정리했습니다.
 > 유도·수치·구조·현재 상태가 전부 여기 있습니다. 다른 문서를 안 읽어도 됩니다.
 >
-> 논문 소스: `~/Downloads/ICRA-27-ROBIN/` (main, 1_intro, 2_relwork, 3_method, 4_exp, 5_conclusion)
+> 논문 소스: 사용자가 주는 zip (OpenAI Prism 에서 받음)
 > 코드·근거: `~/Desktop/PIVOT/my_work/`
+>
+> ⚠ **이 문서가 내용 결정의 기준이다.** 받은 tex 는 Prism 에서 따로 편집된
+> 판본이라 아래 결정들이 반영돼 있지 않을 수 있다. **tex 와 이 문서가 다르면
+> 이 문서를 따르고, tex 에 없는 것은 새로 넣는다.**
+>
+> 참고로 `~/Downloads/ICRA-27-ROBIN/` 에 이전 세션에서 손본 판본이 있다.
+> 거기 이미 반영된 것: Abstract·Intro 재작성, Contribution 4개, Related Work 에
+> 여기설계 소절 추가, Method·Experiments·Conclusion 초안, `\newtheorem` 선언,
+> `reference.bib` 에 Swevers·Gautier·Janot·Hausman·ASID·Wensing·Atkeson 추가.
+> **새 zip 에 이것들이 없으면 다시 넣어야 한다.**
 
 ---
 
@@ -47,7 +57,7 @@
     both appearance and dynamics, without damaging joints.
     \item Real-world experiments on four articulated objects, two with
     controllable ground-truth densities, where the predicted number of
-    configurations is met with equality, and a simulation sweep to eight links.
+    configurations is met with equality, and a simulation sweep to six links.
 \end{itemize}
 ```
 
@@ -274,10 +284,9 @@
                                        6.85쪽  -> 자르는 순서로 6쪽 (PAPER_STRUCTURE 9장)
 ```
 
-> ⚠ **Contribution 4번 문구 확인 필요.** 지금 *"a simulation sweep to eight
-> links"* 인데, 닫힌 루프를 p=6 까지만 돌리면 **"to six links"** 로 고치거나
-> *"a diagnostic sweep to eight links"* 로 표현을 나눠야 한다.
-> (SNR·상수 C·모멘트팔 진단은 p=8 까지 이미 있고 비용이 0 이다.)
+> **결정됨**: 닫힌 루프는 **p=2..6**, 정보 구조 진단(SNR·상수 C·모멘트팔)은
+> p=2..8. Contribution 4번은 **"to six links"** 로 확정. p=7,8 은 닫힌 루프로
+> 돌려도 새 현상이 없다 (부위 간 최소 간격이 4.6mm 로 포화).
 
 ### II. Related Work — 소절 3개
 
@@ -399,7 +408,7 @@ PhysX-Omni 처럼 형상과 물성을 동시에 만드는 연구가 A·B 양쪽�
                     소요 시간(사람/로봇 분리), 95% 구간 적용률
 ```
 
-#### D 에 반드시 넣을 것 — **시뮬레이터에서 실제로 잘 움직이는가**
+#### D 에 반드시 넣을 것 — **시뮬레이터에서 실제로 잘 움직이는가** ★ 채택됨
 
 논문이 "sim-ready", "faithful in dynamics" 를 주장하는데 지금 재는 것은 질량
 오차뿐이다. **"질량이 맞으면 시뮬레이션이 맞는다" 는 보장이 없다.**
@@ -410,7 +419,19 @@ PhysX-Omni 처럼 형상과 물성을 동시에 만드는 연구가 A·B 양쪽�
         -> 궤적을 겹쳐 그린다  (Fig. 4)
 ```
 
-**이것이 "sim-ready" 라는 단어를 정당화하는 유일한 실험이다.**
+**이것이 "sim-ready" 라는 단어를 정당화하는 유일한 실험이다.** 채택하기로 했다.
+
+**Fig. 4 사양**
+
+```
+   가로 3칸 :  우리 밀도 / VLM baseline / 균일 밀도
+   각 칸에   :  실물 영상에서 뽑은 궤적(실선)과 시뮬 궤적(점선)을 겹침
+   아래에    :  궤적 오차 (위치 RMS) 를 숫자로
+```
+
+**간소화 가능**: 관절체를 넘어뜨리는 것이 어려우면, **관절을 놓았을 때 중력으로
+처지는 궤적**을 비교해도 된다. 마찰 유지 관절이라 천천히 처지므로 촬영과
+재현이 쉽고, 초기조건(관절각)이 명확해 재현성이 높다.
 
 #### C 의 4단 구성 — **결과에 독립적**
 
@@ -477,11 +498,15 @@ PhysX-Omni 처럼 형상과 물성을 동시에 만드는 연구가 A·B 양쪽�
 ## 7. 현재 상태
 
 ```
-   ✅ 작성됨   main(abstract), 1_intro, 2_relwork, 3_method(A~F), 4_exp(A~F), 5_conclusion
-   ⬜ 추가     Method D 에 '잔차 일관성' 문단 (6장)
-   ⚠  대기     4_exp E-2 의 수치 — n-link 재측정 진행 중
-   ⬜ 실물     4_exp C 전체, Fig.1, Fig.4, Tab.II  (F/T 센서 대기)
-   ⬜ 그림     Fig.2 (영공간 도식), Fig.3 (라운드 vs p)
+   ✅ 작성됨   Abstract, Intro, Related Work(C 소절 초안 있음),
+               Method(A~F 구판), Experiments(A~F 구판), Conclusion
+   ⬜ 재구성   Method 를 소절 5개로, Experiments 를 소절 5개·시뮬->실물 순으로
+   ⬜ 추가     Method E 에 '잔차 일관성' 문단 (6장)
+               Experiments A 에 'GT 획득' 과 '재구성 정확도' 문단
+               Experiments D 에 시뮬레이터 재생 검증 (E8)
+   ⚠  대기     Experiments C 의 n-link 수치 — p=5 진행 중, p=6 대기
+   ⬜ 실물     Experiments D 전체, Fig.1, Fig.4, Fig.5, Tab.II
+   ⬜ 그림     Fig.2 (영공간 도식) — 지금 만들 수 있음
 ```
 
 **실물 수치는 `\rev{}` 로 표시돼 있어 빨간 글씨로 찾을 수 있다.**
@@ -629,7 +654,18 @@ Rigid 와 Single-config 열이 특히 중요하다 — **Cor. 2 가 예측한 �
    잔차에 각도 보정 미반영     팽창 79배, 정지 조건 영영 미충족   <- 새 발견
 ```
 
-### Fig. 4 — 실물 수렴 궤적 (여유 있으면)
+### Fig. 4 — 시뮬레이터 재생 검증 (필수, 2단 폭) ★ 채택됨
+
+```
+   가로 3칸 :  우리 밀도 / VLM baseline / 균일 밀도
+   각 칸    :  실물 영상 궤적(실선) vs 시뮬 궤적(점선) 을 겹침
+   아래     :  위치 RMS 오차
+```
+
+**"sim-ready" 라는 단어를 정당화하는 유일한 그림.** 질량 오차 표만으로는
+"질량이 맞으면 시뮬레이션이 맞는다" 가 보장되지 않는다.
+
+### Fig. 5 — 실물 수렴 궤적 (여유 있으면)
 
 ```
    x: 라운드,  y: 부위별 반폭 (로그)
@@ -643,15 +679,15 @@ Tab. I 과 중복이지만 시각적으로 강하다. 분량이 빠듯하면 뺀
 ### 우선순위 요약
 
 ```
-   반드시   Fig.1 (teaser)   Fig.2 (이론)   Tab.II (주 결과)
+   반드시   Fig.1 (teaser)  Fig.2 (이론)  Fig.4 (재생 검증)  Tab.II (주 결과)
    강력권장 Fig.3 (스케일링)  Tab.I (물체)
    권장     Tab.III (ablation)
-   여유시   Fig.4 (수렴 궤적)
+   여유시   Fig.5 (수렴 궤적)
 ```
 
 **지금 만들 수 있는 것**: Fig.2 (데이터 불필요), Tab.I (완료), Tab.III (재료 있음).
 **재측정 후**: Fig.3.
-**실물 후**: Fig.1, Fig.4, Tab.II.
+**실물 후**: Fig.1, Fig.4, Fig.5, Tab.II.
 
 ---
 
