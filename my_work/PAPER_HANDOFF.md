@@ -8,48 +8,90 @@
 
 ---
 
-## 0. 시작하기 전에 — 이 문서와 받은 tex 의 관계
+## 0. 시작하기 전에 — 세 갈래를 병합해야 한다
 
-**팀원들이 Prism 에서 계속 원고를 고치고 있다.** 그러므로:
+원고가 **세 갈래**로 나뉘어 있다. 어느 하나를 기준으로 삼고 나머지를 버리면
+안 된다.
 
 ```
-   받은 zip   =  **문장의 최신본**.  팀원들이 다듬은 글이 들어 있다.
-   이 문서    =  **결정의 기준**.    무엇을 주장하고 어떤 수치를 쓰고
-                                    절을 어떻게 나눌지가 여기 있다.
+   ① ICRA-27-ROBIN        사용자 판본 (8/20). Method·Experiments·Conclusion 초안,
+                          새 Abstract, Contribution 4개, bib 인용 추가
+   ② ICRA-27-ROBIN (2)    팀원 판본 (8/24). Related Work 최신, **GT 측정 절**,
+                          Experiments 소절 구성. 단 Method·Conclusion 은 스텁
+   ③ 이 문서              결정의 기준. 구조·주장·수치·표현 수위
 ```
+
+### 파일별로 어느 것을 살릴 것인가
+
+| 파일 | 기준 | 이유 |
+| --- | --- | --- |
+| `main.tex` | **①의 Abstract** + **②의 `\usepackage{multirow}`** | ② 는 옛 Abstract("five types") 다. `\newtheorem` 4개는 양쪽에 다 있다 |
+| `1_intro.tex` | **①** (Contribution 4개) | ② 는 옛 3개짜리. **단 4번을 "to six links" 로 고칠 것** |
+| `2_relwork.tex` | **②** ★ | 팀원 판본이 최신이고 낫다. **① 로 덮지 말 것** |
+| `3_method.tex` | **①** | ② 는 스텁. ① 을 이 문서의 5소절 구성으로 재편 |
+| `4_exp.tex` | **②의 소절 구성과 GT 절** + **①의 본문** | 아래 참조 |
+| `5_conclusion.tex` | **①** | ② 는 스텁 |
+| `reference.bib` | **①** (상위집합) + ② 에만 있는 항목 확인 | ① 에 Swevers·Gautier·Janot·Hausman·ASID·Wensing·Atkeson 이 들어 있다 |
+
+### `4_exp.tex` 는 특히 조심 — 팀원 글이 더 낫다
+
+```
+   ② 에 있는 것 (반드시 살릴 것)
+      · \subsection{Ground Truth Measurement}  ★ 수중 배제법 절차가 상세하다.
+        현수 장치 영점, 밀폐 cavity vs 열린 cavity 구분까지 적혀 있다.
+        **이 문서의 GT 서술보다 낫다. 그대로 쓴다.**
+      · 소절 구성 : Ground Truth Measurement / Volume Estimation /
+                    Density error sim / Density error real
+        (사용자가 원한 구성과 일치한다)
+
+   ① 에 있는 것 (가져올 것)
+      · Setup 본문 (장비, 물체 표)
+      · 이론 예측 검증, n-link 스케일링, Ablation 본문
+      · \rev{} 로 표시된 실물 수치 자리
+```
+
+### 병합 후 Experiments 소절 (② 구성 + 빠진 것 보강)
+
+```
+   A. Experimental Setup                    물체 4개·장비·지표
+   B. Ground Truth Measurement              ② 의 절을 그대로  ★
+   C. Volume Estimation                     재구성 부피·도심 정확도 (② 는 제목만 있음)
+   D. Density Estimation in Simulation      물체 4개 + 시뮬 baseline
+                                            + **n-link 스케일링 (p=2..6)**
+   E. Density Estimation on the Real Robot  실물 4개 + vision baseline
+                                            + **시뮬레이터 재생 검증 (Fig.4)**
+   F. Ablations
+```
+
+**② 에 없어서 새로 넣어야 하는 것**: n-link 스케일링(D 안), 시뮬레이터 재생
+검증(E 안), Ablations(F). 앞의 둘은 contribution 1·4의 근거라 빠지면 안 된다.
 
 ### 세 가지 원칙
 
-**① 덮어쓰지 말고 병합한다.** 받은 tex 의 문장이 이 문서의 예시보다 나으면
-**그 문장을 쓴다.** 이 문서의 영문은 대개 *초안* 이지 완성문이 아니다.
+**① 덮어쓰지 말고 병합한다.** 문장이 더 나은 쪽을 쓴다. 이 문서의 영문은
+대개 *초안* 이지 완성문이 아니다.
 
-**② 구조·주장·수치는 이 문서를 따른다.** 절 구성, contribution 문구, 표현
-수위("we recall" vs "we show"), 실측 수치는 여기서 결정된 것이다.
-tex 가 다르면 이 문서 쪽으로 맞춘다.
+**② 구조·주장·수치·표현 수위는 이 문서를 따른다.** 절 구성, contribution
+문구, "we recall" vs "we show", 실측 수치는 여기서 결정된 것이다.
 
 **③ 팀원이 쓴 것을 이유 없이 지우지 않는다.** 왜 넣었는지 모르는 문단은
-남겨 두고, 겹치면 통합한다. 정말 빼야 한다면 그 사실을 사용자에게 알린다.
+남겨 두고, 겹치면 통합한다. 빼야 한다면 사용자에게 알린다.
 
-### 받은 zip 에서 **있는지 확인할 것** (없으면 추가, 있으면 유지)
+### 병합 후 확인 목록
 
 | | 무엇 | 어디 |
 | --- | --- | --- |
-| ☐ | **Optimal Excitation 소절** (Gautier·Swevers·Wensing·ASID·Hausman) | Related Work C |
-| ☐ | **rank 4 문단** — 강체 방법들이 왜 사전지식을 쓸 수밖에 없는지 | Related Work B 끝 |
-| ☐ | **asset 에 물성을 채우는 연구들** (ArtVIP, RoboSimGS, Asset2Sim) | Related Work B |
-| ☐ | Contribution 4개, 4번은 **"to six links"** | Intro 끝 |
-| ☐ | `\newtheorem{lemma}` 등 4개 선언 | main.tex 서문 |
-| ☐ | bib: Swevers, Gautier, Janot, Hausman, ASID, Wensing, Atkeson | reference.bib |
-| ☐ | Method 에 이론 소절 (Lemma 1, Prop 1~3, Cor 1~2) | Method C |
-| ☐ | **잔차 일관성 문단** (6장) | Method E |
-| ☐ | **GT 획득 / 재구성 정확도** 문단 | Experiments A |
-| ☐ | **시뮬레이터 재생 검증** (Fig.4) | Experiments D |
-
-> `~/Downloads/ICRA-27-ROBIN/` 에 이전 세션에서 손본 판본이 있지만
-> **오래된 갈래다. 기준으로 쓰지 말 것.** 참고만 하고, 병합은 받은 zip 위에서
-> 한다.
-
----
+| ☐ | Contribution 4번이 **"to six links"** | Intro |
+| ☐ | Abstract 가 새 판본 (①) | main.tex |
+| ☐ | Optimal Excitation 소절 | RelWork C |
+| ☐ | rank 4 문단 (강체가 왜 사전지식을 쓰는가) | RelWork B 끝 |
+| ☐ | asset 에 물성 채우는 연구 (ArtVIP, RoboSimGS, Asset2Sim) | RelWork B |
+| ☐ | Method 5 소절 구성 + 이론 소절 | Method |
+| ☐ | 잔차 일관성 문단 (6장) | Method E |
+| ☐ | GT 측정 절이 ② 판본인지 | Exp B |
+| ☐ | n-link 스케일링 | Exp D |
+| ☐ | 시뮬레이터 재생 검증 (Fig.4) | Exp E |
+| ☐ | `\newtheorem` 4개, `\usepackage{multirow}` | main.tex |
 
 ---
 
@@ -394,92 +436,71 @@ PhysX-Omni 처럼 형상과 물성을 동시에 만드는 연구가 A·B 양쪽�
        확인 두 번 뒤 이동. 관성력이 중력의 1% 미만이 되도록 이동 시간.
 ```
 
-### IV. Experiments — 소절 5개. **시뮬레이션 먼저, 실물 나중**
+### IV. Experiments — 소절 6개 (팀원 판본 구성 + 보강)
 
 | | 소절 | 내용 | 쪽 |
 | --- | --- | --- | ---: |
-| A | Experimental Setup | 물체·장비·**GT 획득**·**재구성 정확도**·지표 | 0.45 |
-| B | Density Estimation in Simulation | 이론 예측 검증 + 물체 4개 + 시뮬 baseline | 0.60 |
-| C | Scaling to n Links, and Where It Stops | D-1~D-4 (결과 독립적) | 0.50 |
-| D | **Real-Robot Estimation and Sim-Ready Assets** ★ | 실물 4개 + vision baseline + asset 검증 | 0.55 |
-| E | Ablations | 4-9 의 표 | 0.30 |
+| A | Experimental Setup | 물체 4개와 역할(Tab.I), 장비, 지표 | 0.30 |
+| B | **Ground Truth Measurement** | **팀원 판본 그대로** — 수중 배제법, 분해 저울, CAD 적분 | 0.30 |
+| C | Volume Estimation | 재구성 부피·도심 정확도 vs CAD. **baseline 비교는 안 함** | 0.25 |
+| D | Density Estimation in Simulation | 이론 예측 검증 + 물체 4개 + 시뮬 baseline + **n-link (p=2..6)** | 0.60 |
+| E | **Density Estimation on the Real Robot** ★ | 실물 4개 + vision baseline + **시뮬레이터 재생 검증** | 0.55 |
+| F | Ablations | 4-9 의 표 | 0.30 |
 
-**왜 시뮬레이션이 먼저인가**: GT 가 정확한 곳에서 알고리즘을 먼저 검증하고,
-그다음 재구성 오차가 섞인 실물로 넘어가야 리뷰어가 **"실물 오차가 알고리즘
-탓인지 재구성 탓인지"** 를 스스로 가릴 수 있다.
+**시뮬레이션이 실물보다 먼저인 이유**: GT 가 정확한 곳에서 알고리즘을 먼저
+검증해야, 리뷰어가 실물 오차가 알고리즘 탓인지 재구성 탓인지 가릴 수 있다.
 
 **baseline 이 두 종류로 갈린다** — 시뮬에서는 vision baseline 을 못 돌린다
-(이미지가 필요하다). 이걸 명시해야 표가 두 개인 이유가 설명된다.
+(이미지가 필요하다). 표가 두 개인 이유를 본문에 밝혀야 한다.
 
 ```
-   시뮬 (B)  강체 변형 / 단일 자세 변형 / WLS
+   시뮬 (D)  강체 변형 / 단일 자세 변형 / WLS
              <- Cor.2 가 예측한 실패를 직접 보이는 자리
-   실물 (D)  PUGS / SiPhy / PhysX-Omni
+   실물 (E)  PUGS / SiPhy / PhysX-Omni
 ```
 
-#### A 안의 볼드 소제목 — **GT 와 재구성 정확도가 새로 들어간다**
+#### C (Volume Estimation) 에서 무엇을 쓰나
 
 ```
-   **Objects.**     Tab. I 을 장비보다 먼저. 물체마다 다른 것을 검증한다는
-                    설계가 표 하나로 전달된다.
-
-   **Platform.**    RB5-850E + AFT200-D80-C + Robotiq 2F-85 + D456, Drake.
-                    타어링·핸드아이 캘리브레이션은 매 세션 전.
-
-   **Ground truth.** ★ 물체마다 다르다 — 리뷰어가 반드시 묻는다
-                    2·3-link : CAD 치수 (설계 밀도를 우리가 정함)
-                    램프      : 분해해서 저울 (396/82/84 g)
-                                + 부위 부피는 **배수법으로 실측**
-                    노트북    : 분해 불가 -> **기지 추 50 g 차분**
-                                (부피 오차가 차분에서 상쇄되므로 절대 GT 보다 강함)
-
-   **Reconstruction accuracy.** ★ 부피·도심 오차를 CAD 대비 실측해 보고한다.
-                    재구성은 우리 기여가 아니지만 **공정성 때문에 필요하다** —
-                    모든 baseline 이 같은 재구성을 쓴다는 것을 보여야 비교가
-                    성립한다. **baseline 비교는 하지 않는다** (다른 분야의
-                    문제이고, "왜 더 좋은 걸 안 썼나" 를 자초한다).
-
-   **Metrics.**     부위별 상대 **질량** 오차(밀도 아님), 목표 도달 라운드,
-                    소요 시간(사람/로봇 분리), 95% 구간 적용률
+   커스텀 2·3-link 는 CAD 정답이 있다.
+        스캔 부피 vs CAD 부피    ->  "우리 재구성의 부피 오차는 X %"
+        스캔 도심 vs CAD 도심    ->  "도심 오차는 Y mm"
+   이미 잰 민감도와 짝지어 쓴다
+        부피 10 % -> 질량 6 % ,  도심 1 mm -> 질량 2.4 %
 ```
 
-#### D 에 반드시 넣을 것 — **시뮬레이터에서 실제로 잘 움직이는가** ★ 채택됨
+**재구성 방법들끼리의 baseline 비교는 하지 않는다.** 우리 기여가 아니고,
+비교하면 "왜 더 좋은 걸 안 썼나" 를 자초한다. 목적은 **공정성** — 모든
+baseline 이 같은 재구성을 쓴다는 것을 보이는 것이다.
 
-논문이 "sim-ready", "faithful in dynamics" 를 주장하는데 지금 재는 것은 질량
-오차뿐이다. **"질량이 맞으면 시뮬레이션이 맞는다" 는 보장이 없다.**
-
-```
-   실물을 넘어뜨리거나 떨어뜨려 영상 촬영
-        -> 같은 초기조건으로 시뮬레이션 재생 (우리 / VLM baseline / 균일밀도)
-        -> 궤적을 겹쳐 그린다  (Fig. 4)
-```
-
-**이것이 "sim-ready" 라는 단어를 정당화하는 유일한 실험이다.** 채택하기로 했다.
-
-**Fig. 4 사양**
+#### D 안의 n-link 부분 — **결과에 독립적인 4단**
 
 ```
-   가로 3칸 :  우리 밀도 / VLM baseline / 균일 밀도
-   각 칸에   :  실물 영상에서 뽑은 궤적(실선)과 시뮬 궤적(점선)을 겹침
-   아래에    :  궤적 오차 (위치 RMS) 를 숫자로
-```
-
-**간소화 가능**: 관절체를 넘어뜨리는 것이 어려우면, **관절을 놓았을 때 중력으로
-처지는 궤적**을 비교해도 된다. 마찰 유지 관절이라 천천히 처지므로 촬영과
-재현이 쉽고, 초기조건(관절각)이 명확해 재현성이 높다.
-
-#### C 의 4단 구성 — **결과에 독립적**
-
-```
-   C-1  설정        합성 사슬. p=2,3 이 실물과 미지수·rank·라운드까지 일치
-   C-2  어디까지    Fig.3 — 라운드 vs p, 하한을 점선으로 겹침
-   C-3  왜 멈추나 ★ SNR 충분(p=8 말단 2.3) -> 1/sqrt(R) 로 정상 감소
+   D-1  설정        합성 사슬. p=2,3 이 실물과 미지수·rank·라운드까지 일치
+   D-2  어디까지    Fig.3 — 라운드 vs p, 하한을 점선으로 겹침
+   D-3  왜 멈추나 ★ SNR 충분(p=8 말단 2.3) -> 1/sqrt(R) 로 정상 감소
                     -> 상수 C 가 링크마다 2배 -> 필요 라운드 4배
                     -> 사슬이 되말려 **p=4 부터 부위 간격 60mm -> 5mm**
-   C-4  실용=물리   p>=4 는 마찰 힌지로 제작 불가
+   D-4  실용=물리   p>=4 는 마찰 힌지로 제작 불가
 ```
 
-#### E 에 새로 들어갈 두 줄
+> **되든 안 되든 D-1·D-3·D-4 는 그대로이고 D-2 의 숫자만 바뀐다.**
+
+#### E 에 반드시 넣을 것 — **시뮬레이터 재생 검증** ★
+
+논문이 "sim-ready", "faithful in dynamics" 를 주장하는데 지금 재는 것은
+**질량 오차뿐**이다. *"질량이 맞으면 시뮬레이션이 맞는다"* 는 보장이 없다.
+
+```
+   ① 실물을 넘어뜨리거나 관절을 놓아 처지는 것을 촬영 (초기조건 기록)
+   ② 같은 초기조건으로 시뮬 재생 — 우리 / VLM baseline / 균일 밀도
+   ③ 궤적을 겹쳐 그린다 (Fig. 4), 아래에 위치 RMS 오차
+```
+
+**간소화**: 넘어뜨리기가 어려우면 **관절을 놓았을 때 중력으로 처지는 궤적**
+으로 대체. 마찰 관절이라 천천히 처지고 초기조건이 명확해 재현성이 높다.
+
+#### F 에 새로 들어갈 두 줄
 
 ```
    잔차에 각도 보정 미반영   팽창 79배, 정지 조건 영영 미충족
