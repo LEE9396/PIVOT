@@ -542,15 +542,20 @@ class PlannerScreen:
             if self.grasp_sigma_m > 0.0 and len(tls_info.get("grasp", ())) == 3:
                 self.grasp_hat = np.asarray(tls_info["grasp"], dtype=float)
         else:
-            self.rho_hat = rho_wls
+            self.rho_hat, tls_info = rho_wls, None
 
-        # 파지점을 함께 풀었으면 그 몫도 예측에 넣고 잔차를 재야 한다.
+        # 미지수로 함께 푼 것은 **무엇이든** 잔차를 잴 때 반영해야 한다.
+        # 파지점 몫은 예측에 더하고, 각도 보정량은 회귀행렬에 넣는다. 후자를
+        # 빠뜨리면 TLS 가 찾아낸 보정량이 통째로 잔차로 잡혀 팽창이 80배까지
+        # 뛰고, 추정이 이미 목표를 넘었는데도 정지 조건이 만족되지 않는다.
         grasp_offset = (dc.grasp_columns(dc.CANONICAL_TRIAD,
                                          self.total_mass_kg) @ self.grasp_hat
                         if self.grasp_sigma_m > 0.0 else None)
-        self.inflate = dc.residual_inflation(
-            self.blocks, self.rho_hat, offset=grasp_offset,
-            n_extra=3 if self.grasp_sigma_m > 0.0 else 0)
+        self.inflate = dc.residual_scale(
+            self.blocks, self.rounds, self.rho_hat, dc.CANONICAL_TRIAD,
+            tls_info if self.estimator == "tls" else None,
+            stop_rule=self.stop_rule, grasp_offset=grasp_offset,
+            n_grasp=3 if self.grasp_sigma_m > 0.0 else 0)
         if self.stop_rule == "bias":
             self.bias_cov = dc.bias_by_refit(
                 self.rounds, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS,

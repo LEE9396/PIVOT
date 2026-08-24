@@ -478,6 +478,36 @@ def residual_inflation(blocks, rho_hat, dof_floor=1, offset=None,
     return max(1.0, np.sqrt(total / dof))
 
 
+def residual_scale(blocks, rounds, rho_hat, g_dirs, tls_info,
+                   stop_rule="residual", grasp_offset=None, n_grasp=0):
+    """정지 판단에 쓸 잔차 팽창 배율. **추정기가 실제로 맞춘 모형으로 잰다.**
+
+    TLS 는 각 라운드의 각도 보정량 delta 를 rho 와 함께 푼다. 즉 맞춘 모형은
+    y ~ A(theta + delta) rho 이지 y ~ A(theta) rho 가 아니다. 그런데 잔차를
+    보정 전 회귀행렬로 재면 **TLS 가 찾아낸 delta 가 통째로 잔차로 잡힌다.**
+    그러면 팽창이 폭주하고, 추정이 이미 목표를 넘었는데도 정지 조건이 영영
+    만족되지 않는다.
+
+    실제로 그랬다 (각도오차 5 %, 10 라운드):
+
+        p=4   팽창 79.3 배 -> 1.05 배    반폭 89.17 % -> 1.18 %  (실제오차 0.28 %)
+        p=5   팽창 94.3 배 -> 1.13 배    반폭 156.1 % -> 1.87 %  (실제오차 0.89 %)
+
+    같은 실수를 파지점 어긋남에서 이미 한 번 했다 (residual_inflation 주석).
+    미지수로 함께 푼 것은 무엇이든 잔차를 잴 때도 반영해야 한다.
+    """
+    if stop_rule == "variance":
+        return 1.0
+    if tls_info is None or "delta" not in tls_info:
+        return residual_inflation(blocks, rho_hat, offset=grasp_offset,
+                                  n_extra=n_grasp)
+    delta = np.atleast_2d(tls_info["delta"])
+    fitted = [(regressor(np.atleast_1d(theta) + d, g_dirs), y, R_eff)
+              for (theta, y), d, (_, _, R_eff) in zip(rounds, delta, blocks)]
+    return residual_inflation(fitted, rho_hat, offset=grasp_offset,
+                              n_extra=int(delta.size) + n_grasp)
+
+
 def half_width(Sigma, rho_hat, Cov_bias=None, inflate=1.0, z=1.96):
     """95 % 상대 반폭. 치우침 몫과 잔차 팽창을 선택적으로 더한다."""
     var = np.diag(Sigma) * inflate ** 2
@@ -563,15 +593,18 @@ def closed_loop(spec, target=0.01, max_rounds=12, seed=0,
         Sigma = posterior(Sigma, A, R)
 
         rho_wls = wls_map(blocks, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS)
+        tls_info = None
         if estimator == "tls":
-            rho_hat, _ = tls_map(rounds, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS,
-                                 g_dirs, rho_init=rho_wls,
-                                 rel_error=rel_error, floor_deg=floor_deg)
+            rho_hat, tls_info = tls_map(rounds, alg.MU0, alg.SIGMA0,
+                                        alg.RHO_BOUNDS, g_dirs,
+                                        rho_init=rho_wls,
+                                        rel_error=rel_error,
+                                        floor_deg=floor_deg)
         else:
             rho_hat = rho_wls
 
-        inflate = 1.0 if stop_rule == "variance" else residual_inflation(
-            blocks, rho_hat)
+        inflate = residual_scale(blocks, rounds, rho_hat, g_dirs, tls_info,
+                                 stop_rule)
         if stop_rule == "bias":
             bias_cov = bias_by_refit(rounds, alg.MU0, alg.SIGMA0,
                                      alg.RHO_BOUNDS, g_dirs, rho_hat,
