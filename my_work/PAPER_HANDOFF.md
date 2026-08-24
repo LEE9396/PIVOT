@@ -3,18 +3,53 @@
 > **새 대화에서 이 파일 하나만 읽으면 논문 초안을 쓸 수 있도록** 정리했습니다.
 > 유도·수치·구조·현재 상태가 전부 여기 있습니다. 다른 문서를 안 읽어도 됩니다.
 >
-> 논문 소스: 사용자가 주는 zip (OpenAI Prism 에서 받음)
-> 코드·근거: `~/Desktop/PIVOT/my_work/`
->
-> ⚠ **이 문서가 내용 결정의 기준이다.** 받은 tex 는 Prism 에서 따로 편집된
-> 판본이라 아래 결정들이 반영돼 있지 않을 수 있다. **tex 와 이 문서가 다르면
-> 이 문서를 따르고, tex 에 없는 것은 새로 넣는다.**
->
-> 참고로 `~/Downloads/ICRA-27-ROBIN/` 에 이전 세션에서 손본 판본이 있다.
-> 거기 이미 반영된 것: Abstract·Intro 재작성, Contribution 4개, Related Work 에
-> 여기설계 소절 추가, Method·Experiments·Conclusion 초안, `\newtheorem` 선언,
-> `reference.bib` 에 Swevers·Gautier·Janot·Hausman·ASID·Wensing·Atkeson 추가.
-> **새 zip 에 이것들이 없으면 다시 넣어야 한다.**
+> **논문 소스**: 사용자가 주는 zip (OpenAI Prism). **이것이 최신이다.**
+> **코드·근거**: `~/Desktop/PIVOT/my_work/`
+
+---
+
+## 0. 시작하기 전에 — 이 문서와 받은 tex 의 관계
+
+**팀원들이 Prism 에서 계속 원고를 고치고 있다.** 그러므로:
+
+```
+   받은 zip   =  **문장의 최신본**.  팀원들이 다듬은 글이 들어 있다.
+   이 문서    =  **결정의 기준**.    무엇을 주장하고 어떤 수치를 쓰고
+                                    절을 어떻게 나눌지가 여기 있다.
+```
+
+### 세 가지 원칙
+
+**① 덮어쓰지 말고 병합한다.** 받은 tex 의 문장이 이 문서의 예시보다 나으면
+**그 문장을 쓴다.** 이 문서의 영문은 대개 *초안* 이지 완성문이 아니다.
+
+**② 구조·주장·수치는 이 문서를 따른다.** 절 구성, contribution 문구, 표현
+수위("we recall" vs "we show"), 실측 수치는 여기서 결정된 것이다.
+tex 가 다르면 이 문서 쪽으로 맞춘다.
+
+**③ 팀원이 쓴 것을 이유 없이 지우지 않는다.** 왜 넣었는지 모르는 문단은
+남겨 두고, 겹치면 통합한다. 정말 빼야 한다면 그 사실을 사용자에게 알린다.
+
+### 받은 zip 에서 **있는지 확인할 것** (없으면 추가, 있으면 유지)
+
+| | 무엇 | 어디 |
+| --- | --- | --- |
+| ☐ | **Optimal Excitation 소절** (Gautier·Swevers·Wensing·ASID·Hausman) | Related Work C |
+| ☐ | **rank 4 문단** — 강체 방법들이 왜 사전지식을 쓸 수밖에 없는지 | Related Work B 끝 |
+| ☐ | **asset 에 물성을 채우는 연구들** (ArtVIP, RoboSimGS, Asset2Sim) | Related Work B |
+| ☐ | Contribution 4개, 4번은 **"to six links"** | Intro 끝 |
+| ☐ | `\newtheorem{lemma}` 등 4개 선언 | main.tex 서문 |
+| ☐ | bib: Swevers, Gautier, Janot, Hausman, ASID, Wensing, Atkeson | reference.bib |
+| ☐ | Method 에 이론 소절 (Lemma 1, Prop 1~3, Cor 1~2) | Method C |
+| ☐ | **잔차 일관성 문단** (6장) | Method E |
+| ☐ | **GT 획득 / 재구성 정확도** 문단 | Experiments A |
+| ☐ | **시뮬레이터 재생 검증** (Fig.4) | Experiments D |
+
+> `~/Downloads/ICRA-27-ROBIN/` 에 이전 세션에서 손본 판본이 있지만
+> **오래된 갈래다. 기준으로 쓰지 말 것.** 참고만 하고, 병합은 받은 zip 위에서
+> 한다.
+
+---
 
 ---
 
@@ -495,28 +530,23 @@ PhysX-Omni 처럼 형상과 물성을 동시에 만드는 연구가 A·B 양쪽�
 
 ---
 
-## 7. 현재 상태
+## 7. 무엇이 남았나 — 받은 zip 기준
+
+**팀원 원고에 이미 들어 있을 수도 있으므로, 먼저 0장의 확인 목록을 훑고
+없는 것만 채운다.**
 
 ```
-   ✅ 작성됨   Abstract, Intro, Related Work(C 소절 초안 있음),
-               Method(A~F 구판), Experiments(A~F 구판), Conclusion
-   ⬜ 재구성   Method 를 소절 5개로, Experiments 를 소절 5개·시뮬->실물 순으로
-   ⬜ 추가     Method E 에 '잔차 일관성' 문단 (6장)
-               Experiments A 에 'GT 획득' 과 '재구성 정확도' 문단
-               Experiments D 에 시뮬레이터 재생 검증 (E8)
-   ⚠  대기     Experiments C 의 n-link 수치 — p=5 진행 중, p=6 대기
-   ⬜ 실물     Experiments D 전체, Fig.1, Fig.4, Fig.5, Tab.II
-   ⬜ 그림     Fig.2 (영공간 도식) — 지금 만들 수 있음
+   ⬜ 구조 정리   Method 를 소절 5개로, Experiments 를 소절 5개·시뮬->실물 순으로
+   ⬜ 내용 추가   Method E  : 잔차 일관성 문단 (6장)
+                  Exp A     : GT 획득 / 재구성 정확도
+                  Exp D     : 시뮬레이터 재생 검증 (Fig.4)
+   ⚠  수치 대기   Exp C 의 n-link — p=5 진행 중, p=6 대기
+   ⬜ 실물 대기   Exp D 전체, Fig.1, Fig.4, Fig.5, Tab.II
+   ⬜ 그림        Fig.2 (영공간 도식) — **지금 만들 수 있음**
+   ⬜ 컴파일      Overleaf 확인 (이 PC 에 pdflatex 없음)
 ```
 
-**실물 수치는 `\rev{}` 로 표시돼 있어 빨간 글씨로 찾을 수 있다.**
-`main.tex` 에 `\newtheorem` 4개와 정리 환경이 이미 선언돼 있다.
-`reference.bib` 에 Swevers·Gautier·Janot·Hausman·ASID·Wensing·Atkeson 추가됨.
-
-> ⚠ **이 PC 에 `pdflatex` 가 없어 컴파일 검증을 못 했다.** 구조 검사(중괄호·환경·
-> `\ref`·인용 키)는 통과했으나 Overleaf 에서 한 번 돌려야 한다.
-
----
+**실물 수치는 `\rev{}` 로 표시해 두면 빨간 글씨로 찾을 수 있다.**
 
 ## 7-b. 새 대화를 어떻게 나눌 것인가
 
