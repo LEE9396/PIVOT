@@ -44,9 +44,34 @@ _PALETTE = [
 ]
 
 
-def link_lengths(n_part):
-    """base 150 mm 에서 시작해 끝으로 갈수록 짧아진다 (실물 3-link 와 동일)."""
-    return [150.0] + [max(60.0, 110.0 - 12.5 * k) for k in range(n_part - 1)]
+# 링크 길이를 뽑는 범위. 실물 커스텀 물체(150 / 110 / 97.5 mm)가 이 안에 든다.
+LEN_MIN_MM, LEN_MAX_MM = 70.0, 150.0
+
+
+def link_lengths(n_part, rng=None):
+    """링크 길이 [mm].
+
+    rng 를 주면 [LEN_MIN, LEN_MAX] 에서 균일하게 뽑는다. **스윕에는 이쪽을 쓴다.**
+
+    왜 무작위인가
+    -------------
+    고정 규칙은 어느 쪽으로든 결과를 정한다.
+
+      단조 감소(150->60)  말단 링크가 짧아져 마지막 관절의 지렛대가 사라진다.
+                          이웃한 두 부위가 어떤 자세에서도 같이 움직여 안 갈린다.
+                          p=4 에서 이미 link2/link3 반폭이 1.27 / 1.29 % 로 붙는다.
+      등길이              반대로 유리한 모양을 고른 셈이 된다.
+
+    범위 안에서 뽑으면 둘 다 피하고 **'전형적인 사슬'** 에 대한 결과가 된다.
+    seed 마다 물체가 달라지므로 오차 막대도 생긴다 — 물체 하나에 대한 결과가
+    아니게 된다.
+
+    rng 를 안 주면 예전 규칙(단조 감소)을 그대로 돌려준다. 기존 결과를
+    재현할 때 쓴다.
+    """
+    if rng is None:
+        return [150.0] + [max(60.0, 110.0 - 12.5 * k) for k in range(n_part - 1)]
+    return list(rng.uniform(LEN_MIN_MM, LEN_MAX_MM, n_part))
 
 
 def densities(n_part, low=700.0, high=5200.0):
@@ -68,12 +93,18 @@ def round_lower_bound(n_part):
     return int(np.ceil((n_unknowns(n_part) - 1) / 3.0))
 
 
-def make_spec(n_part, rho_gt=None, limits_rad=(0.0, np.pi), hinge_kg=MEASURED_HINGE_KG):
+def make_spec(n_part, rho_gt=None, limits_rad=(0.0, np.pi),
+              hinge_kg=MEASURED_HINGE_KG, seed=None, lengths=None):
     """파트 n_part 개짜리 직렬 물체 사양. 관절마다 실측 힌지가 달린다.
 
-    hinge_kg=0.0 을 주면 힌지 없는 예전 사양이 된다 (study_hinge.py 의 대조군).
+    seed 를 주면 링크 길이를 [LEN_MIN, LEN_MAX] 에서 뽑는다 (스윕용).
+    seed 도 lengths 도 안 주면 예전 단조 감소 규칙을 쓴다.
+    hinge_kg=0.0 이면 힌지 없는 예전 사양 (study_hinge.py 의 대조군).
     """
-    lengths = link_lengths(n_part)
+    if lengths is None:
+        rng = np.random.default_rng(seed) if seed is not None else None
+        lengths = link_lengths(n_part, rng)
+    lengths = list(lengths)
     rho_gt = list(rho_gt) if rho_gt is not None else densities(n_part)
 
     parts, joints = [], []

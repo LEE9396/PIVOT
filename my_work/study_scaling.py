@@ -42,11 +42,27 @@ import nlink
 DEFAULT_RELS = (0.01, 0.02, 0.05, 0.10)
 
 
-def run_cell(spec, rho_gt, rel, seeds, target, max_rounds, n_starts):
-    """한 (P, rel) 칸을 seeds 번 돌린다. GT 는 채점에만 쓴다."""
-    n_part = len(spec.parts)
+def run_cell(n_part, rho_gt, rel, seeds, target, max_rounds, n_starts,
+             fixed_spec=None):
+    """한 (P, rel) 칸을 seeds 번 돌린다. GT 는 채점에만 쓴다.
+
+    fixed_spec 이 없으면 **seed 마다 링크 길이를 새로 뽑는다.** 그래야 결과가
+    물체 하나가 아니라 '전형적인 사슬' 에 대한 것이 되고, seed 간 편차가 곧
+    물체 간 편차가 되어 오차 막대가 생긴다.
+
+    고정 규칙은 어느 쪽으로든 결과를 정한다 — 단조 감소는 말단 링크가 짧아져
+    마지막 관절의 지렛대가 사라지고(p=4 에서 이미 link2/link3 반폭이
+    1.27/1.29 % 로 붙는다), 등길이는 반대로 유리한 모양을 고른 셈이 된다.
+    """
     rounds, converged, errors = [], [], []
     for s in range(seeds):
+        if fixed_spec is None:
+            spec = nlink.make_spec(n_part, seed=1000 + s)
+            obj.set_measurement_averaging()
+            rho_gt = obj.bind_object(spec)
+            obj.apply_weight_prior(spec, obj.assembled_mass_kg(spec))
+        else:
+            spec = fixed_spec
         out = dc.closed_loop(spec, target=target, max_rounds=max_rounds,
                              seed=100 * s, rel_error=rel, n_starts=n_starts)
         rounds.append(out["rounds"])
@@ -65,13 +81,17 @@ def main():
     ap.add_argument("--target", type=float, default=0.01)
     ap.add_argument("--max-rounds", type=int, default=12)
     ap.add_argument("--starts", type=int, default=6)
+    ap.add_argument("--fixed-lengths", action="store_true",
+                    help="링크 길이를 예전 단조 감소 규칙으로 고정 (재현용)")
     ap.add_argument("--json", default="figures/study_scaling.json")
     ap.add_argument("--plot", default="figures/study_scaling.png")
     args = ap.parse_args()
 
     print(f"목표 반폭 {100*args.target:.1f}%   최대 {args.max_rounds}라운드   "
           f"seed {args.seeds}개   연속최적화 시작점 {args.starts}개")
-    print("물체: nlink (관절마다 실측 힌지 41 g). 미지수 = 2P-1.\n")
+    print("물체: nlink (관절마다 실측 힌지 41 g). 미지수 = 2P-1.")
+    print("링크 길이: " + ("고정 (단조 감소)" if args.fixed_lengths else
+          f"seed 마다 {nlink.LEN_MIN_MM:.0f}~{nlink.LEN_MAX_MM:.0f} mm 무작위") + "\n")
     print(f"  {'P':>2}{'미지수':>7}{'하한R':>6}"
           + "".join(f"{'rel=' + str(int(100*r)) + '%':>16}" for r in args.rel))
     print(f"  {'':>2}{'':>7}{'':>6}"
@@ -86,8 +106,9 @@ def main():
 
         cells = []
         for rel in args.rel:
-            cell = run_cell(spec, rho_gt, rel, args.seeds, args.target,
-                            args.max_rounds, args.starts)
+            cell = run_cell(n_part, rho_gt, rel, args.seeds, args.target,
+                            args.max_rounds, args.starts,
+                            fixed_spec=spec if args.fixed_lengths else None)
             table[f"{n_part}|{rel}"] = cell
             n_ok = sum(cell["converged"])
             ok_rounds = [r for r, c in zip(cell["rounds"], cell["converged"]) if c]
