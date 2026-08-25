@@ -446,7 +446,7 @@ PhysX-Omni 처럼 형상과 물성을 동시에 만드는 연구가 A·B 양쪽�
 | --- | --- | --- | ---: |
 | A | Experimental Setup | 물체 4개와 역할(Tab.I), 장비, 지표 | 0.30 |
 | B | **Ground Truth Measurement** | **팀원 판본 그대로** — 수중 배제법, 분해 저울, CAD 적분 | 0.30 |
-| C | Volume Estimation | 재구성 부피·도심 정확도 vs CAD. **baseline 비교는 안 함** | 0.25 |
+| C | Volume Estimation | 재구성 부피·도심 정확도 vs GT, **baseline 형상과 비교** | 0.30 |
 | D | Density Estimation in Simulation | 이론 예측 검증 + 물체 4개 + 시뮬 baseline + **n-link (p=2..6)** — 수치는 **7-d 최종 수치** 사용 | 0.60 |
 | E | **Density Estimation on the Real Robot** ★ | 실물 4개 + vision baseline + **시뮬레이터 재생 검증** | 0.55 |
 | F | Ablations | 4-9 의 표 | 0.30 |
@@ -463,19 +463,34 @@ PhysX-Omni 처럼 형상과 물성을 동시에 만드는 연구가 A·B 양쪽�
    실물 (E)  PUGS / SiPhy / PhysX-Omni
 ```
 
-#### C (Volume Estimation) 에서 무엇을 쓰나
+#### C (Volume Estimation) 에서 무엇을 쓰나 — **baseline 비교 포함**
 
 ```
-   커스텀 2·3-link 는 CAD 정답이 있다.
-        스캔 부피 vs CAD 부피    ->  "우리 재구성의 부피 오차는 X %"
-        스캔 도심 vs CAD 도심    ->  "도심 오차는 Y mm"
-   이미 잰 민감도와 짝지어 쓴다
-        부피 10 % -> 질량 6 % ,  도심 1 mm -> 질량 2.4 %
+   비교 대상
+     우리 (mesh refinement)        실제로 파이프라인이 쓰는 부피
+     Bounding box / Convex hull    형상 정보를 얼마나 쓰는지 보이는 하한
+     PUGS 의 Gaussian 적분         밀도 baseline 이 실제로 쓰는 부피
+     PhysX-Omni 의 생성 형상       〃
+
+   GT 는 B 절의 **수중 배수법 실측값** -> 절대 비교가 가능하다
+   커스텀 물체는 CAD 적분값도 있으므로 배수법 자체의 검증도 된다
 ```
 
-**재구성 방법들끼리의 baseline 비교는 하지 않는다.** 우리 기여가 아니고,
-비교하면 "왜 더 좋은 걸 안 썼나" 를 자초한다. 목적은 **공정성** — 모든
-baseline 이 같은 재구성을 쓴다는 것을 보이는 것이다.
+**왜 baseline 비교가 필요한가** — 이것이 재구성 연구를 하려는 것이 아니다.
+논문의 주 결과가 *"부위별 질량 오차로 baseline 을 이긴다"* 인데, 리뷰어가
+**"그 우위가 추정이 좋아서인가, 형상이 좋아서인가?"** 를 묻는다. PUGS 는
+Gaussian volume integration 으로, PhysX-Omni 는 생성 모델로 형상을 얻으므로
+**각 방법이 서로 다른 형상을 쓴다.** 부피를 같이 재야 질량 비교의 타당성이
+선다.
+
+**같이 보고할 것**: 도심 오차, 그리고 이미 잰 민감도
+
+```
+   부피 10 % -> 질량 6 % ,   도심 1 mm -> 질량 2.4 %
+```
+
+이 둘을 짝지어 쓰면 *"우리 형상은 X % 틀리고 그것이 질량에 Y % 기여한다"* 가
+되어, 뒤에 나오는 질량 표를 읽는 기준이 된다.
 
 #### D 안의 n-link 부분 — **결과에 독립적인 4단**
 
