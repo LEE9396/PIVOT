@@ -882,23 +882,114 @@ Gaussian volume integration 으로, PhysX-Omni 는 생성 모델로 형상을 �
 
 ---
 
-## 7. 무엇이 남았나 — 받은 zip 기준
+## 7. 논문 완성까지 남은 것 — **8/27 기준**
 
-**팀원 원고에 이미 들어 있을 수도 있으므로, 먼저 0장의 확인 목록을 훑고
-없는 것만 채운다.**
+### 먼저 끝난 것
 
 ```
-   ⬜ 구조 정리   Method 를 소절 5개로, Experiments 를 소절 5개·시뮬->실물 순으로
-   ⬜ 내용 추가   Method E  : 잔차 일관성 문단 (6장)
-                  Exp A     : GT 획득 / 재구성 정확도
-                  Exp D     : 시뮬레이터 재생 검증 (Fig.4)
-   ⚠  수치 대기   Exp C 의 n-link — p=5 진행 중, p=6 대기
-   ⬜ 실물 대기   Exp D 전체, Fig.1, Fig.4, Fig.5, Tab.II
-   ⬜ 그림        Fig.2 (영공간 도식) — **지금 만들 수 있음**
-   ⬜ 컴파일      Overleaf 확인 (이 PC 에 pdflatex 없음)
+   ✅ 이론          유도 + 기계 검증 (study_theory.py, 불일치 7.9e-16)
+   ✅ Contribution  8/27 확정 (2장). 과대 주장 둘 제거
+   ✅ Fig.2         fig_nullspace          왜 형상을 바꿔야 하는가
+   ✅ Fig.3         fig_precision_rounds   하한은 안 움직이고 실제만 내려온다
+   ✅ Fig.4         fig_precision_halfwidth 필요 각도 정밀도 (설계 차트)
+   ✅ 보조 그림 5장  column_angle / spread_source / nlink_shapes
+                    study_criterion / linkage_density_panel
+   ✅ 시뮬 수치      n-link p=2..6 seed 8,  각도 정밀도 sweep,  Ablation 재료
+   ✅ Tab.I 재료     물체 4개와 역할
+   ✅ 코드           정리 + master 반영. 팀원 실행 문서는 DEPLOY.md
 ```
 
-**실물 수치는 `\rev{}` 로 표시해 두면 빨간 글씨로 찾을 수 있다.**
+**시뮬레이션 쪽은 다 찼습니다.** 남은 것은 (A) 글쓰기, (B) 실물, (C) 확인입니다.
+
+---
+
+### A. 지금 쓸 수 있는 것 — 실물이 없어도 된다
+
+| | 무엇 | 재료 | 쪽 |
+| --- | --- | --- | ---: |
+| A1 | **III-C** What Quasi-Static Sensing Can Determine | 3장 그대로 | 0.60 |
+| A2 | **III-D** Active Selection under Manipulation Constraints | 5장 볼드 4개 | 0.50 |
+| A3 | **III-A·B** Problem Formulation / Geometric Quantities | 5장 | 0.60 |
+| A4 | **III-E** Estimation, Stopping, Compilation + 잔차 일관성 | 6장 | 0.45 |
+| A5 | **IV-D** Density Estimation in Simulation + n-link + 각도 sweep | 7-d · 4-10 | 0.60 |
+| A6 | **IV-F** Ablations | 4-9 | 0.30 |
+| A7 | **II** Related Work 3소절 | 5장 | 0.70 |
+| A8 | **I** Introduction + Abstract | 2장 확정 후 가능 | 0.90 |
+| A9 | **V** Conclusion | | 0.30 |
+
+**A2 를 빼먹으면 안 됩니다.** Contribution (2) 에 *"each candidate must be
+re-verified for grasp, reachability and collision"* 을 넣었으므로 본문에 없으면
+약속 불이행입니다. `Verifying it is realizable` 볼드 소제목이 그 자리이고,
+**지난 라운드 형상이 아니라 지금 라운드 형상으로 경로를 계획한다**는 것까지
+써야 합니다.
+
+**A5 는 두 판본의 예산을 밝혀야 합니다** (2장 끝 참조).
+
+---
+
+### B. F/T 센서를 기다리는 것
+
+| | 무엇 | 무엇이 필요한가 |
+| --- | --- | --- |
+| B1 | **IV-B** Ground Truth Measurement | 수중 배제법, 분해 저울 |
+| B2 | **IV-C** Volume Estimation + **baseline 형상 비교** | 스캔 + 배수법 GT |
+| B3 | **IV-E** Real Robot ★ + **Tab.II 네 갈래** | 물체 4개 세션 |
+| B4 | **Fig.1** Teaser | 실물 사진 |
+| B5 | **Fig.5** 시뮬레이터 재생 검증 | 처지는 영상 + 초기조건 |
+| B6 | **IV-A** Experimental Setup 의 장비 절 | 실제 배치 사진 |
+
+**절차는 DEPLOY.md §6 에 9단계로 있습니다.** 2번(트래커 오차 실측)과
+9번(세션 후 시뮬 재실행)이 Tab.II 의 `Ours(sim)` 열을 만듭니다.
+
+---
+
+### C. 제출 전 확인 — **C1 이 가장 급하다**
+
+**C1. 문헌 조사 — Prop. 3 이 정말 새로운가** ★★
+
+기여가 사실상 이것 하나이므로, 새롭지 않으면 논문의 뼈대가 무너집니다.
+**글쓰기보다 먼저 해야 합니다.** 지금까지의 판단은 체계적 검색이 아니라
+읽은 것에 기댄 것입니다.
+
+```
+   "minimum number of configurations" + inertial parameter identification
+   "static identifiability" + articulated + link mass
+   reaction board method + segment mass + number of positions
+   base parameters + gravity-only + rank deficiency
+   excitation design + static poses + counting bound
+```
+
+확인할 것 셋:
+```
+   (a) 정적 자세 개수의 하한을 이 형태로 진술한 선행연구가 있나
+   (b) 있다면 무엇이 다른가 (밀도 매개화? 힘 채널 중복의 명시?)
+   (c) 없다면 가장 가까운 것을 인용하고 차이를 한 문단으로
+```
+
+**C2. 분량** — 6.85쪽을 6쪽으로. 자르는 순서는 5-b 장에 있습니다.
+Fig.3(2단 폭)을 `nlink_final`(1단)로 되돌리는 선택지가 7-c 에 있습니다.
+
+**C3. Overleaf 컴파일** — 이 PC 에 pdflatex 이 없습니다. 그림 pdf 는 전부
+생성해 뒀습니다.
+
+**C4. Contribution (4) 문구** — 실물 결과가 나온 뒤 등호가 커스텀 둘에만
+성립하면 *"the two custom objects meet it with equality"* 로 좁혀야 합니다.
+desk lamp 는 하한 1 인데 시뮬에서 2 라운드였습니다.
+
+---
+
+### 순서 제안
+
+```
+   1주차   C1 문헌 조사          ← 여기서 결과가 나빠지면 전부 다시 짠다
+           A1~A4 Method 완성      이론과 방법은 실물과 무관
+   2주차   A5~A7 Experiments 시뮬 + Related Work
+           A8~A9 Intro / Abstract / Conclusion
+   센서 후  B1~B6                 DEPLOY.md §6 절차대로
+   마무리   C2 분량, C3 컴파일, C4 문구 조정
+```
+
+**실물 수치는 `\rev{}` 로 표시해 두면 빨간 글씨로 찾을 수 있습니다.**
 
 ## 7-b. 새 대화를 어떻게 나눌 것인가
 

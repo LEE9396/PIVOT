@@ -15,7 +15,7 @@
 | `nlink_shapes` | `render_nlink.py` | p=4,5,6 의 펼침/중간/접힘. **되말림 진단의 반증** | 부록·발표 |
 | `nlink_final` | `study_scaling.py` | 라운드 vs p, 하한을 계단으로 겹침 | `fig_precision_rounds` 에 흡수됨. 1단 폭이 필요하면 이것 |
 | `linkage_density_panel_{2,3}link` | `linkage_density_run.py` → `linkage_density_panel.py` | 힌지 무시 / 모형화 / 실제값 | B1 · 발표 |
-| `desklamp_density_panel` | `desklamp_density_render.py` → `desklamp_density_panel.py` | 램프 탐색 전 / 후 / 실제값 | 실물 절 |
+| `desklamp_density_panel` | `desklamp_density_render.py` → `desklamp_density_panel.py` | 램프 **시뮬** 탐색 전 / 후 / 실제값 | IV-D |
 | `study_criterion` | `study_criterion.py` | D / A / E-최적 비교 | B3 · 발표 |
 | `grasp_check_3link` | `study_grasp.py` | 후보 자세의 파지 가능성 판정 | III-D 여유 시 |
 
@@ -37,8 +37,7 @@ matplotlib 로 직접 그리므로 추가 의존성이 없습니다.
 ## 진단 그림 — `study_*.py` 가 남기는 것
 
 `study_tilt` `study_stopping` `study_tls` `study_continuous` `study_startpose`
-`study_grasp` `convergence` `lamp_assembled` 그리고 `desklamp_density_{before,
-after,gt,strip}`.
+`study_grasp` `convergence` `lamp_assembled`.
 
 **논문용이 아닙니다.** 축 라벨과 여백을 다듬지 않았고, 주장의 근거로 쓸 때는
 숫자만 뽑아 표로 옮깁니다.
@@ -101,3 +100,15 @@ modelled  힌지를 부위 하나로 같이 푼다 (지금 사양).
   않습니다. 3-link 의 `link1_elbow`(청록)와 `link2_tip`(남색)이 적록색맹
   기준 ΔE 6.0 으로 **하한 밴드**에 걸립니다. 이 그림에서는 스와치 옆에
   **부위 이름과 숫자가 항상 같이 있으므로** 색만으로 식별하지 않습니다.
+
+## 지운 것
+
+`desklamp_density_{before,after,gt,strip}` — 8/27 삭제. 앞의 셋은
+`desklamp_density_panel.py` 의 **입력**이었으므로, 패널 PNG 는 남아 있지만
+지금은 다시 만들 수 없습니다 (이 환경에 `open3d`·`trimesh` 가 없습니다).
+
+다시 만들어야 하면 되살리세요.
+
+```bash
+git checkout 92e3c47 -- my_work/figures/desklamp_density_{before,after,gt}.png
+```
