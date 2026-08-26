@@ -118,29 +118,103 @@
 
 ---
 
-## 2. Contribution (확정, 영문 그대로 사용)
+## 2. Contribution (8/27 개정, 영문 그대로 사용)
 
 ```latex
 \begin{itemize}
-    \item Identifiability analysis in the density parameterization, where the
-    classical static limit---mass and center of mass only---becomes a bound on
-    the number of parts, and yields a lower bound on the number of
-    configurations that our objects meet with equality.
-    \item Active estimation strategy that selects the most informative joint
-    configurations to collapse the null space of the density estimate,
-    minimizing overall estimation time.
-    \item Pipeline with minimal user intervention that turns real-world
-    observations and interactions into sim-ready articulated assets faithful in
-    both appearance and dynamics, without damaging joints.
-    \item Real-world experiments on four articulated objects, two with
-    controllable ground-truth densities, where the predicted number of
-    configurations is met with equality, and a simulation sweep over randomly
-    proportioned chains of up to six links.
+    \item \textbf{Identifiability analysis in the density parameterization.}
+    The classical static limit---that gravity-only wrenches resolve nothing beyond
+    total mass and center of mass---becomes, under this parameterization, a bound on
+    how many parts a single configuration can separate. From it follows a lower bound
+    on the number of configurations that is computable from the reconstructed geometry
+    alone, before any wrench is measured, and that our objects meet with equality.
+
+    \item \textbf{Active estimation under manipulation constraints.}
+    We select the joint configuration that collapses the null space a fixed
+    configuration leaves, reaching a target uncertainty in fewer configurations than
+    static or geometry-driven alternatives. Because the design variable is the
+    object's own shape rather than the robot's trajectory, each candidate must be
+    re-verified for grasp, reachability and collision \emph{at that configuration}---a
+    coupling absent from classical excitation design.
+
+    \item \textbf{Pipeline with minimal user intervention} that turns real-world
+    observations and interactions into sim-ready articulated assets faithful in both
+    appearance and dynamics, without damaging the joints.
+
+    \item \textbf{Real-world experiments on four articulated objects, two with
+    controllable ground-truth densities, where the predicted number of configurations
+    is met with equality, together with a simulation sweep over randomly proportioned
+    chains of up to six links} that isolates joint-angle measurement precision---rather
+    than force/torque resolution or configuration selection---as what governs how
+    closely the bound can be approached, and reports the precision each part count
+    requires.
 \end{itemize}
 ```
 
-2·3 번은 원래 저자가 쓴 문장 그대로다. 1 번이 새로 들어갔고 4 번은 개수만 고쳤다.
 **순서가 중요하다** — 분석 → 전략 → 파이프라인 → 검증.
+
+### 8/27 에 무엇을 왜 바꿨나
+
+```
+   (1)  "before any wrench is measured" 추가
+        M 에 rho 가 없다는 것(Cor.1)의 귀결. 이 분석의 실용적 값어치가
+        "몇 번 필요한지 미리 안다" 인데 빠져 있었다.
+        "mass and center of mass only" -> "resolve nothing beyond ..." 로
+        바꾼 것은, 원래 표현이 한계가 아니라 능력처럼 읽혔기 때문이다.
+
+   (2)  "minimizing overall estimation time" 삭제        <- 과대 주장
+        -> "in fewer configurations than static or geometry-driven alternatives"
+        최적성을 증명한 적이 없다. 아는 것은 D-최적이 대안보다 8~42배 낫다는
+        측정치뿐이고, 모든 형상 선택에 대한 최소성은 비볼록이라 증명 불가다.
+
+        그리고 고전 여기설계와의 차이를 넣었다 — 설계 변수가 로봇 궤적이
+        아니라 물체 자신의 형상이라 후보마다 파지·도달·충돌을 다시 봐야 한다.
+        Method III-D 의 차별점인데 기여 문장에 없었다.
+
+   (4)  각도 정밀도 결과 추가 (4-10)
+        셋을 비교해서 하나만 벽을 옮겼다는 사실 그대로.
+        "the single lever" 로 쓰지 않았다 — 센서 쪽은 구조적으로 닫히지만
+        (3-5b Remark), 형상 선택 쪽은 "D-최적이 최적" 이 아니라 "대안보다
+        낫다" 만 보였기 때문이다. "rather than A or B" 가 우리가 실제로 한
+        비교를 그대로 말한다.
+```
+
+### 이 개정이 본문에 지우는 의무 셋
+
+**① III-D 는 이제 파지·도달·충돌 재판정을 반드시 써야 한다.**
+기여 문장에 넣었으므로 본문에 없으면 약속 불이행이다. `Verifying it is
+realizable` 볼드 소제목(5장 III-D)이 그 자리다. **지난 라운드 형상이 아니라
+지금 라운드 형상으로 경로를 계획한다**는 것까지 적을 것.
+
+**② IV-D 는 각도 정밀도 sweep 을 반드시 실어야 한다.** 4-10 이 그 재료다.
+
+**③ 최적성 주장을 어디에도 쓰지 말 것.**
+```
+   ✗  "D-optimal minimizes the number of configurations"
+   ✗  "the optimal configuration"
+   ✓  "outperforms static and geometry-driven alternatives by 8--42x"
+   ✓  "the residual error is not reduced by better configuration selection"
+```
+
+### (4) 를 제출 전에 다시 볼 것 — 아직 없는 결과를 약속한다
+
+```
+   실물 4종 측정        F/T 센서 대기 중
+   "등호로 만족"         현재 확인된 것은 2-link · 3-link 뿐
+                        desk lamp 는 하한 1 인데 실제 2 (조건수 간극)
+```
+
+실물 결과가 나온 뒤, 등호가 커스텀 둘에만 성립하면 문장을
+*"the two custom objects meet it with equality"* 로 좁혀야 한다.
+
+### `up to six links` 의 근거가 두 판본이다 — 본문에 예산을 밝힐 것
+
+```
+   seed 8 · 30라운드    p=6 이 4/8 수렴 (15~24라운드)      7-d 최종 수치
+   seed 4 · 14라운드    p=6 이 각도 1 % 에서 4/4           4-10
+```
+
+예산을 안 밝히면 두 숫자가 충돌해 보인다.
 
 ---
 
@@ -168,7 +242,7 @@
 | 발견 | 수치 | 근거 | 그림 |
 | --- | --- | --- | --- |
 | F/T 센서는 지렛대가 아니다 | 완벽한 센서도 p≥4 에서 0.001 % | 4-7 | — |
-| 후보자세는 중요하나 이미 천장 | D-최적 8~42배 우위 | 4-9 · 7-d 변경3 | `study_criterion` |
+| 후보자세는 중요하나 이미 천장 | D-최적 8~42배 우위 (**최적성은 주장 금지**) | 4-9 · 7-d 변경3 | `study_criterion` |
 | 각도 정밀도가 벽을 옮긴다 | p=6 이 5 % 0/4 → 1 % 4/4 | **4-10** | `fig_precision_*` |
 | 부위 열이 나란해진다 | 47.0° → 0.5° | 7-d 근거1 | `fig_column_angle` |
 | 편차는 잡음이 만든다 | σ 4.5 vs 3.3 | 7-d | `fig_spread_source` |
@@ -285,6 +359,7 @@ Proposition 으로 만들면 순진해 보인다. **Remark 한 문단**으로 �
 | 3-5b Remark | **Remark 로만.** 정리 번호를 붙이면 순진해 보인다 |
 | TLS/EIV | **인용하고 넘어갈 것**(IDIM-TLS 계열). 우리 것은 도구가 아니라 *"오차원이 설계변수 자신"* 이라는 구조 |
 | D-최적 | Gautier·Khalil 1992, Swevers 1997 인용 필수. 안 하면 desk-reject 급 구멍 |
+| **최적성** | **어디에도 쓰지 말 것.** `minimize` / `optimal` 대신 `outperforms ... by 8--42x`. 모든 형상 선택에 대한 최소성은 비볼록이라 증명 불가 |
 
 ---
 
@@ -380,7 +455,7 @@ Proposition 으로 만들면 순진해 보인다. **Remark 한 문단**으로 �
 ### 4-7. 각도 잡음의 증폭 (왜 토크가 병목인가)
 
 > ⚠ **8/27 정정.** 이전 판의 `130만 ~ 2535만 배` / `10^6 배` 는 근거가 없었다.
-> 어떤 스크립트도 그 값을 만들지 않는다. 아래는 `rowsplit3.py` 로 실측한 값이다.
+> 어떤 스크립트도 그 값을 만들지 않는다. 아래는 `diag_channel_split.py` 로 실측한 값이다.
 
 한 자세에 중력 3방향이면 18행인데, **12행은 R_eff/R_sensor 가 정확히 1.00** 이다.
 
