@@ -141,6 +141,28 @@ git apply ~/Desktop/PIVOT/my_work/integration/foundationpose_grasp_overlay.patch
 
 ## 7. 창 4개 띄우기
 
+### 런처로 (권장)
+
+```bash
+cd ~/Desktop/PIVOT
+cp setup/experiment.conf.example setup/experiment.conf
+$EDITOR setup/experiment.conf          # 경로·IP·물체를 PC 에 맞게
+
+./setup/launch_experiment.sh --check   # 준비물 점검만 (아무것도 안 띄움)
+./setup/launch_experiment.sh           # 창 4개 띄우기
+```
+
+점검이 하나라도 실패하면 **띄우지 않습니다.** 틀린 채로 로봇이 움직이는
+것이 가장 나쁘기 때문입니다. 무엇이 없는지 한 줄씩 알려 줍니다.
+
+장비가 아직 없으면 절차만 밟아 볼 수 있습니다.
+
+```bash
+./setup/launch_experiment.sh --rehearse   # 모의 장비로 창 1·4 만
+```
+
+### 손으로 띄우려면
+
 **터미널 4개**를 엽니다.
 
 ### 창 3 — 그리퍼 + F/T

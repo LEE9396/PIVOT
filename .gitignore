@@ -30,3 +30,6 @@ third_party/robotiq_arg85_description/images/
 
 # 캘리브레이션 값은 PC마다 다르다. 공유하면 안 된다 (calibration/README.md)
 calibration/*.json
+
+# 실험 설정은 PC 마다 다르다 (example 만 올린다)
+setup/experiment.conf
