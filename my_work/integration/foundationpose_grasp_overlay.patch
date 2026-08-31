@@ -1,0 +1,67 @@
+diff --git a/foundationpose/run_desk_lamp_live.py b/foundationpose/run_desk_lamp_live.py
+index 0b16d58..23476d7 100644
+--- a/foundationpose/run_desk_lamp_live.py
++++ b/foundationpose/run_desk_lamp_live.py
+@@ -114,6 +114,14 @@ def parse_args():
+     parser.add_argument("--max-frames", type=int, default=0)
+     parser.add_argument("--no-window", action="store_true")
+     parser.add_argument("--reuse-init", action="store_true")
++    parser.add_argument("--grasp-target", type=Path,
++                        help="PIVOT grasp_target.py JSON; overlay the "
++                             "recommended grasp on the live view")
++    parser.add_argument("--grasp-part", default="support",
++                        help="which part the grasp target belongs to")
++    parser.add_argument("--grasp-overlay", type=Path,
++                        default=Path.home() / "Desktop/PIVOT/my_work/grasp_overlay.py",
++                        help="path to PIVOT my_work/grasp_overlay.py")
+     args = parser.parse_args()
+     if not args.reuse_init and args.sam3_root is None:
+         parser.error("--sam3-root is required unless --reuse-init is used")
+@@ -138,6 +146,20 @@ def main():
+     if not args.reuse_init:
+         capture_and_mask(args)
+ 
++    grasp_overlay = grasp_target = None
++    if args.grasp_target:
++        # sys.path 에 PIVOT my_work 를 넣지 않는다. 그 폴더에는 hardware.py
++        # 처럼 흔한 이름이 있어 FoundationPose 쪽 import 를 가릴 수 있다.
++        import importlib.util
++        spec = importlib.util.spec_from_file_location(
++            "pivot_grasp_overlay", args.grasp_overlay)
++        grasp_overlay = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(grasp_overlay)
++        grasp_target = grasp_overlay.load_target(args.grasp_target)
++        print(f"[grasp] {args.grasp_part}: "
++              f"{1000*grasp_target['width_m']:.1f} mm wide, "
++              f"open {1000*grasp_target['opening_m']:.1f} mm")
++
+     intr = json.loads(args.intrinsics.read_text())
+     intrinsics = np.float32([
+         [intr["fx"], 0, intr["cx"]],
+@@ -241,6 +263,11 @@ def main():
+                     poses[part] @ np.linalg.inv(to_origin),
+                     np.array((-extents / 2, extents / 2)), COLORS[part], 2,
+                 )
++            if grasp_target is not None:
++                # 메시를 process=False 로 읽으므로 poses[part] 가 곧
++                # 카메라 <- 원본 메시 좌표다. 추가 변환이 필요 없다.
++                view = grasp_overlay.draw(
++                    view, grasp_target, poses[args.grasp_part], intrinsics)
+             cv2.rectangle(view, (12, 12), (510, 112), (0, 0, 0), -1)
+             cv2.putText(view, f"base-support: {angles[0]:7.2f} deg",
+                         (28, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.85,
+@@ -253,6 +280,14 @@ def main():
+                 "frame": frame, "base_support_deg": angles[0],
+                 "support_head_deg": angles[1],
+             }
++            if grasp_target is not None:
++                geometry = grasp_overlay.target_geometry(
++                    grasp_target, poses[args.grasp_part])
++                pixels, visible = grasp_overlay.project(
++                    intrinsics, geometry["point"][None, :])
++                last["grasp_pixel"] = ([float(v) for v in pixels[0]]
++                                       if visible[0] else None)
++                last["grasp_point_cam_m"] = [float(v) for v in geometry["point"]]
+             if args.calibration_path:
+                 last["calibration_path"] = str(args.calibration_path.resolve())
+             write_status(args.output / "latest.json", last)

@@ -257,6 +257,46 @@ def apply_weight_prior(spec, total_mass_kg, **kwargs):
     return mu, Sigma, mean_density
 
 
+# 물 밀도에서 출발하는 사전분포.
+#
+# 저울 사전분포(apply_weight_prior)는 총무게를 이미 쟀다고 가정한다. 그건
+# 실험 절차상 자연스럽지만, "아무것도 모르는 상태에서 얼마나 좋아졌나" 를
+# 화면으로 보여줄 때는 기준이 애매하다 — 출발점이 물체마다 다르기 때문이다.
+#
+# 물(1000 kg/m^3)은 물체와 무관한 고정 기준이라 화면에서 비교하기 좋다.
+# 사람도 "물보다 무겁다/가볍다" 로 바로 읽는다.
+WATER_DENSITY = 1000.0
+
+
+def water_prior(spec, sigma=WATER_DENSITY, density=WATER_DENSITY,
+                hinge_rel_sigma=HINGE_PRIOR_REL_SIGMA):
+    """**부위**를 물 밀도로 놓는다. 힌지는 아는 값 그대로 둔다.
+
+    sigma 를 밀도와 같게 두는 것은 "물의 몇 배인지 전혀 모른다" 는 뜻이다.
+    좁게 주면 사전분포가 답을 끌어당겨 탐색이 한 일이 가려진다.
+
+    **힌지까지 물로 놓으면 안 된다.** 힌지는 저울로 이미 잰 쇠붙이라
+    5503 kg/m^3 인 것을 안다. 그걸 1000 으로 놓고 넓게 열어 두면 미지수가
+    괜히 늘어 힌지 밀도가 60~80 % 씩 틀리게 나온다 (실제로 그랬다). 힌지는
+    weight_prior 와 같은 좁은 폭(기본 2 %)으로 묶어 둔다.
+    """
+    table = body_table(spec)
+    mu = np.array([float(density) if row["kind"] == "part" else row["rho_gt"]
+                   for row in table])
+    variance = [float(sigma) ** 2 if row["kind"] == "part"
+                else (hinge_rel_sigma * row["rho_gt"]) ** 2 for row in table]
+    return mu, np.diag(variance)
+
+
+def apply_water_prior(spec, **kwargs):
+    """추정기를 '물 밀도에서 출발' 상태로 초기화한다."""
+    mu, Sigma = water_prior(spec, **kwargs)
+    alg.MU0 = mu
+    alg.SIGMA0 = Sigma
+    alg.RHO_BOUNDS = (50.0, 20000.0)
+    return mu, Sigma
+
+
 def apply_physical_prior(spec, fill="lead"):
     """추정기의 사전분포와 박스 제약을 물리적 한계로 교체한다."""
     mu, Sigma, lows, highs = physical_prior(spec, fill)

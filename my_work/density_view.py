@@ -95,6 +95,12 @@ class DensityPanel:
                                  + extents.max(axis=0)))
         self.poses = poses
         self._buttons = []
+        # begin() 이 채운다. 라운드마다 갱신할 때 쓰는 상태다.
+        self.prior = None
+        self.gt = None
+        self.target_rel = 0.05
+        self.range = None
+        self.spacing = 1.35 * self.size
 
     # ------------------------------------------------------------------
     def _draw_part(self, path, part, X_WP, rgba):
@@ -155,6 +161,106 @@ class DensityPanel:
         for name in self._buttons:
             self.meshcat.DeleteButton(name)
         self._buttons.clear()
+
+    # ------------------------------------------------------------------
+    # 라운드마다 갱신하는 실험용 화면 (창 4)
+    # ------------------------------------------------------------------
+    def begin(self, rho_prior, target_rel=0.05, gt=None):
+        """왼쪽=초기(물 밀도), 오른쪽=탐색 후 두 벌을 세운다.
+
+        오른쪽은 아직 결과가 없으므로 **초기값과 같은 색**으로 시작한다.
+        라운드가 돌 때마다 update() 가 그 열만 다시 칠한다. 사람이 왼쪽과
+        오른쪽을 나란히 두고 "얼마나 달라졌나" 를 보는 것이 목적이다.
+        """
+        self.clear()
+        self.prior = np.asarray(rho_prior, dtype=float)
+        self.target_rel = float(target_rel)
+        self.gt = None if gt is None else np.asarray(gt, dtype=float)
+        # 색 정의역은 처음에 정해 두고 라운드마다 바꾸지 않는다. 매번 바꾸면
+        # 같은 색이 라운드마다 다른 밀도를 뜻하게 되어 비교가 안 된다.
+        reference = self.prior if self.gt is None else np.concatenate(
+            [self.prior, self.gt])
+        self.range = color_range([dict(rho=reference)], pad=0.6)
+        self.spacing = 1.35 * self.size
+        self._draw_column("before", self.prior, *self.range, -0.5 * self.spacing)
+        self._draw_column("after", self.prior, *self.range, 0.5 * self.spacing)
+        self._draw_colorbar(*self.range, 1.15 * self.spacing)
+        self.meshcat.SetCameraPose([0.2 * self.spacing, -2.6 * self.spacing,
+                                    0.8 * self.spacing], [0.0, 0.0, 0.0])
+        self._labels(None, None, 0, False)
+        return self
+
+    def update(self, rho_hat, half_width_rel, round_index, converged):
+        """탐색 결과를 오른쪽 열에 반영한다.
+
+        half_width_rel 은 부위별 95 % 상대 반폭이다. 이 값이 목표보다 크면
+        아직 모르는 것이고, 화면은 **각도를 다시 조정해 달라고** 말해야 한다.
+        숫자만 띄우면 작업자는 언제 멈추는지 알 수 없다.
+        """
+        rho_hat = np.asarray(rho_hat, dtype=float)
+        half = np.asarray(half_width_rel, dtype=float)
+        self._draw_column("after", rho_hat, *self.range, 0.5 * self.spacing)
+        self._draw_uncertainty(rho_hat, half)
+        self._labels(rho_hat, half, round_index, converged)
+        return self
+
+    def _draw_uncertainty(self, rho_hat, half):
+        """부위마다 불확실성 막대. 목표 안이면 초록, 밖이면 빨강.
+
+        색(=밀도)만 보면 그 값을 믿어도 되는지 알 수 없다. 막대 길이가
+        상대 반폭이고, 목표선을 넘으면 색이 바뀐다.
+        """
+        base = f"{ROOT}/uncertainty"
+        self.meshcat.Delete(base)
+        unit = 0.45 * self.size / max(self.target_rel * 3.0, 1e-6)
+        for index, part in enumerate(self.spec.parts):
+            value = float(np.atleast_1d(half)[index])
+            length = max(min(value, self.target_rel * 3.0) * unit, 1e-4)
+            inside = value <= self.target_rel
+            color = (Rgba(0.15, 0.70, 0.30, 1.0) if inside
+                     else Rgba(0.90, 0.25, 0.15, 1.0))
+            x = 0.5 * self.spacing + (index - 0.5 * (self.n_part - 1)) \
+                * 0.16 * self.size
+            z = -0.62 * self.size
+            node = f"{base}/{part.name}"
+            self.meshcat.SetObject(
+                node, Box(0.05 * self.size, 0.05 * self.size, length), color)
+            self.meshcat.SetTransform(
+                node, RigidTransform([x, 0.0, z + 0.5 * length]))
+        # 목표선 — 이 높이를 넘으면 아직 모른다는 뜻이다.
+        node = f"{base}/target"
+        self.meshcat.SetObject(
+            node, Box(0.6 * self.size, 0.02 * self.size, 0.004 * self.size),
+            Rgba(0.1, 0.1, 0.1, 0.9))
+        self.meshcat.SetTransform(node, RigidTransform(
+            [0.5 * self.spacing, 0.0, -0.62 * self.size
+             + self.target_rel * unit]))
+
+    def _labels(self, rho_hat, half, round_index, converged):
+        for name in list(self._buttons):
+            self.meshcat.DeleteButton(name)
+        self._buttons.clear()
+        self._label(f"── 왼쪽 초기(물 {self.prior[0]:.0f}) │ 오른쪽 탐색 후 ──")
+        if rho_hat is None:
+            self._label("아직 탐색 전입니다 — 파지와 각도 조정을 끝내세요")
+            return
+        worst = float(np.max(half[:self.n_part]))
+        self._label(f"라운드 {round_index} · 최대 반폭 {100*worst:.1f}%"
+                    f" (목표 {100*self.target_rel:.1f}%)")
+        for index, part in enumerate(self.spec.parts):
+            value = float(rho_hat[index])
+            rel = float(half[index])
+            mark = "OK" if rel <= self.target_rel else "더 필요"
+            row = (f"{part.name}: {self.prior[index]:.0f}"
+                   f" -> {value:.0f} ±{100*rel:.1f}%  [{mark}]")
+            if self.gt is not None:
+                row += f"  (정답 {self.gt[index]:.0f})"
+            self._label(row)
+        if converged:
+            self._label("목표 불확실성 도달 — 탐색을 멈춥니다")
+        else:
+            self._label("아직 목표에 못 미칩니다 —"
+                        " 창 1 의 추천 각도로 다시 맞춰 주세요")
 
     # ------------------------------------------------------------------
     def show(self, columns, half_width=None):

@@ -21,6 +21,7 @@ ROS1 토픽으로 바꿔 끼우면 오른쪽 화면이 그대로 실물 로봇�
 """
 
 import argparse
+import sys
 import time
 from pathlib import Path
 
@@ -79,7 +80,12 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
     # 초기값. 정답은 여기에 절대 들어가지 않는다.
     #   weight : 물체를 저울에 올려 총무게만 잰 상태 -> 평균 밀도가 초기값
     #   mesh   : 메시 외형 부피만 아는 상태 -> 아주 넓은 사전분포
-    if prior == "weight":
+    if prior == "water":
+        # 물체와 무관한 고정 기준에서 출발한다. 화면(창 4)에서 "물보다
+        # 무겁다/가볍다" 로 바로 읽히고, 물체가 바뀌어도 출발점이 같다.
+        mu, _ = obj.apply_water_prior(spec)
+        print(f"  초기값: 모든 부위를 물 밀도 {mu[0]:.0f} kg/m^3 로 시작")
+    elif prior == "weight":
         # 저울에는 힌지까지 붙은 채로 올라간다.
         total = obj.assembled_mass_kg(spec, rho_gt)
         mu, _, mean_density = obj.apply_weight_prior(spec, total)
@@ -258,6 +264,7 @@ class PlannerScreen:
         self.player = ev.Player(spec, meshcat, plant, bodies,
                                 self.context, self.diagram)
 
+        self.draw_grasp_marker()
         self.Sigma = alg.SIGMA0.copy()
         self.rho_hat = alg.MU0.copy()
         # 탐색이 끝난 뒤 "얼마나 좋아졌나" 를 그리려면 출발점을 남겨야 한다.
@@ -272,8 +279,42 @@ class PlannerScreen:
     def show(self, theta, g_hat=(0.0, 0.0, -1.0)):
         self.player.show(theta, g_hat)
 
-    def half_width(self):
+    def draw_grasp_marker(self):
+        """계획 화면(창 1)에도 파지점을 찍는다.
+
+        작업자는 이 화면에서 '어느 각도로 맞출까' 를 보고, 카메라 화면(창 2)
+        에서 '어디를 잡을까' 를 본다. 두 화면이 같은 점을 가리키는지 눈으로
+        맞춰 볼 수 있어야 해서 여기에도 같은 표시를 둔다.
+
+        파지점은 **센서 프레임 원점**이다. 이 화면의 물체는 base 부위의 몸체
+        프레임이 원점이므로, 거기서 base_bbox_center_in_sensor_mm 만큼
+        되돌리면 파지점이 된다 (robot_scene._add_object 의 obj_sensor 와 같다).
+        """
+        origin = -np.array(self.spec.base_bbox_center_in_sensor_mm) * rs.MM
+        jaw, _ = rs.grasp_axes(self.spec)
+        jaw = np.asarray(jaw, dtype=float)
+        jaw = jaw / np.linalg.norm(jaw)
+        half = 0.5 * rs.jaw_dimension_m(self.spec) + 0.5 * PAD_SIZE_M[0]
+
+        self.meshcat.SetObject(f"{GRASP_GUIDE_PATH}/point", Sphere(0.006),
+                               Rgba(0.95, 0.10, 0.08, 1.0))
+        self.meshcat.SetTransform(f"{GRASP_GUIDE_PATH}/point",
+                                  RigidTransform(origin))
+        for sign, name in ((1.0, "pad_a"), (-1.0, "pad_b")):
+            node = f"{GRASP_GUIDE_PATH}/{name}"
+            self.meshcat.SetObject(node, Box(*PAD_SIZE_M),
+                                   Rgba(0.16, 0.17, 0.20, 0.85))
+            self.meshcat.SetTransform(
+                node, RigidTransform(origin + sign * half * jaw))
+        print(f"  [1] 파지점 표시: 부위 {self.spec.parts[0].name},"
+              f" 단면 {1000*rs.jaw_dimension_m(self.spec):.1f} mm,"
+              f" 개구 {1000*self.setup['finger']:.1f} mm")
+
+    def half_width(self, per_part=False):
         """정지 조건. GT 는 쓰지 않는다.
+
+        per_part=True 면 부위별 상대 반폭 배열을 그대로 돌려준다 (창 4 가
+        부위마다 막대를 그리는 데 쓴다). 기본값은 예전대로 스칼라 하나다.
 
         variance : 사후 공분산만 (현행)
         residual : + 잔차가 모형보다 크면 그만큼 부풀린다
@@ -282,9 +323,11 @@ class PlannerScreen:
         inflate = 1.0 if self.stop_rule == "variance" else self.inflate
         bias = self.bias_cov if self.stop_rule == "bias" else None
         # 힌지처럼 이미 아는 양은 정지 판단에서 뺀다 (design_core.stopping_width)
-        return dc.stopping_width(
-            dc.half_width(self.Sigma, self.rho_hat, Cov_bias=bias,
-                          inflate=inflate), len(self.spec.parts))
+        half = dc.half_width(self.Sigma, self.rho_hat, Cov_bias=bias,
+                             inflate=inflate)
+        if per_part:
+            return np.asarray(half)[:len(self.spec.parts)]
+        return dc.stopping_width(half, len(self.spec.parts))
 
     def converged(self):
         return self.half_width() <= self.target
@@ -1927,28 +1970,81 @@ def connect_hardware(args, spec=None):
     driver = hr.Rb5Driver(hr.RbpodoBackend(
         host=getattr(args, "robot_host", "192.168.0.10")))
     wrench = hr.Aft200Sensor(sample_fn=_ft_sample_fn(args))
+    pose_fn, stamp_fn = _pose_fn(args)
     pose = hr.FoundationPoseSensor(
-        pose_fn=_pose_fn(args),
-        n_joint=getattr(args, "n_object_joint", 1),
-        default_sigma_deg=getattr(args, "angle_error", 0.05) * 100.0)
+        pose_fn=pose_fn, stamp_fn=stamp_fn,
+        n_joint=len(spec.joints) if spec is not None else 1,
+        default_sigma_deg=getattr(args, "angle_error", 0.05) * 100.0,
+        max_age_s=getattr(args, "pose_max_age_s", 2.0))
     return driver, wrench, pose, tare, gripper
 
 
+# FoundationPose 가 내는 각도 키를 PIVOT 관절 순서에 맞춘다.
+#
+# 부호와 영점은 **아직 안 맞췄다** (my_work/NAMING.md). 여기서 잇는 것은
+# '어느 키가 어느 관절인가' 뿐이다. 실물에서 한 자세를 두 방법으로 읽어
+# 비교하기 전까지는 판정이 반대로 나올 수 있다.
+POSE_KEYS = {
+    # desklamp, --grasp-part link_3 일 때 spec.joints 는 [joint_2_3, joint_3_1].
+    #   joint_2_3 : link_3(support) -> link_2(Head)   = support_head_deg
+    #   joint_3_1 : link_3(support) -> link_1(베이스)  = base_support_deg
+    "desklamp": ("support_head_deg", "base_support_deg"),
+    "laptop": ("opening_angle_deg",),
+}
+
+
 def _ft_sample_fn(args):
-    """AFT200 한 샘플을 돌려주는 함수. ★ 팀이 채울 곳 (한 줄)."""
-    raise NotImplementedError(
-        "AFT200 스트림에서 한 샘플 [Fx Fy Fz Tx Ty Tz] 를 돌려주는 함수를 "
-        "여기서 만들어 주세요. 평균·이상치 제거·부호 검사는 "
-        "hardware_real.Aft200Sensor 가 이미 합니다.")
+    """AFT200 한 샘플 [Fx Fy Fz Tx Ty Tz] 를 돌려주는 함수.
+
+    팀원의 MeshPCA `pivot/aft_tare.Aft200Sensor` 를 쓴다. 그쪽 read_raw 는
+    부를 때마다 TCP 를 새로 열고 n 개를 평균내는데, 여기서는 **한 샘플씩**
+    필요하므로 stream() 생성기를 한 번 열어 두고 계속 뽑는다. 연결을 매번
+    여닫으면 1000 샘플 평균 하나에 그만큼 시간이 더 든다.
+    """
+    sys.path.insert(0, str(Path(args.meshpca_root).expanduser() / "pivot"))
+    from aft_tare import Aft200Sensor
+
+    sensor = Aft200Sensor(args.aft_host, hz=args.aft_hz)
+    stream = sensor.stream()
+    return lambda: next(stream)
 
 
 def _pose_fn(args):
-    """FoundationPose 에서 (각도 deg, 불확실성 deg) 를 돌려주는 함수.
-    ★ 팀이 채울 곳 (한 줄)."""
-    raise NotImplementedError(
-        "FoundationPose 노드에서 (관절각 deg, sigma deg) 를 돌려주는 함수를 "
-        "여기서 만들어 주세요. 차원·유한성·stale 검사는 "
-        "hardware_real.FoundationPoseSensor 가 이미 합니다.")
+    """FoundationPose latest.json 에서 (각도 deg, sigma deg) 를 읽는 함수.
+
+    팀원 `run_desk_lamp_live.py` 가 그 파일을 **원자적으로**(tmp 에 쓰고
+    replace) 계속 갱신한다. 그래서 읽는 쪽은 잠금이 필요 없다.
+
+    같이 돌려주는 stamp_fn 이 중요하다. 트래커가 멈췄는데 마지막 값을 계속
+    주면 알고리즘은 각도가 맞다고 믿고 측정을 진행한다 — 가장 위험한
+    고장이다 (hardware_real.FoundationPoseSensor 주석).
+    """
+    import json
+
+    path = Path(args.pose_file).expanduser()
+    keys = POSE_KEYS.get(args.object)
+    if args.pose_keys:
+        keys = tuple(args.pose_keys)
+    if not keys:
+        raise RuntimeError(
+            f"{args.object} 의 FoundationPose 각도 키를 모릅니다."
+            f" --pose-keys 로 알려 주세요 (관절 순서대로).")
+    state = {"stamp": 0.0}
+
+    def read():
+        data = json.loads(path.read_text())
+        state["stamp"] = float(data.get("timestamp_s", 0.0))
+        missing = [k for k in keys if k not in data]
+        if missing:
+            raise RuntimeError(f"{path} 에 {missing} 가 없습니다")
+        angles = [float(data[k]) for k in keys]
+        # **항상 2-튜플로 돌려준다.** hardware_real 은 길이 2 인 리스트를
+        # (각도, sigma) 로 읽는데, 관절이 2개인 물체(램프)는 각도 리스트도
+        # 길이가 2라서 그냥 리스트로 주면 각도 하나가 sigma 로 오해된다.
+        # 실제로 그렇게 깨졌다.
+        return angles, data.get("sigma_deg")
+
+    return read, (lambda: state["stamp"])
 
 
 def main():
@@ -1977,8 +2073,10 @@ def main():
                         help="각도 오차의 하한 [deg]. sigma = max(상대오차*|각도|,"
                              " 이 값). --angle-error 0 --angle-floor-deg 2 면"
                              " 각도와 무관한 고정 2도 오차가 된다")
-    parser.add_argument("--prior", choices=("weight", "mesh"), default="weight",
-                        help="초기값: weight=저울로 총무게만 잼, mesh=메시만 앎")
+    parser.add_argument("--prior", choices=("weight", "mesh", "water"),
+                        default="weight",
+                        help="초기값: weight=저울로 총무게만 잼, mesh=메시만 앎,"
+                             " water=모든 부위를 물 밀도(1000)로 시작")
     parser.add_argument("--urdf-out", default=None)
     parser.add_argument("--plan-iters", type=int, default=20000,
                         help="RRT-Connect 최대 반복")
@@ -2048,6 +2146,19 @@ def main():
                              f" {gh.force_newton(gh.DEFAULT_FORCE):.0f})."
                              " 세션 중에는 작업자 화면의 '파지력 [N]'"
                              " 슬라이더로 계속 바꿀 수 있다")
+    parser.add_argument("--pose-file", default=None,
+                        help="FoundationPose 가 갱신하는 latest.json 경로."
+                             " 실물(--hardware real)에서 관절각을 여기서 읽는다")
+    parser.add_argument("--pose-keys", nargs="+", default=None,
+                        help="latest.json 에서 읽을 각도 키를 관절 순서대로."
+                             " 기본값은 물체별 표(POSE_KEYS)")
+    parser.add_argument("--pose-max-age-s", type=float, default=2.0,
+                        help="이보다 오래된 트래커 값은 거부한다")
+    parser.add_argument("--aft-host", default="192.168.50.51",
+                        help="AFT200 컨트롤러 주소 (Modbus TCP 502)")
+    parser.add_argument("--aft-hz", type=float, default=50.0)
+    parser.add_argument("--meshpca-root", default="~/MeshPCA",
+                        help="팀원 MeshPCA 체크아웃 (pivot/aft_tare.py 위치)")
     parser.add_argument("--no-density-view", action="store_true",
                         help="탐색이 끝난 뒤 밀도 비교 화면을 띄우지 않는다")
     parser.add_argument("--grasp-part", default="link_3",
@@ -2220,6 +2331,25 @@ def main():
     print(f"  준정적 이동: 한 번에 {args.move_duration:.0f}초"
           f"  -> 관성 토크가 중력 토크의 {100*share:.3f}%"
           f"  ({'충분히 준정적' if share < 0.01 else '더 느리게 권장'})")
+    # ---- 창 4: 라운드마다 갱신되는 밀도 화면 ----
+    # 탐색이 끝난 뒤 한 번만 띄우면 작업자는 "지금 더 해야 하나" 를 알 수
+    # 없다. 라운드마다 갱신해서 반폭이 목표 안으로 들어왔는지 보여준다.
+    live_panel = None
+    if not args.no_density_view:
+        try:
+            import density_view as dvw
+
+            panel_meshcat = StartMeshcat()
+            live_panel = dvw.DensityPanel(
+                spec, panel_meshcat,
+                theta_deg=setup["feasible"][0] * 180.0 / np.pi)
+            live_panel.begin(planner.rho_prior, target_rel=args.target,
+                             gt=(planner.rho_gt if args.mode == "sim"
+                                 or args.hardware != "real" else None))
+            print(f"  [4] 밀도 결과 화면   {panel_meshcat.web_url()}")
+        except Exception as exc:                       # noqa: BLE001
+            print(f"  [주의] 밀도 화면을 못 띄웠습니다: {exc}")
+
     bus = LocalBus() if args.bus == "local" else TcpBus.serve(args.bus_port)
     remote = args.bus == "tcp"      # 로봇 쪽은 robot_node.py 가 맡는다
 
@@ -2238,6 +2368,13 @@ def main():
             print("[왼쪽] 이 라운드는 실행되지 못했습니다. 다음으로 넘어갑니다.")
             continue
         planner.update(reply)
+        if live_panel is not None:
+            try:
+                live_panel.update(planner.rho_hat,
+                                  planner.half_width(per_part=True),
+                                  index, planner.converged())
+            except Exception as exc:                   # noqa: BLE001
+                print(f"[주의] 밀도 화면 갱신 실패: {exc}")
         if planner.converged():
             print(f"\n[왼쪽] 목표 불확실성 도달 — {index} 라운드에서 정지")
             break
