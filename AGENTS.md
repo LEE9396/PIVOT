@@ -105,6 +105,8 @@ my_work/
   robot_node.py         실물 로봇 쪽 프로세스 (TCP 반대편)
   pose_bus.py           두 프로세스 사이 JSON 한 줄 규약
   hardware.py           실물 장비 드라이버 자리 (지금은 비어 있음)
+  gripper_hw.py         Robotiq 2F-85 실물 드라이버 (USB/Modbus-RTU)
+  density_view.py       탐색 결과를 메시 색으로 비교하는 화면
   desk_lamp.py          스캔한 램프를 물체로 물리는 코드
   mesh_props.py         메시에서 부피·도심·관성·색을 뽑는 코드
   grippers.py           PGC-140 / Robotiq 2F-85 정의

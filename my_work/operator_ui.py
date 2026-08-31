@@ -42,7 +42,11 @@ import robot_scene as rs
 # 작업자가 맞춰야 하는 허용 오차.
 #
 # 이 값은 "작업자 손재주" 가 아니라 **각도를 읽는 쪽의 정확도** 로 정해진다.
-# 판정은 FoundationPose 가 읽은 각도로 하기 때문이다(dual_view.adjust_manually).
+# 실물에서 판정은 FoundationPose 가 읽은 각도로 한다
+# (dual_view.adjust_by_pose — pose_sensor 가 있으면 그쪽으로 간다).
+# 시뮬레이션에서는 슬라이더가 물체를 실제로 돌리므로 슬라이더 값으로 판정한다
+# (dual_view.adjust_manually). 예전에는 이 주석이 "adjust_manually 가
+# FoundationPose 로 판정한다" 고 적혀 있었는데, 그건 사실이 아니었다.
 # 그러니 이 값이 FoundationPose 자체 오차보다 작으면 작업자가 아무리 잘
 # 맞춰도 통과할 수 없고, 라운드가 무한히 반복된다.
 #
