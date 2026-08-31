@@ -1955,7 +1955,7 @@ def connect_hardware(args, spec=None):
     import hardware_real as hr
 
     backend_kind = getattr(args, "arm_backend", "rbpodo")
-    tare = hr.TimedTare()
+    tare = _load_tare(args)
 
     # 그리퍼는 팔 백엔드와 따로 붙는다. 팔이 가짜여도 그리퍼는 실물일 수
     # 있고 (파지 절차만 실물로 리허설하는 경우), 그 반대도 된다.
@@ -1991,6 +1991,41 @@ POSE_KEYS = {
     "desklamp": ("support_head_deg", "base_support_deg"),
     "laptop": ("opening_angle_deg",),
 }
+
+
+def _load_tare(args):
+    """3자세 타어를 파일에서 읽어 온다.
+
+    예전에는 여기서 **빈** TimedTare 를 만들고 끝이었다. 그러면 첫 측정에서
+    tare.apply 가 "missing tare for gravity direction" 으로 죽는다. 타어는
+    별도 절차(MeshPCA pivot/tare_real.py)로 미리 재 두는 값이라, 세션은
+    그걸 **읽어야** 한다.
+
+    파일 형식은 팀원 aft_tare.TareTable.save 가 낸 그대로다:
+        {"entries": [{"g_hat": [...], "wrench": [...]}, ...]}
+    """
+    import hardware_real as hr
+    import json
+
+    max_age = getattr(args, "tare_max_age_s", None)
+    tare = hr.TimedTare(max_age_s=(hr.TARE_MAX_AGE_S if max_age is None
+                                   else max_age))
+    path = getattr(args, "tare_file", None)
+    if not path:
+        print("  [주의] --tare-file 이 없습니다. 첫 측정에서 그리퍼 무게를"
+              " 못 빼고 멈춥니다 (MeshPCA pivot/tare_real.py 로 먼저 재세요).")
+        return tare
+    path = Path(path).expanduser()
+    entries = json.loads(path.read_text())["entries"]
+    for entry in entries:
+        tare.record(entry["g_hat"], np.asarray(entry["wrench"], dtype=float))
+    missing = [g for g in alg.G_DIRS if tare.key(g) not in tare.table]
+    if missing:
+        raise RuntimeError(
+            f"{path} 에 중력 방향 {[np.round(g, 3).tolist() for g in missing]}"
+            f" 의 타어가 없습니다. 3자세를 모두 재야 합니다.")
+    print(f"  타어 {len(entries)} 방향을 읽었습니다: {path.name}")
+    return tare
 
 
 def _ft_sample_fn(args):
@@ -2154,6 +2189,11 @@ def main():
                              " 기본값은 물체별 표(POSE_KEYS)")
     parser.add_argument("--pose-max-age-s", type=float, default=2.0,
                         help="이보다 오래된 트래커 값은 거부한다")
+    parser.add_argument("--tare-file", default=None,
+                        help="3자세 타어 JSON (MeshPCA pivot/tare_real.py 산출)."
+                             " 실물에서는 반드시 필요하다")
+    parser.add_argument("--tare-max-age-s", type=float, default=None,
+                        help="이보다 오래된 타어는 거부한다 (기본 hardware_real)")
     parser.add_argument("--aft-host", default="192.168.50.51",
                         help="AFT200 컨트롤러 주소 (Modbus TCP 502)")
     parser.add_argument("--aft-hz", type=float, default=50.0)

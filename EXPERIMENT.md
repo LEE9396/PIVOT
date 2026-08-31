@@ -100,17 +100,22 @@ $R python hardware_real.py --check
 ## 4. 캘리브레이션 · 타어 (세션 전에 한 번)
 
 ```bash
-# 카메라 <-> 로봇 (EasyHeC 결과를 MeshPCA 형식으로)
+# 1) 카메라 <-> 로봇 (EasyHeC -> MeshPCA 형식)
 cd ~/MeshPCA && python calibration/import_easyhec.py ...   # CALIBRATION.md 참고
 
-# 3자세 타어 — 빈 그리퍼로. 물체를 물기 전에 한다
+# 2) 그 결과를 PIVOT 형식으로 옮긴다  ★ 안 하면 PIVOT 은 명목 위치로 돕니다
 cd ~/Desktop/PIVOT/my_work
+$R python import_calibration.py --input ~/MeshPCA/calibration/handeye_d456.json
+
+# 3) 3자세 타어 — 빈 그리퍼로. 물체를 물기 전에 한다
 PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --plan-only   # 먼저 계획만
 PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py \
     --output calibration/aft_tare_current.json --overwrite
 ```
 
 > **타어와 측정의 개구량이 같아야 합니다.** 다르면 그리퍼 무게 몫이 안 빠집니다.
+> 그리고 세션에 `--tare-file` 로 그 JSON 을 반드시 넘겨야 합니다 — 안 넘기면
+> 첫 측정에서 "missing tare for gravity direction" 으로 멈춥니다.
 
 ## 5. 파지점 뽑기 (물체마다 한 번)
 
@@ -179,7 +184,8 @@ $R python dual_view.py \
     --prior water --target 0.05 --max-rounds 8 \
     --gripper-port /dev/ttyUSB0 --gripper-force 205 \
     --pose-file /tmp/lamp_foundationpose_live/latest.json \
-    --robot-host 192.168.50.51
+    --tare-file calibration/aft_tare_current.json \
+    --aft-host 192.168.50.51 --robot-host 192.168.50.51
 ```
 
 출력에 주소가 찍힙니다.
@@ -219,9 +225,16 @@ $R python dual_view.py --mode deploy --bus local --hardware sim \
 
 ## 아직 안 끝난 것 — 실물 전에 확인이 필요합니다
 
-1. **`hardware.Rb5Driver` 실물 구현이 이 저장소에 없습니다.** 팀원 PC 에만
-   있습니다. `~/MeshPCA/pivot/tare_real.py` 가 그것을 부르므로 받아 와야
-   4~7 단계가 돕니다.
+1. **로봇을 움직이는 코드가 이 저장소에 없습니다 — 이것이 유일한 실물 차단
+   요인입니다.** `hardware_real.RbpodoBackend.__init__` 이 `NotImplementedError`
+   를 냅니다. 그래서 `--hardware real` 은 `connect_hardware` 에서 바로 멈추고,
+   그 앞의 어떤 것도 실행되지 않습니다. `joint_positions / move_to / halt /
+   set_servo` 네 함수만 채우면 됩니다.
+
+   팀원 `~/MeshPCA/pivot/tare_real.py` 는 `rbpodo.CobotData(ip)` 와
+   `data.request_data(2.0).sdata.jnt_ang[:6]` 로 관절각을 읽고 있으므로,
+   그 PC 에 도는 구현이 이미 있습니다. **그 파일을 받아 오는 것이 가장
+   빠릅니다.**
 2. **FoundationPose 각도의 부호·영점이 PIVOT 관절각과 안 맞춰졌습니다.**
    대응은 [my_work/NAMING.md](my_work/NAMING.md) 에 정리했지만, 부호는
    실물에서 한 자세를 두 방법으로 읽어 비교해야 확정됩니다. 그 전에는
