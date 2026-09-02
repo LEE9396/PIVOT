@@ -247,7 +247,12 @@ session_YYYYMMDD_HHMM/
 
 ---
 
-## 5. 팀원 PC 환경 구성 프롬프트
+## 5. 팀원 PC 환경 구성
+
+**체크리스트는 [TEAMMATE_CHECKLIST.md](TEAMMATE_CHECKLIST.md) 에 따로 있다.**
+빠뜨리면 조용히 틀리는 항목에 ★ 를 붙여 뒀다. 아래 프롬프트는 그 요약이다.
+
+### 프롬프트
 
 별도 저장소에 환경을 세울 때 그대로 붙여 넣는다.
 
@@ -259,8 +264,18 @@ desk lamp)로 실험할 거야.
   git clone -b real-experiment-ready https://github.com/LEE9396/PIVOT.git ~/PIVOT
   git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/MeshPCA
 
-  절차는 ~/PIVOT/EXPERIMENT_READY.md 에 전부 있다. 그걸 읽고 따라가 줘.
-  저장소 규칙은 AGENTS.md, 부위 이름 대응은 my_work/NAMING.md 에 있다.
+  ★ 할 일 목록은 ~/PIVOT/TEAMMATE_CHECKLIST.md 에 있다. **그것부터 읽어라.**
+    빠뜨리면 조용히 틀리는 항목에 ★ 가 붙어 있다.
+    자세한 설명은 EXPERIMENT_READY.md, 저장소 규칙은 AGENTS.md,
+    부위 이름 대응은 my_work/NAMING.md 에 있다.
+
+  ★ MeshPCA 쪽 파일 두 개도 반드시 적용해라 (~/PIVOT/integration/ 에 있다).
+    이걸 빠뜨리면 창 2 가 여전히 죽고, 타어에 직접교시 모드가 없다.
+      integration/foundationpose/make_desk_lamp_masks.py  -> MeshPCA/foundationpose/
+      integration/meshpca/tare_real.py                    -> 체크리스트 5번을 먼저 읽어라
+
+  ★ 이 PC 에 PIVOT 체크아웃이 둘, MeshPCA 가 둘 있다. 어느 것이 진짜인지
+    먼저 정하고 하나로 합쳐라. 갈라진 채로 둔 것이 이번 사고의 근본이었다.
 
 ━━ 규칙 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ★ PIVOT 의 모든 python 실행에는
