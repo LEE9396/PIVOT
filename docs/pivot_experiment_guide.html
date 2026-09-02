@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PIVOT 실험 준비 안내서 — 처음 하는 사람을 위한</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#FBFAF6; --ink:#1F2321; --ink-2:#5A5F5B; --ink-3:#8B908C; --rule:#DDDBD3;
+    --object:#0F6E56; --object-bg:#E4F3EE; --object-line:#1D9E75;
+    --robot:#534AB7; --robot-bg:#ECEAFA; --robot-line:#7F77DD;
+    --back:#993C1D; --back-bg:#FAECE7;
+    --ok:#3B6D11; --ok-bg:#EAF3DE; --warn:#854F0B; --warn-bg:#FAEEDA;
+    --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+    --sans:"IBM Plex Sans KR","Noto Sans KR",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.8}
+  body{margin:0;padding:0 24px 96px}
+  main{max-width:760px;margin:0 auto}
+  .wide{max-width:960px;margin-left:auto;margin-right:auto}
+  h1{font-size:30px;font-weight:600;line-height:1.3;margin:64px 0 12px;letter-spacing:-.01em}
+  h2{font-size:21px;font-weight:600;margin:64px 0 16px;padding-top:20px;border-top:1px solid var(--rule)}
+  h3{font-size:17px;font-weight:600;margin:36px 0 8px}
+  h4{font-size:15px;font-weight:600;margin:24px 0 6px;color:var(--ink-2)}
+  p{margin:0 0 16px}
+  .lede{font-size:18px;color:var(--ink-2);margin-bottom:32px}
+  code{font-family:var(--mono);font-size:.88em;background:#F1EFE8;padding:1px 5px;border-radius:4px}
+  pre{font-family:var(--mono);font-size:13px;line-height:1.6;background:#F1EFE8;padding:14px 16px;border-radius:6px;overflow:auto;margin:0 0 20px}
+  table{width:100%;border-collapse:collapse;font-size:14.5px;margin:0 0 24px}
+  th,td{padding:10px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--rule)}
+  th{font-weight:600;color:var(--ink-2);font-size:13px}
+  td:first-child{font-weight:500}
+  .tag{display:inline-block;font-size:12px;font-weight:500;padding:2px 8px;border-radius:4px;white-space:nowrap}
+  .tag.object{background:var(--object-bg);color:var(--object)}
+  .tag.robot{background:var(--robot-bg);color:var(--robot)}
+  .tag.back{background:var(--back-bg);color:var(--back)}
+  .tag.ok{background:var(--ok-bg);color:var(--ok)}
+  .tag.warn{background:var(--warn-bg);color:var(--warn)}
+  .legend{display:flex;gap:18px;font-size:13px;color:var(--ink-2);margin:8px 0 0;flex-wrap:wrap}
+  .legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+  .legend .a::before{background:var(--object-line)} .legend .b::before{background:var(--robot-line)} .legend .c::before{background:#D85A30}
+  figure{margin:24px 0 8px}
+  figcaption{font-size:13.5px;color:var(--ink-2);margin-top:8px}
+  .callout{border-left:3px solid var(--object);padding:4px 0 4px 16px;margin:20px 0;color:var(--ink-2)}
+  .callout.warn{border-color:var(--back)}
+  .callout b{color:var(--ink)}
+  ol,ul{padding-left:22px;margin:0 0 16px}
+  li{margin-bottom:8px}
+  .toc{font-size:14.5px;color:var(--ink-2);margin:0 0 8px;padding:0;list-style:none}
+  .toc li{margin:0 0 2px}
+  .toc a{color:inherit;text-decoration:none;border-bottom:1px solid var(--rule)}
+  .card{background:#fff;border:1px solid var(--rule);border-radius:10px;padding:18px 20px;margin:0 0 16px}
+  .card h4{margin-top:0}
+  .card .why{color:var(--ink-2);font-size:14.5px}
+  .num{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;font-size:14px;font-weight:600;margin-right:8px;vertical-align:-5px}
+  .sig{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:14px;margin-top:12px;align-items:start}
+  .sig dt{font-weight:500;color:var(--ink-2);white-space:nowrap}
+  .sig dd{margin:0}
+  .kbd{font-family:var(--mono);font-size:12.5px;background:#EFEDE6;border:1px solid var(--rule);border-radius:4px;padding:1px 6px}
+  .gloss{font-size:14.5px}
+  .gloss dt{font-weight:600;margin-top:14px}
+  .gloss dd{margin:2px 0 0;color:var(--ink-2)}
+  .shell{background:#EFEDE6;border:1px solid var(--rule);border-radius:12px;padding:14px;margin:0 0 8px}
+  .stepbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12.5px}
+  .stepbar span{padding:4px 10px;border-radius:5px;color:var(--ink-3)}
+  .stepbar .done{background:var(--ok-bg);color:var(--ok)}
+  .stepbar .now{background:#DCE9F7;color:#185FA5;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+
+<h1>PIVOT 실험 준비 안내서<br>처음 하는 사람을 위한</h1>
+<p class="lede">물체를 로봇이 집어 들고 이리저리 기울여 보면서, 그 물체의 <strong>어느 부분이 얼마나 무거운지</strong> 알아내는 실험입니다. 이 문서는 로봇도 프로그래밍도 처음인 사람이 읽고 실험을 준비할 수 있도록 썼습니다.</p>
+<div class="callout"><b>실험 대상은 세 개입니다.</b> <span class="tag object">2-link</span> 두 조각이 경첩으로 이어진 막대, <span class="tag object">3-link</span> 세 조각짜리, <span class="tag object">스탠드 조명</span> 받침대·팔·라이트바 세 부분. 앞의 둘은 직접 만든 시험용 물체라 정답(각 부분의 실제 무게)을 알고 있어서 <strong>채점이 됩니다.</strong> 조명은 정답을 모르는 진짜 대상입니다.</div>
+
+<ul class="toc">
+  <li><a href="#what">1. 이 실험은 무엇을 하나</a></li>
+  <li><a href="#how">2. 어떻게 알아내나 — 흔들어 보는 대신</a></li>
+  <li><a href="#gear">3. 장비 소개</a></li>
+  <li><a href="#windows">4. 화면 네 개</a></li>
+  <li><a href="#prepare">5. 준비 여섯 단계</a></li>
+  <li><a href="#run">6. 실험 진행 다섯 단계</a></li>
+  <li><a href="#silent">7. 조용히 틀리는 것들</a></li>
+  <li><a href="#gloss">8. 용어 사전</a></li>
+</ul>
+
+<h2 id="what">1. 이 실험은 무엇을 하나</h2>
+
+<p>택배 상자를 하나 받았다고 해봅시다. 열어보지 않고 <strong>안에 뭐가 들었는지</strong> 알아내려면 어떻게 할까요? 아마 들어서 흔들어 볼 겁니다. 한쪽이 묵직하면 "무거운 게 이쪽에 쏠려 있구나" 하고 짐작하죠.</p>
+
+<p>이 실험이 하는 일이 정확히 그겁니다. 다만 대상이 상자가 아니라 <strong>관절이 있는 물건</strong>(스탠드 조명)이고, 흔드는 사람이 로봇이며, 짐작 대신 <strong>숫자로 계산</strong>합니다.</p>
+
+<figure>
+<svg width="100%" viewBox="0 0 680 190" role="img" xmlns="http://www.w3.org/2000/svg" style="font-family:var(--sans)">
+<title>실험의 목표</title>
+<g><rect x="20" y="40" width="180" height="110" rx="10" fill="#F1EFE8" stroke="#B4B2A9" stroke-width=".75"/>
+<text x="110" y="66" text-anchor="middle" font-size="13" font-weight="600" fill="#2C2C2A">시작</text>
+<text x="110" y="92" text-anchor="middle" font-size="12.5" fill="#5F5E5A">3D 스캔한 모양만 안다</text>
+<text x="110" y="112" text-anchor="middle" font-size="12.5" fill="#5F5E5A">속은 모른다</text>
+<text x="110" y="134" text-anchor="middle" font-size="12.5" fill="#993C1D">전부 물 밀도라고 가정</text></g>
+<path d="M210 95 L268 95" fill="none" stroke="#5F5E5A" stroke-width="1.5"/>
+<path d="M262 90 L270 95 L262 100" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<g><rect x="278" y="40" width="150" height="110" rx="10" fill="#ECEAFA" stroke="#534AB7" stroke-width=".5"/>
+<text x="353" y="66" text-anchor="middle" font-size="13" font-weight="600" fill="#3C3489">실험</text>
+<text x="353" y="92" text-anchor="middle" font-size="12.5" fill="#534AB7">로봇이 들고</text>
+<text x="353" y="112" text-anchor="middle" font-size="12.5" fill="#534AB7">3가지 방향으로 기울여</text>
+<text x="353" y="132" text-anchor="middle" font-size="12.5" fill="#534AB7">손목의 힘을 잰다</text></g>
+<path d="M438 95 L496 95" fill="none" stroke="#5F5E5A" stroke-width="1.5"/>
+<path d="M490 90 L498 95 L490 100" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<g><rect x="506" y="40" width="154" height="110" rx="10" fill="#E4F3EE" stroke="#0F6E56" stroke-width=".5"/>
+<text x="583" y="66" text-anchor="middle" font-size="13" font-weight="600" fill="#085041">결과</text>
+<text x="583" y="92" text-anchor="middle" font-size="12.5" fill="#0F6E56">받침대 898</text>
+<text x="583" y="112" text-anchor="middle" font-size="12.5" fill="#0F6E56">팔 372 · 갓 507</text>
+<text x="583" y="134" text-anchor="middle" font-size="12" fill="#0F6E56">단위 kg/m³</text></g>
+</svg>
+<figcaption>모양만 알던 물체가, 부위마다 밀도를 가진 물체가 된다. 이 숫자가 있으면 시뮬레이터에서 실물처럼 움직인다.</figcaption>
+</figure>
+
+<h3>왜 이게 필요한가</h3>
+<p>로봇 시뮬레이터에서 물건을 다루려면 <strong>무게가 어디에 얼마나 있는지</strong>를 알아야 합니다. 겉모양만 3D로 떠 놓으면 시뮬레이터 안에서는 스티로폼처럼 굴러갑니다. 실제로 집어 보면 손목이 받는 힘이 전혀 다르죠.</p>
+<p>사람이 일일이 분해해서 저울에 다는 방법도 있지만, 물건 하나에 몇 시간이 걸리고 분해할 수 없는 물건은 아예 못 합니다. 로봇이 몇 분 만에 자동으로 하게 만드는 것이 이 연구입니다.</p>
+
+<h2 id="how">2. 어떻게 알아내나 — 흔들어 보는 대신</h2>
+
+<h3>핵심 아이디어: 중력은 공짜 저울이다</h3>
+<p>로봇 손목에는 <strong>힘 센서</strong>가 달려 있습니다. 물체를 쥐고 가만히 있으면, 센서는 물체 무게가 만드는 힘과 <strong>돌리려는 힘(토크)</strong>을 읽습니다.</p>
+<p>여기서 중요한 게 토크입니다. 같은 1 kg이라도 손목 가까이 있으면 덜 돌리고, 멀리 있으면 많이 돌립니다. 문고리를 손잡이 끝에서 밀면 쉽게 열리고 경첩 가까이서 밀면 안 열리는 것과 같습니다. 그러니 <strong>힘과 토크를 같이 읽으면 "얼마나 무거운지"와 "어디에 있는지"를 동시에 알 수 있습니다.</strong></p>
+
+<h3>그런데 한 자세로는 모자란다</h3>
+<p>측정값 하나로는 답이 여러 개 나옵니다. "위쪽이 무겁고 아래가 가볍다"와 "전체가 조금씩 무겁다"가 같은 값을 만들 수 있거든요. 미지수가 3개인데 식이 1개인 상황입니다.</p>
+<p>그래서 <strong>물체를 기울여 중력 방향을 바꿔 가며</strong> 여러 번 잽니다. 방향이 바뀌면 각 부위가 토크에 기여하는 방식이 달라져서, 식이 늘어나고 답이 하나로 좁혀집니다. 이 실험에서는 서로 직각인 <strong>3가지 방향</strong>으로 잽니다.</p>
+
+<div class="callout"><b>왜 하필 3방향인가?</b> 서로 직각인 방향 3개면 3차원 공간을 다 훑습니다. 같은 방향으로 100번 재봐야 새 정보가 안 늘어납니다. 실제로 프로그램은 "다음에 어느 각도로 재면 <strong>새로 알게 되는 것이 가장 많은가</strong>"를 계산해서 각도를 추천합니다. 이걸 <b>정보이득</b>이라고 부릅니다.</div>
+
+<h3>관절이 있으면 더 재미있어진다</h3>
+<p>스탠드 조명은 접히는 관절이 2개 있습니다. 조명을 <strong>다르게 접으면</strong> 부위들의 위치 관계가 바뀌고, 그것도 새로운 정보가 됩니다. 그래서 실험은 이렇게 돕니다.</p>
+<pre>조명을 어떤 각도로 접는다  →  로봇이 3방향으로 기울여 잰다
+     ↑                                    ↓
+     └──── 아직 확실하지 않으면 다른 각도로 ────┘</pre>
+<p>확실해질 때까지(불확실성이 목표 아래로 내려갈 때까지) 이 고리를 돕니다. 보통 3~8바퀴입니다.</p>
+
+<h2 id="gear">3. 장비 소개</h2>
+
+<table>
+<tr><th>장비</th><th>하는 일</th><th>알아둘 것</th></tr>
+<tr><td>RB5-850E 로봇팔</td><td>물체를 들고 원하는 각도로 기울인다</td><td>관절 6개. 사람 팔처럼 어깨·팔꿈치·손목이 있다</td></tr>
+<tr><td>AFT200 힘/토크 센서</td><td>손목에 걸리는 힘 3개, 토크 3개를 읽는다</td><td>이 실험의 <strong>저울</strong>. 지름 8 cm, 두께 5.2 cm짜리 원통</td></tr>
+<tr><td>Robotiq 2F-85 그리퍼</td><td>물체를 집는 집게</td><td>최대 8.5 cm까지 벌어진다. 집는 힘은 조절 가능</td></tr>
+<tr><td>RealSense D456 카메라</td><td>물체가 지금 어떤 각도로 접혀 있는지 본다</td><td>색 영상 + 거리(depth)를 같이 찍는다</td></tr>
+<tr><td>실험 책상</td><td>물체를 올려놓는 곳</td><td>로봇이 부딪히면 안 되므로 <strong>위치를 정확히 재둬야</strong> 한다</td></tr>
+<tr><td>스탠드 조명</td><td>실험 대상</td><td>받침대 · 팔 · 갓(라이트바) 세 부분, 관절 2개</td></tr>
+</table>
+
+<div class="callout"><b>왜 카메라가 필요한가?</b> 로봇은 자기 관절 각도는 알지만, 손에 쥔 <strong>물체가 어떻게 접혀 있는지</strong>는 모릅니다. 그건 사람이 손으로 접어 주는 것이니까요. 그래서 카메라로 봅니다. FoundationPose라는 프로그램이 카메라 영상에서 물체 각도를 읽어 줍니다.</div>
+
+<h3>실험 대상 세 개</h3>
+<table>
+<tr><th>물체</th><th>생김새</th><th>관절</th><th>왜 이걸로 하나</th></tr>
+<tr><td><span class="tag object">2-link</span></td><td>막대 두 개가 경첩으로</td><td>1개</td><td>가장 단순. 여기서 안 되면 나머지도 안 된다</td></tr>
+<tr><td><span class="tag object">3-link</span></td><td>막대 세 개</td><td>2개</td><td>미지수가 늘었을 때도 되는지 본다</td></tr>
+<tr><td><span class="tag object">스탠드 조명</span></td><td>받침대 · 굽은 팔 · 라이트바</td><td>2개</td><td>진짜 물건. 3D 스캔한 복잡한 모양</td></tr>
+</table>
+<p>앞의 둘은 3D 프린터로 만들어 <strong>분해해서 저울에 달아 봤기 때문에 정답을 압니다.</strong> 그래서 실험 결과가 맞는지 채점할 수 있습니다. 조명은 그렇게 못 하니, 앞의 둘에서 방법이 맞다는 걸 보이고 조명에 적용하는 순서입니다.</p>
+
+<div class="callout"><b>조명만 다른 점 하나.</b> 2-link·3-link 는 사슬의 <strong>끝</strong>을 잡습니다. 조명은 <strong>가운데(굽은 팔)</strong>를 잡아서, 받침대와 라이트바가 양쪽으로 갈라집니다. 이 차이 때문에 조명만 집게를 90° 돌려서 물어야 합니다 — 안 그러면 반대쪽 끝이 로봇 손목을 뚫습니다. 프로그램이 알아서 처리하지만, 실물에서 <strong>팔을 집게에 가로질러</strong> 무는지 확인하세요.</div>
+
+<h2 id="windows">4. 화면 네 개</h2>
+
+<p>실험 중에는 모니터에 창이 네 개 뜹니다. 각각 역할이 다릅니다.</p>
+
+<div class="shell"><div class="stepbar">
+  <span class="done">✓ 0 준비</span><span class="done">✓ 1 파지점</span><span class="now">2 각도 조정</span><span>3 경로</span><span>4 탐색</span><span>5 내보내기</span>
+</div></div>
+<p class="gloss" style="margin-top:0;color:var(--ink-3);font-size:13px">창 1 맨 위에 항상 이 띠가 있습니다. 지금 어느 단계인지 여기서 봅니다.</p>
+
+<table>
+<tr><th>창</th><th>보여주는 것</th><th>사람이 하는 일</th></tr>
+<tr><td><span class="tag object">창 1</span> 시뮬레이션</td><td>컴퓨터 안의 3D 화면. 파지점 후보, 추천 각도, (나중에) 로봇과 경로</td><td><strong>모든 "완료" 버튼이 여기 있다.</strong> 지휘자 역할</td></tr>
+<tr><td><span class="tag object">창 2</span> 카메라</td><td>진짜 카메라 영상. 물체가 지금 몇 도로 접혀 있는지</td><td>보면서 손으로 조명을 접는다</td></tr>
+<tr><td><span class="tag robot">창 3</span> 그리퍼·힘센서</td><td>집게를 여닫는 버튼, 힘 센서 값</td><td>물체를 집는다</td></tr>
+<tr><td><span class="tag robot">창 4</span> 결과</td><td>왼쪽=처음 가정한 밀도(전부 물), 오른쪽=알아낸 밀도. 부위마다 무지개색</td><td>본다. 불확실성이 목표 아래로 가면 끝</td></tr>
+</table>
+
+<div class="callout"><b>왜 창 1에만 버튼이 있나?</b> 여러 창에 버튼이 흩어져 있으면 어느 창이 지금 명령을 기다리는지 헷갈립니다. 창 1이 단계를 정하고 나머지 창은 그 단계를 <strong>읽기만</strong> 합니다. 그래서 창 2의 파지점 표시가 저절로 켜지고 꺼집니다.</div>
+
+<h2 id="prepare">5. 준비 여섯 단계</h2>
+
+<p>로봇을 켜기 전에 여섯 가지를 확인합니다. 순서대로 하세요. <strong>앞 단계가 안 되면 뒤 단계는 의미가 없습니다.</strong></p>
+
+<div class="card">
+<h4><span class="num">1</span>물체 파일이 제대로 준비됐는지</h4>
+<p class="why">3D 스캔한 물체 파일에는 두 가지가 들어 있어야 합니다. <strong>보이는 모양</strong>(화면에 그릴 것)과 <strong>부딪힘 계산용 모양</strong>입니다. 두 번째가 특별한데, 컴퓨터가 충돌을 빨리 계산하려면 물체를 <strong>볼록한 덩어리 여러 개</strong>로 쪼개 놔야 합니다.</p>
+<p class="why">쪼개 놓지 않으면 컴퓨터가 물체를 통째로 감싸는 <strong>가장 작은 볼록한 껍질</strong>로 대신합니다. 굽은 팔이 통나무처럼 뚱뚱해지고, 실제로는 통과할 수 있는 자세를 "부딪힌다"고 잘못 판단합니다.</p>
+<pre>$R python tools/make_convex.py &lt;물체폴더&gt;/collision_meshes --report</pre>
+<dl class="sig">
+<dt><span class="tag ok">통과</span></dt><dd>부위마다 <code>convex/&lt;부위&gt;/part_00.obj</code> 같은 조각들이 생긴다</dd>
+<dt><span class="tag warn">주의</span></dt><dd>"가장 긴 조각이 부위의 절반을 넘는다"가 뜨면 <code>--threshold</code>를 절반으로 낮춰 다시</dd>
+</dl>
+</div>
+
+<div class="card">
+<h4><span class="num">1.5</span>세 물체가 실제로 되는지 미리 보기</h4>
+<p class="why">로봇을 켜기 전에, 컴퓨터 안에서 <strong>이 물체를 들고 세 방향으로 기울일 수 있는지</strong> 미리 확인합니다. 안 되면 실물에서도 안 됩니다.</p>
+<pre>$R python tools/verify_objects.py --json results/verify.json</pre>
+<dl class="sig">
+<dt><span class="tag ok">통과</span></dt><dd>물체마다 "도달·충돌 N/M 각도 통과" 와 "사슬 연결됨" 이 나온다</dd>
+<dt>참고</dt><dd>완전히 접힌 자세가 막히는 건 정상입니다 — 물체 자기 부분끼리 닿으니까요</dd>
+<dt><span class="tag back">실패</span></dt><dd>0개가 통과하면 어느 부분이 몇 mm 겹치는지 같이 나옵니다</dd>
+</dl>
+</div>
+
+<div class="card">
+<h4><span class="num">2</span>카메라 위치 재기 (핸드아이 캘리브레이션)</h4>
+<p class="why">카메라가 "물체가 저기 있다"고 말해도, 로봇 입장에서 <strong>저기가 어디인지</strong> 알려면 카메라와 로봇의 상대 위치를 알아야 합니다. 이걸 재는 걸 핸드아이 캘리브레이션이라고 합니다.</p>
+<p class="why">이걸 안 하면 프로그램은 <strong>도면상의 명목 위치</strong>로 조용히 계산합니다. 오류 메시지가 안 뜹니다. 대신 결과가 계속 조금씩 치우치고, 실험을 아무리 반복해도 그 치우침이 없어지지 않습니다.</p>
+<pre>$R python import_calibration.py --input &lt;핸드아이 결과 JSON&gt;</pre>
+<dl class="sig">
+<dt><span class="tag ok">통과</span></dt><dd><code>my_work/calibration/camera_*.json</code> 파일이 생긴다</dd>
+</dl>
+</div>
+
+<div class="card">
+<h4><span class="num">3</span>책상 높이 재기</h4>
+<p class="why">로봇이 경로를 짤 때 책상을 피해 갑니다. 그런데 프로그램이 아는 책상은 <strong>도면상의 값</strong>(윗면 높이 75 cm)입니다. 실제 책상이 그보다 낮으면, 프로그램은 안전하다고 판단한 경로로 물체를 <strong>책상에 눌러 버립니다.</strong></p>
+<p class="why">이게 단순한 파손 위험이 아닌 이유가 있습니다. 책상에 닿으면 그 힘이 <strong>손목 센서에 그대로 잡히고</strong>, 프로그램은 그걸 물체 무게로 해석합니다. 그럴듯하지만 틀린 답이 나옵니다.</p>
+<pre>$R python calibrate_table_rgbd.py \
+    --handeye calibration/&lt;핸드아이&gt;.json \
+    --output calibration/rb5_table_current.json</pre>
+<dl class="sig">
+<dt><span class="tag ok">통과</span></dt><dd>실행 화면에 <code>테이블 실측 반영: 윗면 z ... mm</code>가 뜬다</dd>
+<dt><span class="tag warn">주의</span></dt><dd><code>[주의] 테이블이 명목값입니다</code>가 뜨면 아직 도면값으로 도는 중</dd>
+</dl>
+</div>
+
+<div class="card">
+<h4><span class="num">4</span>빈 손 무게 재기 (타어)</h4>
+<p class="why">힘 센서는 물체 무게만 재는 게 아니라 <strong>그리퍼 자체의 무게</strong>도 같이 잽니다. 그리퍼가 1 kg인데 물체가 0.5 kg이면 센서는 1.5 kg을 읽죠. 그래서 물체를 잡기 <strong>전에</strong> 빈 손 상태로 미리 재 둡니다. 저울에 그릇 올리고 영점 맞추는 것과 같습니다.</p>
+<p class="why">중력 방향마다 그리퍼 무게가 센서에 다르게 걸리므로, <strong>3가지 방향 각각</strong>에서 재야 합니다.</p>
+<p class="why"><strong>세팅할 때 한 번만</strong> 재면 됩니다. 실험할 때마다 다시 잴 필요 없습니다.</p>
+<pre># 세팅할 때 한 번 — 직접교시 모드는 로봇에 명령을 보내지 않습니다
+PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --manual --setup \
+    --output calibration/aft_tare_current.json --overwrite</pre>
+<p class="why">직접교시(freedrive)로 팔을 세 자세로 <strong>손으로 옮기면</strong>, 프로그램은 관절각과 힘을 읽기만 합니다. 목표 방향에서 1° 안에 들어와야 읽고, 지금 오차가 몇 도인지·그게 몇 N 인지 실시간으로 보여줍니다.</p>
+<pre># 실험 직전마다 10초 — 값이 흔들렸는지만 확인
+PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --verify \
+    --output calibration/aft_tare_current.json</pre>
+<dl class="sig">
+<dt><span class="tag ok">통과</span></dt><dd>"힘 드리프트 0.02 N — 세팅 때 값을 그대로 쓰세요"</dd>
+<dt><span class="tag back">초과</span></dt><dd>0.10 N 을 넘으면 다시 재라고 알려줍니다 (온도가 변한 것)</dd>
+</dl>
+<div class="callout warn"><b>여기서 로봇이 처음 움직입니다.</b> 직접교시 모드가 아니라 자동 모드를 쓰신다면, 반드시 <code>--plan-only</code>로 먼저 경로를 확인하고 사람이 로봇 팔 닿는 범위 밖으로 나온 뒤에 실행하세요.</div>
+</div>
+
+<div class="card">
+<h4><span class="num">5</span>카메라 각도와 프로그램 각도 맞추기</h4>
+<p class="why">카메라(FoundationPose)는 "두 부위가 이룬 각이 45도"라고 알려줍니다. 그런데 <strong>부호가 없습니다.</strong> +45도인지 −45도인지 모릅니다. 프로그램 쪽 각도는 부호가 있고 0점 기준도 다릅니다.</p>
+<p class="why">이걸 안 맞추면, 프로그램이 "더 접으세요"라고 할 때 실제로는 <strong>반대로 펴야</strong> 하는 상황이 생깁니다. 사람이 시키는 대로 했는데 계속 안 맞는 이상한 일이 벌어집니다.</p>
+<p class="why">맞추는 방법은 간단합니다. 관절 하나를 한쪽 끝에서 다른 끝까지 <strong>천천히 접는 동안</strong> 프로그램이 각도를 계속 기록하고, 그 궤적을 계산된 모델 곡선에 맞춥니다. 자 같은 도구가 필요 없습니다.</p>
+<pre>$R python tools/angle_signs.py \
+    --pose-file /tmp/lamp_foundationpose_live/latest.json \
+    --joint 1 --seconds 40 --output calibration/angle_signs.json</pre>
+<dl class="sig">
+<dt><span class="tag ok">통과</span></dt><dd>부호(+1 또는 −1)와 <strong>잔차 RMS</strong>가 나온다</dd>
+<dt>중요</dt><dd>그 <strong>잔차가 곧 카메라 각도의 실제 오차</strong>입니다. 보통 1~3도. 이 값을 <code>ANGLE_FLOOR_DEG</code>에 넣으세요</dd>
+</dl>
+</div>
+
+<div class="card">
+<h4><span class="num">6</span>전체 점검</h4>
+<p class="why">위 다섯 개를 한 번에 확인합니다. 이 프로그램이 있는 이유는, 위 항목들이 빠졌을 때 <strong>에러가 안 나고 조용히 나쁜 결과가 나오기</strong> 때문입니다.</p>
+<pre>$R python tools/preflight.py --conf setup/experiment.conf</pre>
+<pre>PIVOT 0단계 준비 점검
+
+  OK   자산 경로        /home/.../standlamp
+  OK   볼록 분해        3 부위 모두 조각 있음
+  OK   빌드 일치        메시 차이 0.0 mm
+  OK   핸드아이         camera_cam_d456_front.json
+  OK   3자세 타어        aft_tare_current.json
+ 주의  책상 실측         없습니다 — 도면 명목값(윗면 750 mm)으로 돕니다
+  OK   각도 부호·영점     2 관절, 잔차 최대 2.10 deg
+
+  통과 6 / 주의 1 / 실패 0</pre>
+<dl class="sig">
+<dt><span class="tag ok">통과</span></dt><dd>그대로 진행</dd>
+<dt><span class="tag warn">주의</span></dt><dd>돌아가지만 결과가 조용히 나빠질 수 있음</dd>
+<dt><span class="tag back">실패</span></dt><dd><strong>여기서 멈춰야 함.</strong> 진행하면 반드시 사고가 남</dd>
+</dl>
+</div>
+
+<h2 id="run">6. 실험 진행 다섯 단계</h2>
+
+<p>준비가 끝나면 창 네 개를 띄우고 안내를 따라갑니다.</p>
+<pre>./setup/launch_experiment.sh</pre>
+
+<h3><span class="num">1</span>파지점 확정 <span class="tag object">물체만</span></h3>
+<p>창 1에 물체가 뜨고, <strong>여기를 잡으세요</strong> 하는 후보 점들이 표시됩니다. 같은 점이 창 2의 카메라 영상 위에도 겹쳐 보입니다. 창 3의 버튼으로 그리퍼를 벌리고, 그 점이 집게 사이에 오도록 물체를 넣은 다음 오므립니다.</p>
+<p>다 되면 창 1의 <span class="kbd">파지 완료</span>를 누릅니다. 이 순간 프로그램이 카메라와 로봇 관절각을 읽어 <strong>물체가 그리퍼의 정확히 어디에 물렸는지 계산해 저장합니다.</strong></p>
+<div class="callout"><b>이 측정이 왜 중요한가?</b> 예전에는 프로그램이 "아마 여기쯤 물렸겠지" 하고 <strong>추측</strong>했습니다. 그 추측이 2 mm만 어긋나도 최종 밀도가 113 % 틀립니다. 이제는 재서 씁니다.</div>
+
+<h3><span class="num">2</span>각도 조정 <span class="tag object">물체만</span></h3>
+<p>창 1이 <strong>지금 가장 정보가 많이 얻어지는 각도</strong>를 계산해서 알려줍니다. 예: <code>joint_3_1 을 −62° 쪽으로 17° 더 접으세요</code>.</p>
+<p>창 2를 보면서 손으로 조명을 접습니다. 목표에 가까워지면 창 1의 표시가 초록으로 바뀝니다. 다 맞추면 <span class="kbd">각도 조정 완료</span>를 누릅니다.</p>
+
+<h3><span class="num">3</span>경로 확인 <span class="tag robot">로봇 등장</span></h3>
+<p>여기서 처음으로 창 1에 <strong>로봇이 나타납니다.</strong> 1단계에서 잰 파지 정보와 2단계 각도로 시뮬레이션을 세우고,</p>
+<ul>
+<li>이 자세에서 로봇이 3방향을 만들 수 있는지</li>
+<li>로봇이 자기 몸이나 책상에 부딪히지 않는지</li>
+<li>지점 사이를 안전하게 이동할 경로가 있는지</li>
+</ul>
+<p>를 검사합니다. 실패하면 <strong>어느 부위가 어디에 몇 mm 겹치는지</strong> 그림으로 보여줍니다. 통과하면 경로가 화면에서 재생되고, 사람이 보고 <span class="kbd">승인</span>합니다.</p>
+<div class="callout warn"><b>로봇이 움직이는 유일한 문입니다.</b> 승인 전에는 로봇이 절대 안 움직입니다. 승인하기 전에 반드시 사람이 로봇 근처에서 나오세요.</div>
+
+<h3><span class="num">4</span>탐색 <span class="tag robot">로봇이 움직임</span></h3>
+<p>로봇이 3가지 방향으로 차례차례 기울이며 힘을 잽니다. 각 자세에서 잠시 멈춰 흔들림이 가라앉기를 기다린 뒤 읽습니다. 창 3에 힘 값이, 창 4에 갱신된 밀도가 나타납니다.</p>
+<p>한 바퀴가 끝나면 창 4가 <strong>불확실성</strong>을 보여줍니다. 목표(보통 5 %) 아래면 끝, 아니면 2단계로 돌아가 다른 각도로 한 번 더 합니다.</p>
+
+<h3><span class="num">5</span>내보내기</h3>
+<p>알아낸 밀도로 물체 파일의 무게 정보를 다시 쓰고, 시뮬레이터에서 바로 쓸 수 있는 형태로 저장합니다. 실험 기록(라운드마다의 각도·힘·결과)도 세션 폴더에 남습니다.</p>
+
+<h2>6.5. 이미 확인된 것</h2>
+<p>아래는 실물 로봇 없이 컴퓨터 안에서 <strong>실제로 돌려 본</strong> 결과입니다. 여러분이 준비를 마치면 같은 숫자가 나와야 합니다.</p>
+<table>
+<tr><th>물체</th><th>잡는 단면</th><th>세 방향 다 되는 각도</th><th>가장 좁은 틈</th><th>이동 경로</th></tr>
+<tr><td>2-link</td><td>40.0 mm</td><td>2 / 3</td><td>11.00 mm</td><td>연결됨</td></tr>
+<tr><td>3-link</td><td>44.0 mm</td><td>8 / 9</td><td>11.00 mm</td><td>연결됨</td></tr>
+<tr><td>스탠드 조명</td><td>23.6 mm</td><td>6 / 9</td><td>11.00 mm</td><td>연결됨</td></tr>
+</table>
+<p>집게는 최대 78 mm 벌어지니 세 물체 다 여유 있게 물립니다. "가장 좁은 틈 11 mm" 는 로봇과 물체·책상 사이에 최소 11 mm 가 남는다는 뜻입니다(요구값 10 mm).</p>
+<div class="callout"><b>조명은 원래 안 됐습니다.</b> 집게를 90° 돌려 무는 규약(<code>long_axis="y"</code>)을 넣기 전에는 <strong>9개 각도 중 0개</strong>가 통과했습니다. 지금은 6개입니다. 이 한 가지가 실패와 성공을 갈랐습니다.</div>
+
+<h2 id="silent">7. 조용히 틀리는 것들</h2>
+
+<p>이 실험에서 가장 위험한 건 프로그램이 <strong>멈추는</strong> 게 아닙니다. 멈추면 고치면 되니까요. 위험한 건 <strong>에러 없이 틀린 답이 나오는</strong> 경우입니다. 실제로 겪은 것들입니다.</p>
+
+<table>
+<tr><th>증상</th><th>진짜 원인</th><th>어떻게 알아채나</th></tr>
+<tr><td>"자세가 없다"며 시작조차 못 함</td><td>볼록 조각이 없어 물체가 통째로 뚱뚱해졌고, 잡는 위치도 팔 한가운데로 밀렸음</td><td>이제 <strong>예외로 멈춥니다</strong>. 예전엔 조용히 넘어갔음</td></tr>
+<tr><td>결과가 계속 조금씩 치우침</td><td>핸드아이 캘리브레이션 없이 명목 카메라 위치로 돎</td><td>준비 점검에서 <span class="tag back">실패</span></td></tr>
+<tr><td>로봇이 물체를 책상에 누름</td><td>실제 책상이 도면보다 낮음</td><td>준비 점검에서 <span class="tag warn">주의</span>. 이동 후 화면에 겹침 경고</td></tr>
+<tr><td>각도를 시킨 대로 맞췄는데 계속 안 맞음</td><td>카메라 각도와 프로그램 각도의 부호가 반대</td><td>5단계를 안 했으면 <span class="tag warn">주의</span></td></tr>
+<tr><td>창 2가 안 뜨고 3분 뒤 종료</td><td>카메라가 부위를 못 나눔(자동 인식 실패)</td><td>이제 <strong>사람이 직접 그리는 모드가 기본</strong>. 부위 이름표 그림이 옆에 뜸</td></tr>
+<tr><td>중간에 라운드가 통째로 날아감</td><td>측정 지점 사이 이동 경로를 미리 검사하지 않았음</td><td>이제 <strong>실행할 경로를 그대로 미리 검사</strong>하고, 막히면 시작 자세를 경유</td></tr>
+</table>
+
+<div class="callout warn"><b>기억할 원칙 하나.</b> 준비 점검에서 <span class="tag warn">주의</span>가 뜨면 "일단 돌려보자"가 아니라 "결과를 믿을 수 없다"로 읽으세요. 프로그램이 <strong>도면상의 값으로 조용히 돌고 있다</strong>는 뜻입니다.</div>
+
+<h2 id="gloss">8. 용어 사전</h2>
+
+<dl class="gloss">
+<dt>밀도</dt><dd>단위 부피당 무게(kg/m³). 물이 1000. 이 실험에서 알아내려는 값입니다. 다만 여기서 쓰는 밀도는 <strong>겉모양 부피로 나눈 값</strong>이라 물리적 밀도와는 다릅니다 — 속이 빈 갓도 스캔에서는 꽉 찬 것으로 보이니까요. 중요한 건 밀도 × 부피 = <strong>무게</strong>가 맞는다는 점입니다.</dd>
+
+<dt>렌치 (wrench)</dt><dd>힘 3개 + 토크 3개를 묶어 부르는 말. 손목 센서가 한 번에 읽는 6개 숫자입니다.</dd>
+
+<dt>토크</dt><dd>돌리려는 힘. 문을 손잡이 쪽에서 밀 때와 경첩 쪽에서 밀 때 차이를 만드는 그것입니다.</dd>
+
+<dt>정보이득</dt><dd>"이 각도로 재면 새로 알게 되는 것이 얼마나 되나"를 숫자로 만든 것. 프로그램은 이게 가장 큰 각도를 추천합니다.</dd>
+
+<dt>불확실성</dt><dd>지금 추정한 밀도가 얼마나 못 미더운지. 이게 목표(5 %) 아래로 내려가면 실험을 멈춥니다.</dd>
+
+<dt>파지점 / 파지 변환</dt><dd>물체를 집는 위치. 파지 변환은 "그리퍼 기준으로 물체가 어디에 어떤 방향으로 붙어 있는가"를 나타내는 수학적 표현입니다.</dd>
+
+<dt>볼록 (convex)</dt><dd>어느 두 점을 이어도 선분이 도형 안에 있는 모양. 공·상자는 볼록, 도넛·L자는 아닙니다. 컴퓨터는 볼록한 모양끼리의 충돌을 아주 빠르게 계산할 수 있어서, 복잡한 모양을 볼록 조각 여러 개로 쪼개 씁니다.</dd>
+
+<dt>볼록 껍질 (convex hull)</dt><dd>어떤 모양을 감싸는 가장 작은 볼록한 모양. 굽은 팔의 볼록 껍질은 통나무처럼 뚱뚱해집니다. 그래서 쪼개는 게 중요합니다.</dd>
+
+<dt>캘리브레이션</dt><dd>장비의 실제 위치·특성을 재서 기록해 두는 일. 안 하면 프로그램이 도면상의 값으로 계산합니다.</dd>
+
+<dt>핸드아이</dt><dd>카메라와 로봇의 상대 위치. "카메라가 본 저기"를 "로봇 기준 저기"로 바꾸는 데 필요합니다.</dd>
+
+<dt>타어 (tare)</dt><dd>영점 맞추기. 물체를 잡기 전 빈 그리퍼 상태에서 센서가 읽는 값을 미리 재 두고, 나중에 빼는 것.</dd>
+
+<dt>IK (역기구학)</dt><dd>"손을 여기에 이 방향으로 두려면 관절을 몇 도씩 돌려야 하나"를 푸는 계산.</dd>
+
+<dt>RRT</dt><dd>경로를 찾는 알고리즘. 시작과 목표에서 나뭇가지처럼 뻗어 나가다 만나면 그것을 경로로 씁니다. 직선으로 이으면 중간에 부딪힐 수 있어서 필요합니다.</dd>
+
+<dt>FoundationPose</dt><dd>카메라 영상에서 물체의 3차원 자세를 알아내는 프로그램. 이 실험에서는 조명이 몇 도로 접혀 있는지 읽는 데 씁니다.</dd>
+
+<dt>SAM3 / 마스크</dt><dd>영상에서 "이 부분이 받침대, 이 부분이 팔" 하고 영역을 나누는 것. FoundationPose가 각 부위를 따로 추적하려면 먼저 나눠 줘야 합니다.</dd>
+
+<dt>세션 폴더</dt><dd>이번 실험의 모든 기록이 쌓이는 폴더. 단계마다 결과가 JSON으로 남아서, 중간에 되돌아가도 처음부터 다시 하지 않아도 됩니다.</dd>
+</dl>
+
+<h2>부록 — 한 장 요약</h2>
+<pre>준비 (로봇 안 움직임)
+  1. tools/make_convex.py       물체를 볼록 조각으로 쪼갠다
+  2. import_calibration.py      카메라 위치를 옮긴다
+  3. calibrate_table_rgbd.py    책상 높이를 잰다
+  4. tare_real.py               빈 손 무게를 잰다        ← 로봇이 움직임
+  5. tools/angle_signs.py       카메라 각도 부호를 맞춘다
+  6. tools/preflight.py         전체 점검 — 실패 0 이어야 함
+
+실험
+  ./setup/launch_experiment.sh
+  1 파지점 확정 → 2 각도 조정 → 3 경로 승인 → 4 탐색 → 5 내보내기
+                       ↑                          |
+                       └──── 불확실성 남으면 ───────┘</pre>
+
+</main>
+</body>
+</html>

@@ -22,6 +22,8 @@ configs/experiments/icra_realistic_lab_scene_v1.json 값을 그대로 쓴다.
 """
 
 import argparse
+import itertools
+import os
 import sys
 from pathlib import Path
 
@@ -84,6 +86,101 @@ TABLE_CENTER_M = (_LAB["table"]["center_xy_m"][0],
 
 ROBOT_BASE_XYZ_M = tuple(_LAB["robot"]["base_xyz_m"])
 ROBOT_BASE_RPY_DEG = tuple(_LAB["robot"]["base_rpy_deg"])
+
+
+# ---------------------------------------------------------------------------
+# 테이블은 **잰 값**을 쓴다 (있으면).
+#
+# 위의 TABLE_* 는 도면상의 명목값이다. 실물 테이블은 그 자리에 그 높이로
+# 있지 않다. 명목이 실제보다 낮으면 계획한 경로가 진짜 테이블을 긁고,
+# 높으면 갈 수 있는 자세가 막힌다. 램프처럼 여유가 3 mm 인 물체에서는
+# 이 차이가 그대로 성패를 가른다.
+#
+# my_work/calibrate_table_rgbd.py 가 D456 depth + 손-눈 변환으로 RB5 기준
+# 테이블 평면을 재서 calibration/rb5_table_current.json 에 쓴다. 그 파일이
+# 있으면 그것을 쓰고, 없으면 명목값으로 간다 — 어느 쪽인지 반드시 찍는다.
+# 조용히 명목으로 도는 것이 이 저장소에서 가장 비싼 실패 방식이었다.
+#
+#   1) 환경변수 TABLE_CALIBRATION
+#   2) calibration/rb5_table_current.json
+TABLE_CALIBRATION_NAME = "rb5_table_current.json"
+
+
+def table_calibration_path():
+    override = os.environ.get("TABLE_CALIBRATION")
+    return (Path(override) if override
+            else CALIBRATION_DIR / TABLE_CALIBRATION_NAME)
+
+
+def _robot_base_pose():
+    """lab_world <- RB5 베이스."""
+    from pydrake.math import RollPitchYaw
+    return RigidTransform(
+        RollPitchYaw(np.deg2rad(np.asarray(ROBOT_BASE_RPY_DEG, dtype=float))),
+        np.asarray(ROBOT_BASE_XYZ_M, dtype=float))
+
+
+def load_table_calibration(path=None):
+    """잰 테이블 평면을 lab_world 좌표의 (법선, 원점거리) 로 준다.
+
+    파일이 없거나 status 가 valid 가 아니면 None. 캘리브레이션이 스스로
+    "못 믿겠다" 고 적어 둔 값을 몰래 쓰면 명목보다 나쁘다.
+    """
+    import json
+
+    path = Path(path) if path else table_calibration_path()
+    if not path.is_file():
+        return None
+    data = json.loads(path.read_text())
+    if data.get("status") != "valid":
+        print(f"  [주의] 테이블 캘리브레이션 {path.name} 의 status 가"
+              f" '{data.get('status')}' 라 쓰지 않습니다 — 명목값으로 갑니다")
+        return None
+    plane = data["plane_in_robot_base"]
+    normal_B = np.asarray(plane["normal"], dtype=float)
+    normal_B /= np.linalg.norm(normal_B)
+    offset_B = float(plane["equation"][3])
+
+    # 베이스 좌표의 평면 n_B.p_B + d_B = 0 을 lab_world 로 옮긴다.
+    #   p_B = R_WB^T (p_W - t_WB)  =>  n_W = R_WB n_B,  d_W = d_B - n_W.t_WB
+    X_WB = _robot_base_pose()
+    normal_W = X_WB.rotation().matrix() @ normal_B
+    offset_W = offset_B - float(normal_W @ X_WB.translation())
+    if normal_W[2] < 0.0:
+        normal_W, offset_W = -normal_W, -offset_W
+    return dict(normal=normal_W, offset=offset_W, source=str(path),
+                tilt_deg=float(plane.get("tilt_deg", 0.0)),
+                rms_mm=float(data.get("quality", {}).get("rms_mm", float("nan"))),
+                bounds=data.get("selected_xy_bounds_in_robot_base_m"))
+
+
+def table_box_pose(calibration=None):
+    """테이블 상자의 (크기, lab_world 자세). 캘리브레이션이 있으면 반영한다.
+
+    상자의 **윗면**이 잰 평면 위에 오도록 놓는다. 상자 중심은 법선 반대쪽으로
+    두께의 절반만큼 내린다.
+    """
+    from pydrake.math import RotationMatrix
+
+    size = np.asarray(TABLE_SIZE_M, dtype=float)
+    if calibration is None:
+        return tuple(size), RigidTransform(np.asarray(TABLE_CENTER_M, float))
+
+    normal = calibration["normal"]
+    # 명목 중심의 x,y 를 유지한 채, 그 자리에서 잰 평면의 높이를 구한다.
+    x, y = TABLE_CENTER_M[0], TABLE_CENTER_M[1]
+    z_top = -(calibration["offset"] + normal[0] * x + normal[1] * y) / normal[2]
+    top = np.array([x, y, z_top])
+    # z 축이 법선을 향하는 회전 (기울기 반영).
+    z_axis = normal / np.linalg.norm(normal)
+    helper = np.array([1.0, 0.0, 0.0])
+    if abs(z_axis @ helper) > 0.9:
+        helper = np.array([0.0, 1.0, 0.0])
+    x_axis = np.cross(helper, z_axis); x_axis /= np.linalg.norm(x_axis)
+    y_axis = np.cross(z_axis, x_axis)
+    rotation = RotationMatrix(np.column_stack([x_axis, y_axis, z_axis]))
+    centre = top - z_axis * (size[2] / 2.0)
+    return tuple(size), RigidTransform(rotation, centre)
 
 # 로봇은 테이블이 아니라 앞쪽 긴 변의 독립 받침대 위에 선다.
 PEDESTAL_SIZE_M = (0.22, 0.22, ROBOT_BASE_XYZ_M[2])
@@ -218,6 +315,24 @@ IK_SLACK_M = 0.001
 
 ANGLE_TOL_RAD = np.deg2rad(1.0)
 
+# 물체 관절각을 얼마나 못 믿는가 (FoundationPose 실측 오차).
+#
+# 창 2 가 읽어 주는 각도에는 1~3 도의 오차가 있다. 충돌 검사는 명목 각도
+# 하나만 보므로, 그 오차만큼 부위 끝단이 움직인 자리는 검사되지 않는다.
+# 램프에서 얼마나 움직이는지 재보면:
+#
+#     head (joint_2 에서 최대 지레팔 304 mm)   1도 5.3 mm   2도 10.6   3도 15.9
+#     base (joint_1 에서 최대 지레팔 151 mm)   1도 2.6 mm   2도  5.3   3도  7.9
+#
+# 3 도면 head 끝이 15.9 mm 움직인다 — MIN_DISTANCE_M(10 mm) 보다 크다.
+# 즉 "여유 10 mm" 라고 판정한 자세가 실제로는 6 mm 파고들 수 있다.
+#
+# 그래서 IK 로 찾은 팔 자세를 물체 각도 +-여유의 **모서리에서 다시 검사**한다.
+# IK 를 다시 풀지 않고 arm_pose_is_clear 로 간격만 재므로 값이 싸다.
+# 0 으로 두면 예전 동작(명목 각도만 검사).
+ANGLE_MARGIN_RAD = np.deg2rad(
+    float(os.environ.get("PIVOT_ANGLE_MARGIN_DEG", "0.0")))
+
 # 물체를 그리퍼에 어떻게 물릴지.
 #
 # 죠는 그리퍼의 x 방향으로 열린다. 그러므로 물체에서 **죠가 물어야 할 축**
@@ -262,6 +377,22 @@ def grasp_axes(spec):
 # 25/25 가 통과했다. 그래서 기본을 z 로 둔다.
 GRASP_LONG_AXIS = "z"
 
+# 그런데 "z" 는 **사슬의 끝을 잡을 때만** 맞는 규약이다. 파지점 뒤로는
+# 그리퍼 몸통(0~147 mm)과 AFT200 마운트(147~199 mm)가 있으므로, 파지점
+# 뒤쪽에 물체가 있으면 안 된다.
+#
+#   2link  parent  75 mm, 파지점이 끝면   -> 뒤쪽 0 mm      z 로 안전
+#   3link  link0  150 mm, 파지점이 끝면   -> 뒤쪽 0 mm      z 로 안전
+#   램프   support 330 mm, 파지점이 한가운데, 게다가 base 와 head 가
+#          **양쪽으로** 갈라진 트리 -> 부호를 어떻게 잡아도 한쪽이 뒤로 간다
+#            head 를 +z 로 두면 base 가 마운트 안으로 112 점
+#            base 를 +z 로 두면 head 가 그리퍼 몸통 안으로 481 점
+#
+# 갈래 구조는 장축을 죠에 **가로질러**(y) 두어야 양쪽이 다 옆으로 빠진다.
+# 전역으로 y 를 주면 안 된다 — 한 방향 사슬인 3link 는 y 로 두면 안전한
+# 시작 자세가 아예 없었다 (위 주석).
+GRASP_LONG_AXIS_BY_OBJECT = {"desklamp": "y"}
+
 
 def grasp_rotation(spec, long_axis=None):
     """물체 좌표계를 그리퍼 좌표계로 보내는 회전 R_GO.
@@ -270,7 +401,9 @@ def grasp_rotation(spec, long_axis=None):
     GRASP_LONG_AXIS 에 따라 y 또는 z 로 보낸다.
     """
     jaw, length = grasp_axes(spec)
-    long_axis = long_axis or GRASP_LONG_AXIS
+    long_axis = (long_axis
+                 or GRASP_LONG_AXIS_BY_OBJECT.get(getattr(spec, "key", None))
+                 or GRASP_LONG_AXIS)
     jaw_vector = np.asarray(jaw, dtype=float)
     long_vector = np.asarray(length, dtype=float)
     jaw_vector = jaw_vector / np.linalg.norm(jaw_vector)
@@ -287,6 +420,39 @@ def grasp_rotation(spec, long_axis=None):
         basis[:, 2] = np.cross(basis[:, 0], basis[:, 1])
     roll = np.deg2rad(GRASP_ROLL_DEG.get(spec.key, 0.0))
     return RotationMatrix.MakeXRotation(roll) @ RotationMatrix(basis.T)
+
+
+def load_measured_grasp(explicit=None):
+    """잰 파지 변환 X_G_O (4x4) 를 찾는다. 없으면 None -> 짐작으로 간다.
+
+    찾는 순서
+      1) 인자로 직접 준 것 (4x4 배열 또는 파일 경로)
+      2) 환경변수 PIVOT_GRASP_FILE
+      3) 환경변수 PIVOT_SESSION 아래의 grasp.json
+    """
+    import json
+
+    if explicit is not None and not isinstance(explicit, (str, Path)):
+        return np.asarray(explicit, dtype=float).reshape(4, 4)
+    candidates = []
+    if explicit is not None:
+        candidates.append(Path(explicit))
+    env = os.environ.get("PIVOT_GRASP_FILE")
+    if env:
+        candidates.append(Path(env))
+    session = os.environ.get("PIVOT_SESSION")
+    if session:
+        candidates.append(Path(session) / "grasp.json")
+    for path in candidates:
+        if not path.is_file():
+            continue
+        data = json.loads(path.read_text())
+        matrix = data.get("X_G_O", data) if isinstance(data, dict) else data
+        matrix = np.asarray(matrix, dtype=float).reshape(4, 4)
+        print(f"  파지 변환: **잰 값** {path}"
+              f"  위치 {np.round(1000 * matrix[:3, 3], 1)} mm")
+        return matrix
+    return None
 
 
 def look_at_pose(eye, target):
@@ -365,7 +531,7 @@ def _add_object(plant, spec, densities, joint_limits_rad):
 
 
 def build_scene(spec, densities=None, joint_limits_rad=None,
-                builder=None, include_visuals=True, gripper="robotiq2f85"):
+                builder=None, include_visuals=True, gripper="robotiq2f85", grasp_transform=None):
     """RB5 + AFT200 + 그리퍼 + 물체(그리퍼에 고정)를 한 plant 로 만든다.
 
     gripper 는 grippers.GRIPPERS 의 키다. 개구량이 달라 잡을 수 있는 물체가
@@ -431,14 +597,31 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
     gripper = gripper_model
 
     # --- 물체를 그리퍼 파지점에 고정 (운동학적 파지) ---
+    #
+    # 여기가 이 파일에서 제일 조용히 틀리는 자리다. 물체가 그리퍼의
+    # **어디에** 붙어 있는지를 정하는데, 기본값은 pinch_grasp() 가 볼록
+    # 조각에서 짐작한 값이다. 시뮬에서는 그 짐작이 곧 정답이라 절대 안
+    # 틀리지만(렌치도 같은 용접에서 나온다), 실물에서는 사람이 놓은 자리와
+    # 맞아야 한다. 2 mm 어긋나면 밀도가 113 % 틀린다 (study_grasp.py).
+    #
+    # 그래서 **잰 값이 있으면 그것이 이긴다.** tools/grasp_measure.py 가
+    # 창 2 의 물체 자세 + 핸드아이 + 로봇 q 로 X_G_O 를 계산해 세션에
+    # 남긴다. 그 값이 오면 grasp_rotation / GRASP_LONG_AXIS /
+    # base_bbox_center_in_sensor_mm 같은 짐작이 전부 안 쓰인다.
     payload, parts, sensor_frame = _add_object(
         plant, spec, densities, joint_limits_rad)
-    X_pgc_sensor = RigidTransform(grasp_rotation(spec), [0.0, 0.0, tcp_z])
-    X_sensor_base = RigidTransform(
-        np.array(spec.base_bbox_center_in_sensor_mm) * MM)
+    measured = load_measured_grasp(grasp_transform)
+    if measured is not None:
+        X_gripper_object = RigidTransform(
+            RotationMatrix(measured[:3, :3]), measured[:3, 3])
+    else:
+        X_pgc_sensor = RigidTransform(grasp_rotation(spec), [0.0, 0.0, tcp_z])
+        X_sensor_base = RigidTransform(
+            np.array(spec.base_bbox_center_in_sensor_mm) * MM)
+        X_gripper_object = X_pgc_sensor @ X_sensor_base
     plant.WeldFrames(plant.GetFrameByName(gripper_spec.base_frame, gripper),
                      parts[spec.parts[0].name].body_frame(),
-                     X_pgc_sensor @ X_sensor_base)
+                     X_gripper_object)
 
     # --- 실험실 고정물: 테이블, 로봇 받침대, 카메라 3대 ---
     fixtures = plant.AddModelInstance("lab")
@@ -457,8 +640,18 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
         plant.WeldFrames(plant.world_frame(), body.body_frame(), pose)
         return body
 
-    add_fixture("table", Box(*TABLE_SIZE_M),
-                RigidTransform(np.array(TABLE_CENTER_M)),
+    table_calibration = load_table_calibration()
+    table_size, table_pose = table_box_pose(table_calibration)
+    if table_calibration is None:
+        print(f"  [주의] 테이블이 **명목값**입니다 (도면 {1000*TABLE_TOP_Z_M:.0f} mm)."
+              f" 실측을 쓰려면 calibrate_table_rgbd.py 로"
+              f" {table_calibration_path()} 를 만드세요")
+    else:
+        print(f"  테이블 실측 반영: 윗면 z {1000*table_pose.translation()[2] + 500*table_size[2]:.1f} mm"
+              f" (명목 {1000*TABLE_TOP_Z_M:.0f}), 기울기"
+              f" {table_calibration['tilt_deg']:.2f} deg,"
+              f" rms {table_calibration['rms_mm']:.2f} mm")
+    add_fixture("table", Box(*table_size), table_pose,
                 [*_LAB["table"]["surface_rgb"], 1.0])
     add_fixture("pedestal", Box(*PEDESTAL_SIZE_M),
                 RigidTransform(np.array(PEDESTAL_CENTER_M)),
@@ -555,7 +748,7 @@ class PoseChecker:
 
     def __init__(self, spec, densities=None, joint_limits_rad=None,
                  min_distance_m=MIN_DISTANCE_M, seed_q=None, ik_restarts=4,
-                 gripper="robotiq2f85"):
+                 gripper="robotiq2f85", angle_margin_rad=ANGLE_MARGIN_RAD):
         scene = build_scene(spec, densities, joint_limits_rad,
                             include_visuals=False, gripper=gripper)
         self.spec = spec
@@ -568,6 +761,8 @@ class PoseChecker:
         # 요구하는 값'. 둘을 나눠 두어야 IK 해가 검사를 통과한다.
         self.min_distance_m = min_distance_m
         self.ik_distance_m = min_distance_m + IK_SLACK_M
+        # 물체 각도를 못 믿는 폭. 창 2 (FoundationPose) 의 실측 오차를 넣는다.
+        self.angle_margin_rad = float(angle_margin_rad)
         # 최소거리 제약은 SceneGraph 질의가 필요하므로 diagram 을 완성한 뒤
         # 그 안의 plant 서브컨텍스트를 써야 한다.
         self.diagram = scene["builder"].Build()
@@ -758,10 +953,31 @@ class PoseChecker:
                 return False
         return True
 
+    def angle_corners(self, theta):
+        """물체 각도 오차의 모서리들. 여유가 0 이면 명목 각도 하나뿐."""
+        theta = np.atleast_1d(np.asarray(theta, dtype=float))
+        if self.angle_margin_rad <= 0.0:
+            return [theta]
+        deltas = itertools.product(*[(-self.angle_margin_rad,
+                                      self.angle_margin_rad)] * theta.size)
+        return [theta] + [theta + np.asarray(d) for d in deltas]
+
     def solutions_for(self, theta):
-        """중력 3방향의 팔 자세. 각도만으로 결과가 정해지도록 푼다."""
+        """중력 3방향의 팔 자세. 각도만으로 결과가 정해지도록 푼다.
+
+        angle_margin_rad > 0 이면, 찾은 팔 자세가 물체 각도 +-여유의
+        모든 모서리에서도 간격을 지켜야 통과시킨다 (ANGLE_MARGIN_RAD 설명).
+        """
         self._last_solution = None
-        return {tuple(g): self.solve_robust(theta, g) for g in alg.G_DIRS}
+        found = {}
+        for g in alg.G_DIRS:
+            arm_q = self.solve_robust(theta, g)
+            if arm_q is not None and self.angle_margin_rad > 0.0:
+                if not all(self.arm_pose_is_clear(arm_q, corner)
+                           for corner in self.angle_corners(theta)):
+                    arm_q = None
+            found[tuple(g)] = arm_q
+        return found
 
 
 # ---------------------------------------------------------------------------

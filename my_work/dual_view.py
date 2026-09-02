@@ -21,11 +21,13 @@ ROS1 토픽으로 바꿔 끼우면 오른쪽 화면이 그대로 실물 로봇�
 """
 
 import argparse
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
-from pydrake.geometry import Rgba, StartMeshcat
+from pydrake.geometry import Box, Mesh, Rgba, Sphere, StartMeshcat
+from pydrake.math import RigidTransform, RotationMatrix
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.visualization import AddDefaultVisualization
 
@@ -34,6 +36,7 @@ import density_id_objects as obj
 import angle_aware as aa
 import design_core as dc
 import explore_view as ev
+import gripper_hw as gh
 import path_planning as pp
 import robot_scene as rs
 from operator_ui import ANGLE_TOL_DEG, Console
@@ -47,12 +50,26 @@ DEFAULT_MOVE_DURATION_S = 8.0
 DEFAULT_MAX_JOINT_SPEED_DEG = 15.0
 DEFAULT_FRAME_DT_S = 0.03
 
+# 파지 안내 그림. 작업자 화면(콘솔) 위에 그리퍼 기준 좌표계로 그린다.
+GRASP_GUIDE_PATH = "/grasp_guide"
+GRASP_NUDGE_M = 0.002          # '조금 열기/닫기' 한 번의 크기
+# 2F-85 패드를 표시용으로 근사한 크기 [m] (두께, 폭, 길이).
+PAD_SIZE_M = (0.004, 0.022, 0.0375)
+
 
 # ---------------------------------------------------------------------------
 # 준비 — 후보 자세와 팔 자세를 미리 계산해 둔다
 # ---------------------------------------------------------------------------
 # 전용 자세로 옮겨서 얻는 이득이 이 배수보다 작으면 그냥 파지 자세에서 읽는다.
 MIN_VIEW_GAIN = 1.15
+
+
+class NoFeasibleAngle(RuntimeError):
+    """이 파지 자세에서 측정 가능한 각도가 하나도 없다.
+
+    프로그램을 죽일 것이 아니라 사용자에게 "다시 물려 주세요" 를 띄워야 하는
+    상황이다. 창 1 이 이것을 잡아 안내로 바꾼다.
+    """
 
 
 def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
@@ -71,7 +88,12 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
     # 초기값. 정답은 여기에 절대 들어가지 않는다.
     #   weight : 물체를 저울에 올려 총무게만 잰 상태 -> 평균 밀도가 초기값
     #   mesh   : 메시 외형 부피만 아는 상태 -> 아주 넓은 사전분포
-    if prior == "weight":
+    if prior == "water":
+        # 물체와 무관한 고정 기준에서 출발한다. 화면(창 4)에서 "물보다
+        # 무겁다/가볍다" 로 바로 읽히고, 물체가 바뀌어도 출발점이 같다.
+        mu, _ = obj.apply_water_prior(spec)
+        print(f"  초기값: 모든 부위를 물 밀도 {mu[0]:.0f} kg/m^3 로 시작")
+    elif prior == "weight":
         # 저울에는 힌지까지 붙은 채로 올라간다.
         total = obj.assembled_mass_kg(spec, rho_gt)
         mu, _, mean_density = obj.apply_weight_prior(spec, total)
@@ -125,9 +147,26 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
             q[joint.position_start()] = value
         planner.set_fixed(q)
         home = np.array(start_q)[indices]
-        if all(planner.plan(home, np.array(arm)[indices]) is not None
-               and planner.plan(np.array(arm)[indices], home) is not None
-               for arm in arm_solutions[key].values()):
+        # **실행과 같은 사슬**을 검사한다.
+        #
+        # 실행부(explore_once)는 중력 3방향을 home 에 안 들르고 이어서 돈다:
+        #     start -> g1 -> g2 -> g3
+        # 그런데 예전에는 여기서 home<->g_k 왕복(별 모양)만 검사했다. 별의
+        # 모든 간선이 있어도 g1->g2 간선은 없을 수 있다. 그러면 필터를
+        # 통과한 각도가 실행 중에 막혀 **라운드가 통째로 날아간다** — 그것도
+        # 로봇이 이미 움직이고 렌치를 한두 개 읽은 뒤에.
+        #
+        # 그래서 실제로 지날 간선만, 실제로 지날 순서로 검사한다.
+        # home 왕복도 함께 본다 — 사슬 간선이 막혔을 때 되돌아갈 길이다.
+        legs = [np.array(arm)[indices]
+                for arm in arm_solutions[key].values()]
+        chain = [home] + legs + [home]
+        ok = all(planner.plan(chain[i], chain[i + 1]) is not None
+                 for i in range(len(chain) - 1))
+        if ok:
+            ok = all(planner.plan(home, leg) is not None
+                     and planner.plan(leg, home) is not None for leg in legs)
+        if ok:
             connected.append(theta)
         else:
             dropped.append(np.degrees(theta))
@@ -250,8 +289,12 @@ class PlannerScreen:
         self.player = ev.Player(spec, meshcat, plant, bodies,
                                 self.context, self.diagram)
 
+        self.draw_grasp_marker()
         self.Sigma = alg.SIGMA0.copy()
         self.rho_hat = alg.MU0.copy()
+        # 탐색이 끝난 뒤 "얼마나 좋아졌나" 를 그리려면 출발점을 남겨야 한다.
+        # MU0 는 물체를 바꿔 끼울 때 갈아엎히는 전역값이라 여기서 복사해 둔다.
+        self.rho_prior = alg.MU0.copy()
         self.blocks = []
         self.rounds = []          # (measured_theta, y) — TLS 가 쓴다
         self.inflate = 1.0
@@ -261,8 +304,42 @@ class PlannerScreen:
     def show(self, theta, g_hat=(0.0, 0.0, -1.0)):
         self.player.show(theta, g_hat)
 
-    def half_width(self):
+    def draw_grasp_marker(self):
+        """계획 화면(창 1)에도 파지점을 찍는다.
+
+        작업자는 이 화면에서 '어느 각도로 맞출까' 를 보고, 카메라 화면(창 2)
+        에서 '어디를 잡을까' 를 본다. 두 화면이 같은 점을 가리키는지 눈으로
+        맞춰 볼 수 있어야 해서 여기에도 같은 표시를 둔다.
+
+        파지점은 **센서 프레임 원점**이다. 이 화면의 물체는 base 부위의 몸체
+        프레임이 원점이므로, 거기서 base_bbox_center_in_sensor_mm 만큼
+        되돌리면 파지점이 된다 (robot_scene._add_object 의 obj_sensor 와 같다).
+        """
+        origin = -np.array(self.spec.base_bbox_center_in_sensor_mm) * rs.MM
+        jaw, _ = rs.grasp_axes(self.spec)
+        jaw = np.asarray(jaw, dtype=float)
+        jaw = jaw / np.linalg.norm(jaw)
+        half = 0.5 * rs.jaw_dimension_m(self.spec) + 0.5 * PAD_SIZE_M[0]
+
+        self.meshcat.SetObject(f"{GRASP_GUIDE_PATH}/point", Sphere(0.006),
+                               Rgba(0.95, 0.10, 0.08, 1.0))
+        self.meshcat.SetTransform(f"{GRASP_GUIDE_PATH}/point",
+                                  RigidTransform(origin))
+        for sign, name in ((1.0, "pad_a"), (-1.0, "pad_b")):
+            node = f"{GRASP_GUIDE_PATH}/{name}"
+            self.meshcat.SetObject(node, Box(*PAD_SIZE_M),
+                                   Rgba(0.16, 0.17, 0.20, 0.85))
+            self.meshcat.SetTransform(
+                node, RigidTransform(origin + sign * half * jaw))
+        print(f"  [1] 파지점 표시: 부위 {self.spec.parts[0].name},"
+              f" 단면 {1000*rs.jaw_dimension_m(self.spec):.1f} mm,"
+              f" 개구 {1000*self.setup['finger']:.1f} mm")
+
+    def half_width(self, per_part=False):
         """정지 조건. GT 는 쓰지 않는다.
+
+        per_part=True 면 부위별 상대 반폭 배열을 그대로 돌려준다 (창 4 가
+        부위마다 막대를 그리는 데 쓴다). 기본값은 예전대로 스칼라 하나다.
 
         variance : 사후 공분산만 (현행)
         residual : + 잔차가 모형보다 크면 그만큼 부풀린다
@@ -271,9 +348,11 @@ class PlannerScreen:
         inflate = 1.0 if self.stop_rule == "variance" else self.inflate
         bias = self.bias_cov if self.stop_rule == "bias" else None
         # 힌지처럼 이미 아는 양은 정지 판단에서 뺀다 (design_core.stopping_width)
-        return dc.stopping_width(
-            dc.half_width(self.Sigma, self.rho_hat, Cov_bias=bias,
-                          inflate=inflate), len(self.spec.parts))
+        half = dc.half_width(self.Sigma, self.rho_hat, Cov_bias=bias,
+                             inflate=inflate)
+        if per_part:
+            return np.asarray(half)[:len(self.spec.parts)]
+        return dc.stopping_width(half, len(self.spec.parts))
 
     def converged(self):
         return self.half_width() <= self.target
@@ -380,11 +459,16 @@ class PlannerScreen:
             q[joint.position_start()] = value
         planner.set_fixed(q)
         home = np.array(self.setup["start_q"])[indices]
-        for arm in solutions.values():
-            goal = np.array(arm)[indices]
-            if planner.plan(home, goal) is None:
+        legs = [np.array(arm)[indices] for arm in solutions.values()]
+        # prepare() 와 같은 기준: 실행할 사슬 + home 왕복(되돌아갈 길).
+        chain = [home] + legs + [home]
+        for i in range(len(chain) - 1):
+            if planner.plan(chain[i], chain[i + 1]) is None:
                 return False
-            if planner.plan(goal, home) is None:
+        for leg in legs:
+            if planner.plan(home, leg) is None:
+                return False
+            if planner.plan(leg, home) is None:
                 return False
         return True
 
@@ -436,11 +520,21 @@ class PlannerScreen:
                 best, best_score, best_sol = (np.atleast_1d(candidate),
                                               self.score(candidate), solutions)
                 break
-        if best is None:                # 그래도 없으면 검증 없이 최고값
+        if best is None:
+            # 예전에는 여기서 "검증 없이 최고값" 을 그냥 보여줬다. 그러면
+            # 사용자는 그 각도가 미검증인 줄 모르고 물체를 그 각도로 맞추고,
+            # 로봇은 경로 계획에서 멈춘다. 팔 자세(best_sol)가 없으므로
+            # 어차피 측정도 못 한다. 추천할 것이 없으면 없다고 말해야 한다.
             candidates = self.setup["feasible"]
             scores = [self.score(t) for t in candidates]
-            best = np.atleast_1d(candidates[int(np.argmax(scores))])
-            best_score, best_sol = float(np.max(scores)), None
+            hint = np.round(np.degrees(np.atleast_1d(
+                candidates[int(np.argmax(scores))])), 1)
+            raise NoFeasibleAngle(
+                f"이 파지 자세에서는 측정 가능한 각도가 없습니다"
+                f" ({len(blocked)}곳이 충돌·도달·경로 검사에 막힘).\n"
+                f"  준비 단계에서 통과했던 {hint} 도 지금은 막힙니다 —\n"
+                f"  물체가 처음 계획과 다르게 물려 있다는 뜻입니다.\n"
+                f"  물체를 다시 물리거나, 파지 자리를 팔의 더 끝쪽으로 옮기세요.")
         self.show(best)
         return best, best_score, best_sol
 
@@ -608,10 +702,12 @@ class RobotScreen:
                  min_distance_m=rs.MIN_DISTANCE_M, plan_iters=20000,
                  settle_s=0.3, grasp_error_m=None,
                  max_joint_speed_deg=DEFAULT_MAX_JOINT_SPEED_DEG,
-                 check_motion=True):
+                 check_motion=True, gripper=None):
         self.spec = spec
         self.setup = setup
         self.meshcat = meshcat                      # None 이면 로봇 화면 없음
+        # 실물 그리퍼. None 이면 사람이 손으로 여닫는다 (예전 동작).
+        self.gripper = gripper
         # 버튼·슬라이더는 콘솔(작업자 UI 화면) 위에 만들어진다. 로봇 화면과
         # 다른 Meshcat 이므로, 값을 읽을 때도 반드시 이쪽을 봐야 한다.
         # 로봇 화면은 배포 모드에서 아예 없을 수도 있다.
@@ -658,6 +754,20 @@ class RobotScreen:
         self.object_joints = [self.plant.GetJointByName(j.name, scene["payload"])
                               for j in spec.joints]
         self.payload = scene["payload"]
+        # 파지 안내 화면을 그리는 데 필요한 것들. 씬이 물체를 그리퍼에
+        # **용접해** 붙였으므로, 그리퍼 기준 물체 자세가 곧 "이렇게 물려야
+        # 한다" 는 답이다. 사람에게 보여줄 그림을 여기서 그대로 뽑아 쓴다.
+        self.gripper_model = scene["gripper"]
+        self.gripper_spec = scene["gripper_spec"]
+        self.part_bodies = scene["parts"]
+        self.sensor_frame = scene["sensor_frame"]
+        self.jaw_opening_m = scene["jaw_opening_m"]
+        self.tcp_z_m = scene["tcp_z_m"]
+        # 실제로 물었을 때의 개구량. 파지 단계에서 채워지고 보고에 쓰인다.
+        self.grasp_report = None
+        # 파지력이 충분한지 가늠하는 데 쓴다 (실물에서는 저울로 잰 값).
+        self.object_mass_kg = float(obj.assembled_mass_kg(spec,
+                                                          setup["rho_gt"]))
         self.view_poses = bool(setup.get("view_poses", False))
         # 시뮬레이션에서 '파지점이 어긋난 척' 하기 위한 값. 실물에서는 None
         # (실제로 어긋나 있으므로 흉내낼 필요가 없다).
@@ -805,6 +915,22 @@ class RobotScreen:
             for joint, value in zip(self.arm_joints, actual):
                 self.q[joint.position_start()] = value
             self.publish()
+            # 실물에서는 follow() 가 도착할 때까지 막히므로 프레임마다
+            # 간격을 볼 수 없다 (그 감시는 시뮬 분기에만 있다). 대신
+            # **도착한 자리**에서 한 번 잰다. 로봇이 계획한 곳에 안 갔거나
+            # 책상 캘리브레이션이 틀렸으면 여기서 드러난다.
+            if self.check_motion:
+                distance, pair = self.clearance()
+                gap = np.degrees(np.abs(actual - target)).max()
+                if gap > 1.0:
+                    print(f"[진단] 도착 자세가 목표와 {gap:.1f} deg 다릅니다")
+                if distance < 0.0:
+                    print(f"[로봇] **경고: 도착 자세가 {1000*abs(distance):.1f} mm"
+                          f" 겹칩니다** {pair} — 모형과 실물이 어긋났습니다."
+                          f" 계속하기 전에 확인하세요.")
+                elif distance < self.min_distance_m:
+                    print(f"[로봇] 주의: 도착 자세 간격 {1000*distance:.1f} mm"
+                          f" (요구 {1000*self.min_distance_m:.0f}) {pair}")
             return True
 
         worst, worst_pair = np.inf, None
@@ -911,6 +1037,10 @@ class RobotScreen:
         if not self.manual:
             self.adjust_automatically(target_deg)
             return
+        if self.pose_sensor is not None:
+            # 실물: 각도는 사람이 아니라 FoundationPose 가 읽는다.
+            self.adjust_by_pose(target_deg, names)
+            return
         print(f"[로봇] 허용 오차 +/- {ANGLE_TOL_DEG} deg."
               f" 슬라이더로 맞춘 뒤 ①, ② 를 누르세요.")
         self.adjust_manually(target_deg, names)
@@ -930,10 +1060,141 @@ class RobotScreen:
             self.publish()
             time.sleep(self.adjust_dt)
         self.object_q_deg = target.copy()
+        # 모의 트래커에게도 '실물 관절이 여기로 갔다' 고 알려 준다. 안 그러면
+        # 뒤이은 measure_angles 가 읽을 진실이 없다.
+        rehearse = getattr(self.pose_sensor, "set_truth", None)
+        if rehearse is not None:
+            rehearse(self.object_q_deg)
         time.sleep(self.adjust_hold)
         print(f"[로봇] 조정 완료 — 손을 뗀 것으로 간주하고 이동합니다")
 
+    def read_pose_deg(self, n_samples=1):
+        """FoundationPose 가 읽은 지금 관절각 [deg]. 못 읽으면 None.
+
+        판정에 쓸 때는 여러 번 읽어 **중앙값**을 쓴다. 한 샘플로 판정하면
+        트래커 잡음 하나에 통과/불통과가 뒤집힌다.
+        """
+        readings = []
+        for _ in range(max(1, int(n_samples))):
+            try:
+                angles, _ = self.pose_sensor.object_joint_deg()
+            except Exception as exc:                   # noqa: BLE001
+                self._pose_error = str(exc)
+                return None
+            readings.append(np.atleast_1d(np.asarray(angles, dtype=float)))
+            if n_samples > 1:
+                time.sleep(0.02)
+        self._pose_error = None
+        return np.median(np.vstack(readings), axis=0)
+
+    def adjust_by_pose(self, target_deg, names):
+        """실물용 조정 단계 — 각도를 **FoundationPose 로 읽는다.**
+
+        슬라이더를 쓰면 안 되는 이유. 실물에서 슬라이더는 아무것도 안
+        움직인다. 작업자가 손으로 관절을 돌린 뒤 "몇 도로 맞췄다" 를 **눈대중으로
+        입력하는** 칸이 될 뿐이고, 그러면 통과 판정이 사람의 짐작 위에서
+        일어난다. 정작 추정식에는 FoundationPose 값이 들어가므로, 통과한
+        각도와 쓰이는 각도가 서로 다른 값이 된다.
+
+        그래서 여기서는 트래커가 읽은 값으로 화면을 갱신하고, 그 값으로
+        허용 오차를 판정한다. 사람이 하는 일은 물체를 돌리는 것과, 다 됐다고
+        누르는 것뿐이다.
+        """
+        self.console.clear()
+        self.console.clear_sliders()
+        # 리허설(모의 트래커)에서는 슬라이더가 **실물 관절을 대신** 돌린다.
+        # 실물에서는 이 슬라이더가 없다 — 사람이 물체를 직접 돌린다.
+        rehearse = getattr(self.pose_sensor, "set_truth", None)
+        sliders = []
+        if rehearse is not None:
+            rehearse(self.object_q_deg)
+            for name, value, (lo, hi) in zip(names, self.object_q_deg,
+                                             self.limits_deg):
+                sliders.append(self.console.slider(
+                    f"{name} [deg] (리허설: 실물 관절 대신)", lo, hi,
+                    float(value)))
+        for name, value in zip(names, target_deg):
+            self.console.button(f"목표: {name} = {value:.1f} deg")
+        done = self.console.button("① 조정 완료 — 각도 확인 (FoundationPose)")
+        print(f"[로봇] 허용 오차 +/- {ANGLE_TOL_DEG} deg."
+              f" **각도는 FoundationPose 가 읽습니다** — 물체를 손으로 돌리면"
+              f" 화면의 물체가 따라 움직입니다. 다 맞으면 ① 을 누르세요.")
+        if rehearse is not None:
+            print("[로봇] (리허설) 슬라이더가 실물 관절 자리를 대신합니다."
+                  " 실물에서는 이 슬라이더가 없습니다.")
+
+        target = np.asarray(target_deg, dtype=float)
+        self._pose_error = None
+        last_print, last_error = 0.0, None
+        while True:
+            if rehearse is not None:
+                rehearse([self.ui.GetSliderValue(n) for n in sliders])
+            live = self.read_pose_deg()
+            if live is None:
+                # 트래커가 죽었는데 마지막 값으로 계속 그리면 사람은 잘
+                # 맞춰지고 있다고 믿는다. 조용히 넘어가면 안 된다.
+                if time.time() - last_print > 2.0:
+                    print(f"[로봇] FoundationPose 를 못 읽습니다:"
+                          f" {self._pose_error}")
+                    last_print = time.time()
+                time.sleep(0.2)
+                continue
+            self.set_object_deg(live)
+            self.publish()
+            error = np.abs(live - target)
+            inside = bool(np.all(error <= ANGLE_TOL_DEG))
+            # 신호등으로 '지금 범위 안인가' 를 보여준다. 터미널을 안 봐도
+            # 물체를 돌리면서 알 수 있어야 한다.
+            if inside != last_error:
+                self.console.stopped(
+                    f"각도 맞음 — ① 을 누르세요 {np.round(live, 1)} deg"
+                    if inside else
+                    f"각도를 맞추는 중 {np.round(live, 1)} deg"
+                    f" (목표 {np.round(target, 1)})")
+                last_error = inside
+            if time.time() - last_print > 1.0:
+                print(f"[로봇] FoundationPose {np.round(live, 1)} deg"
+                      f"  목표 {np.round(target, 1)}"
+                      f"  오차 {np.round(error, 1)}"
+                      f"  {'범위 안' if inside else '아직'}")
+                last_print = time.time()
+
+            if self.ui.GetButtonClicks(done) > 0:
+                # 판정만은 여러 샘플의 중앙값으로 한다.
+                settled = self.read_pose_deg(n_samples=5)
+                if settled is None:
+                    print(f"[로봇] 판정할 각도를 못 읽었습니다:"
+                          f" {self._pose_error}")
+                else:
+                    error = np.abs(settled - target)
+                    if np.all(error <= ANGLE_TOL_DEG):
+                        self.object_q_deg = settled
+                        print(f"[로봇] 각도 확인 {np.round(settled, 1)} deg"
+                              f" (오차 {np.round(error, 2)}) — FoundationPose")
+                        break
+                    print(f"[로봇] 목표와 다릅니다 — 오차"
+                          f" {np.round(error, 1)} deg")
+                self.console.clear()
+                for name, value in zip(names, target_deg):
+                    self.console.button(f"목표: {name} = {value:.1f} deg")
+                done = self.console.button(
+                    "① 조정 완료 — 각도 확인 (FoundationPose)")
+                last_error = None       # 신호등을 다시 그리게 한다
+            time.sleep(0.05)
+
+        self.console.clear()
+        self.console.clear_sliders()
+        confirm = self.console.button("② 물체에서 손을 뗐습니다 — 이동 시작")
+        print("[로봇] 손을 뗀 뒤 ② 를 누르기 전까지 로봇은 움직이지 않습니다.")
+        self.console.wait_for(confirm)
+        self.console.clear()
+
     def adjust_manually(self, target_deg, names):
+        """시뮬레이션용 — 슬라이더가 물체를 **실제로** 돌린다.
+
+        실물에서는 쓰이지 않는다 (adjust_by_pose 로 간다). 여기서 슬라이더는
+        '작업자가 손으로 돌린 결과' 를 대신하는 것이지 입력칸이 아니다.
+        """
         self.console.clear()
         self.console.clear_sliders()
         sliders = []
@@ -1000,8 +1261,84 @@ class RobotScreen:
               f" {np.round(np.degrees(actual), 1)} deg"
               f"  (시작 자세와 최대 {np.degrees(np.abs(actual - start)).max():.1f} deg 차이)")
 
+    # -- 파지 안내 그림 ------------------------------------------------
+    def _draw_guide_part(self, path, part, X_GP, rgba=None):
+        """부위 하나를 안내 화면에 그린다.
+
+        우선순위(색 조각 -> 메시 하나 -> AABB 상자)와 메시 보정은
+        density_id_objects.register_part_visual 과 같게 맞춘다. 안내 그림이
+        실제 씬과 다른 모양이면 안내가 아니라 오해가 된다.
+        """
+        X_mesh = RigidTransform(np.array(part.mesh_offset_m))
+        if str(part.visual_mesh or "").lower().endswith(".gltf"):
+            X_mesh = RigidTransform(RotationMatrix.MakeXRotation(-np.pi / 2),
+                                    np.array(part.mesh_offset_m))
+        if part.visual_pieces and rgba is None:
+            for index, (mesh_path, color) in enumerate(part.visual_pieces):
+                node = f"{path}/piece_{index}"
+                self.ui.SetObject(node, Mesh(str(mesh_path), 1.0), Rgba(*color))
+                self.ui.SetTransform(node, X_GP @ X_mesh)
+        elif part.visual_mesh:
+            self.ui.SetObject(path, Mesh(str(part.visual_mesh), 1.0),
+                              Rgba(*(rgba if rgba is not None else part.color)))
+            self.ui.SetTransform(path, X_GP @ X_mesh)
+        else:
+            dims = tuple(d * rs.MM for d in part.bbox_mm)
+            self.ui.SetObject(path, Box(*dims),
+                              Rgba(*(rgba if rgba is not None else part.color)))
+            self.ui.SetTransform(path, X_GP)
+
+    def draw_grasp_guide(self, opening_m):
+        """"물체가 죠 사이 어디에 앉아야 하는가" 를 그림으로 보여준다.
+
+        실물 배포에서는 로봇 화면이 없어서(meshcat=None) 작업자가 볼 3D 가
+        하나도 없었다. 그런데 파지 자세는 글로 설명하기 가장 어려운 것이다 —
+        어느 쪽이 위인지, 죠가 어느 축을 무는지, 파지점이 부위의 어디인지.
+        그래서 **그리퍼 기준 좌표계**를 원점으로 삼아, 씬이 용접해 둔 그대로의
+        물체와 죠 두 장을 작업자 화면에 따로 그린다.
+        """
+        if self.ui is self.meshcat:
+            return          # 로봇 화면과 같은 화면이면 실제 씬이 이미 보인다
+        self.plant.SetPositions(self.plant_context, self.q)
+        base = self.plant.GetFrameByName(self.gripper_spec.base_frame,
+                                         self.gripper_model)
+        X_GW = base.CalcPoseInWorld(self.plant_context).inverse()
+        for part in self.spec.parts:
+            X_GP = X_GW @ self.plant.EvalBodyPoseInWorld(
+                self.plant_context, self.part_bodies[part.name])
+            self._draw_guide_part(f"{GRASP_GUIDE_PATH}/{part.name}", part, X_GP)
+        # 파지점 = 센서 프레임 원점. 모든 모멘트팔의 기준이라 눈에 띄게 찍는다.
+        point = f"{GRASP_GUIDE_PATH}/point"
+        self.ui.SetObject(point, Sphere(0.005), Rgba(0.95, 0.10, 0.08, 1.0))
+        self.ui.SetTransform(point, X_GW @ self.sensor_frame.CalcPoseInWorld(
+            self.plant_context))
+        self.update_grasp_pads(opening_m)
+        self.ui.SetCameraPose([0.22, -0.24, self.tcp_z_m + 0.12],
+                              [0.0, 0.0, self.tcp_z_m])
+
+    def update_grasp_pads(self, opening_m):
+        """죠 두 장을 지금 개구량 자리에 다시 그린다.
+
+        죠 축은 그리퍼 x (robot_scene.grasp_rotation), 패드 면의 높이는
+        tcp_z 다. 그래서 이 두 상자 사이가 곧 실제 죠 사이다.
+        """
+        if self.ui is self.meshcat:
+            return
+        half = 0.5 * float(opening_m) + 0.5 * PAD_SIZE_M[0]
+        for sign, name in ((1.0, "pad_a"), (-1.0, "pad_b")):
+            node = f"{GRASP_GUIDE_PATH}/{name}"
+            self.ui.SetObject(node, Box(*PAD_SIZE_M),
+                              Rgba(0.16, 0.17, 0.20, 0.9))
+            self.ui.SetTransform(node, RigidTransform(
+                [sign * half, 0.0, self.tcp_z_m]))
+
+    def clear_grasp_guide(self):
+        if self.ui is not self.meshcat:
+            self.ui.Delete(GRASP_GUIDE_PATH)
+
+    # -- 파지 단계 -----------------------------------------------------
     def await_grasp(self):
-        """작업자가 물체를 그리퍼에 물리는 단계. 이 동안 로봇은 정지한다.
+        """작업자가 물체를 그리퍼에 물리는 단계. 이 동안 팔은 정지한다.
 
         왜 여기가 따로 있어야 하나. 시뮬레이션에서는 물체가 그리퍼에
         **용접돼** 있어 파지라는 단계가 아예 없다. 실물에서는 누군가
@@ -1012,23 +1349,39 @@ class RobotScreen:
             움직이면 계획과 실제가 다르고, 물체를 든 뒤 그 자세가 여유를
             지킨다는 보장도 없다.
           - 작업자가 로봇 옆에 있는 동안 로봇이 움직이면 안 된다.
+
+        그리퍼가 붙어 있으면(gripper != None) 여닫기까지 여기서 한다.
+        눈대중으로 물면 개구량이 계획과 달라지고, 개구량이 다르면 물체가
+        죠 안에서 다른 자리에 앉는다 — 그게 곧 파지점이 어긋나는 것이다
+        (study_grasp.py: 2 mm 에 밀도 오차 113 %).
         """
-        if self.driver is None or not self.manual:
+        if not self.manual or (self.driver is None and self.gripper is None):
             return
-        self.driver.stop()
-        self.driver.servo_off()
+        if self.driver is not None:
+            self.driver.stop()
+            self.driver.servo_off()
         self.console.stopped("로봇 정지 — 물체를 그리퍼에 물려 주세요")
-        print("[로봇] 서보를 껐습니다. 이제 다음을 하세요.")
-        print("        1) 그리퍼를 열고 물체의 파지 부위를 죠 사이에 넣습니다")
-        print(f"        2) 그리퍼를 개구 {1000*self.setup['finger']:.0f} 근처로"
-              f" 오므려 물립니다 (타어링 때와 같은 개구량이어야 합니다)")
-        print("        3) 물체에서 손을 떼고 작업영역 밖으로 나옵니다")
-        confirm = self.console.button("물체를 물렸고 손을 뗐습니다")
-        self.console.wait_for(confirm)
+        target_mm = 1000.0 * self.jaw_opening_m
+        if self.driver is not None:
+            print("[로봇] 팔 서보를 껐습니다. 팔은 움직이지 않습니다.")
+        # 처음에는 **계획 개구량** 자리에 죠를 그린다. 활성화 전의 실물
+        # 상태값은 아직 뜻이 없고, 사람이 맞춰야 할 것은 계획값이다.
+        self.draw_grasp_guide(self.jaw_opening_m)
+        if self.ui is not self.meshcat:
+            print("[파지] 작업자 화면에 파지 목표를 그렸습니다 —"
+                  " 빨간 점이 파지점, 검은 두 장이 죠입니다.")
+        if self.gripper is None:
+            self._await_grasp_by_hand(target_mm)
+        else:
+            self._await_grasp_with_gripper(target_mm)
+        self.clear_grasp_guide()
         self.console.clear()
-        self.driver.servo_on()
-        # 서보가 꺼진 동안 중력으로 처졌을 수 있다. 다시 읽는다.
-        self.sync_from_robot()
+        self.console.clear_sliders()
+
+        if self.driver is not None:
+            self.driver.servo_on()
+            # 서보가 꺼진 동안 중력으로 처졌을 수 있다. 다시 읽는다.
+            self.sync_from_robot()
         distance, pair = self.clearance()
         if distance < self.min_distance_m:
             print(f"[로봇] 경고: 지금 자세의 최소 간격이"
@@ -1036,6 +1389,242 @@ class RobotScreen:
                   f" {1000*self.min_distance_m:.0f} mm 에 못 미칩니다 {pair}."
                   f" 경로계획이 실패할 수 있습니다 —"
                   f" 팔을 조금 띄운 뒤 다시 시작하세요.")
+
+    def set_grip_force_newton(self, newton):
+        """다음 파지부터 쓸 힘을 [N] 으로 정한다. 바뀌었으면 알려 준다."""
+        counts = gh.counts_for_force(newton)
+        if counts == self.gripper.force:
+            return
+        was_holding = self.gripper.force
+        self.gripper.force = counts
+        self.report_grip_force()
+        if counts > was_holding:
+            print("          더 세게 물려면 '슬라이더 힘으로 다시 물기' 를"
+                  " 누르세요 — 힘은 다음 파지 명령부터 걸립니다.")
+
+    def report_grip_force(self):
+        """지금 파지력이 얼마이고 무게 대비 몇 배인지 적는다.
+
+        미끄럼 여유는 **하한**이다. 이 실험에서 진짜 문제는 미끄러지는 것이
+        아니라 물체가 죠 안에서 **돌아가는 것**이다 — 무게중심이 파지점에서
+        떨어진 만큼 모멘트가 걸리고, 라운드마다 조금씩 돌아가면 파지점
+        어긋남 delta 가 상수가 아니게 되어 grasp_map 이 그걸 못 푼다.
+        """
+        counts = self.gripper.force
+        newton = gh.force_newton(counts)
+        margin = gh.slip_margin(counts, self.object_mass_kg)
+        print(f"[그리퍼] 파지력 {newton:.0f} N (rFR {counts}/255)"
+              f" — 물체 {1000*self.object_mass_kg:.0f} g 무게의"
+              f" 약 {margin:.0f} 배 (마찰계수 0.5 가정)")
+        if newton < 100.0:
+            print("          [주의] 낮습니다. 손목을 돌리는 동안 물체가"
+                  " 죠 안에서 돌아갈 수 있습니다.")
+
+    def gripper_opening_m(self):
+        """지금 그리퍼 개구량 [m]. 못 읽으면 마지막으로 명령한 값."""
+        if self.gripper is None:
+            return self.jaw_opening_m
+        try:
+            return self.gripper.status().opening_m
+        except Exception as exc:                       # noqa: BLE001
+            print(f"[그리퍼] 상태를 못 읽었습니다: {exc}")
+            commanded = getattr(self.gripper, "commanded_opening_m", None)
+            return self.jaw_opening_m if commanded is None else commanded
+
+    def _await_grasp_by_hand(self, target_mm):
+        """그리퍼가 안 붙어 있을 때 — 예전대로 사람이 손으로 여닫는다."""
+        print("[파지] 그리퍼가 연결돼 있지 않습니다. 손으로 여닫으세요.")
+        print("        1) 그리퍼를 열고 물체의 파지 부위를 죠 사이에 넣습니다")
+        print(f"        2) 개구 {target_mm:.1f} mm 근처로 오므려 물립니다"
+              f" (타어링 때와 같은 개구량이어야 합니다)")
+        print("        3) 물체에서 손을 떼고 작업영역 밖으로 나옵니다")
+        confirm = self.console.button("물체를 물렸고 손을 뗐습니다")
+        self.console.wait_for(confirm)
+        self.grasp_report = dict(opening_m=self.jaw_opening_m, verified=False,
+                                 source="사람이 손으로")
+
+    def _await_grasp_with_gripper(self, target_mm):
+        """그리퍼를 화면에서 직접 여닫으며 파지점을 죠 가운데로 맞춘다."""
+        print(f"[파지] 계획된 개구량은 {target_mm:.1f} mm 입니다"
+              f" (물체 단면 {1000*rs.jaw_dimension_m(self.spec):.1f} mm)."
+              f" 물 때는 {1000*gh.CLAMP_SQUEEZE_M:.0f} mm 더 좁게 명령해"
+              f" 물체에 걸려 멈추게 합니다.")
+        print("        타어링을 이 개구량에서 했다면, 여기서도 같은 값으로"
+              " 물어야 렌치의 그리퍼 몫이 같아집니다.")
+        try:
+            # 활성화는 스트로크를 훑는 보정 동작이라 **물리기 전에** 한다.
+            self.gripper.activate()
+        except Exception as exc:                       # noqa: BLE001
+            print(f"[그리퍼] 활성화 실패: {exc}")
+            self._await_grasp_by_hand(target_mm)
+            return
+
+        self.console.clear()
+        self.console.clear_sliders()
+        slider = self.console.slider("개구 [mm]", 0.0,
+                                     1000.0 * self.gripper.max_opening_m,
+                                     float(target_mm))
+        # 파지력은 세션 중에 계속 만질 수 있어야 한다. 물체마다 적정값이
+        # 다르고 (얇은 플라스틱은 눌리고, 무거운 것은 돌아간다), 얼마나
+        # 조여야 하는지는 실제로 물어 보고 흔들어 봐야 안다.
+        force_slider = self.console.slider(
+            "파지력 [N]", gh.FORCE_MIN_N, gh.FORCE_MAX_N,
+            float(gh.force_newton(self.gripper.force)))
+        self.report_grip_force()
+        buttons = dict(
+            wide=self.console.button("① 활짝 열기 — 물체를 넣으세요"),
+            grip=self.console.button(f"② 계획 개구 {target_mm:.1f} mm 로 물기"),
+            regrip=self.console.button("슬라이더 힘으로 다시 물기"),
+            slide=self.console.button("슬라이더 개구로 이동"),
+            more=self.console.button(f"조금 열기 (+{1000*GRASP_NUDGE_M:.0f} mm)"),
+            less=self.console.button(f"조금 닫기 (-{1000*GRASP_NUDGE_M:.0f} mm)"),
+            done=self.console.button("③ 파지 완료 — 손을 뗐습니다"),
+        )
+        print("[파지] ① 로 열고, 파지점(빨간 점)이 죠 가운데 오게 물체를 넣은 뒤"
+              " ② 로 뭅니다. 다 되면 ③.")
+        # 버튼만으로는 미세 조작이 답답하다 (한 번에 2 mm 씩 뛴다). 터미널에서
+        # 키를 **누르고 있으면** 개구와 힘이 연속으로 바뀌게 같이 열어 둔다.
+        # 로그로 넘겨 돌리면(tty 아님) 조용히 꺼지고 버튼만 남는다.
+        keys = gh.KeyReader()
+        if keys.usable:
+            print("[파지] 이 터미널에서 키보드로도 조작할 수 있습니다:")
+            print(gh.KEY_HELP)
+
+        closed_once = False
+        override = False
+        state = None
+        with keys:
+            (closed_once, override, state) = self._grasp_loop(
+                keys, slider, force_slider, buttons, target_mm)
+        return self._finish_grasp(state)
+
+    def _grasp_loop(self, keys, slider, force_slider, buttons, target_mm):
+        """파지 단계의 조작 순환. 버튼과 키보드를 둘 다 받는다."""
+        clicks = {key: self.ui.GetButtonClicks(name)
+                  for key, name in buttons.items()}
+        closed_once = False
+        override = False
+        state = None
+        while True:
+            pressed = set()
+            for key, name in buttons.items():
+                count = self.ui.GetButtonClicks(name)
+                if count != clicks[key]:
+                    clicks[key] = count
+                    pressed.add(key)
+
+            # 힘 슬라이더는 **버튼과 무관하게 매 순환** 읽는다. 버튼을 누를
+            # 때만 읽으면 슬라이더를 돌려도 화면에 아무 반응이 없어서, 값이
+            # 반영되고 있는지 사람이 알 길이 없다.
+            self.set_grip_force_newton(self.ui.GetSliderValue(force_slider))
+
+            # ---- 키보드 ----
+            # 몰려 들어온 키를 하나의 목표로 접는다. 글자마다 명령하면
+            # 도착을 기다리는 사이에 입력이 쌓여 조작이 끈적해진다.
+            typed = keys.poll()
+            command, clamp = None, False
+            if typed:
+                now = self.gripper_opening_m()
+                target, force, key_clamp, special = gh.fold_keys(
+                    typed, now, self.gripper.force,
+                    self.gripper.max_opening_m, self.jaw_opening_m)
+                force_changed = force != self.gripper.force
+                if force_changed:
+                    self.gripper.force = force
+                    # 슬라이더도 같이 따라가야 한다. 안 그러면 다음 순환에서
+                    # 슬라이더 값이 힘을 예전 값으로 되돌려 버린다.
+                    self.ui.SetSliderValue(force_slider,
+                                           gh.force_newton(force))
+                    self.report_grip_force()
+                if special == "accept":
+                    pressed.add("done")
+                if abs(target - now) > 1e-6 or key_clamp:
+                    command, clamp = target, key_clamp
+                elif force_changed:
+                    # 힘은 위치 명령에 실려 나간다. 개구가 그대로여도 다시
+                    # 눌러 줘야 새 힘이 실제로 걸린다.
+                    command = now
+
+            if command is not None:
+                pass                       # 키보드가 이미 정했다
+            elif "wide" in pressed:
+                command = self.gripper.max_opening_m
+            elif "grip" in pressed or "regrip" in pressed:
+                command, clamp = self.jaw_opening_m, True
+            elif "slide" in pressed:
+                command = self.ui.GetSliderValue(slider) * 1e-3
+            elif "more" in pressed:
+                command = self.gripper_opening_m() + GRASP_NUDGE_M
+            elif "less" in pressed:
+                # 여기서는 clamp 를 쓰지 않는다. 이미 **지금 개구보다 좁게**
+                # 명령하는 것이라 물체가 있으면 그대로 걸려 멈추고 힘이
+                # 걸린다. clamp 까지 얹으면 한 번 누를 때마다 2 mm 가 아니라
+                # 2+CLAMP_SQUEEZE = 6 mm 씩 닫혔다 (실제로 그랬다).
+                command = self.gripper_opening_m() - GRASP_NUDGE_M
+
+            if command is not None:
+                command = float(np.clip(command, 0.0,
+                                        self.gripper.max_opening_m))
+                try:
+                    # 물릴 때는 grip(). 물체 단면과 같은 개구를 명령하면 죠가
+                    # 닿기만 하고 힘이 안 걸린다 (gripper_hw.CLAMP_SQUEEZE_M).
+                    state = (self.gripper.grip(command) if clamp
+                             else self.gripper.set_opening(command))
+                except Exception as exc:               # noqa: BLE001
+                    print(f"[그리퍼] 명령 실패: {exc}")
+                    state = None
+                else:
+                    closed_once = closed_once or command < self.gripper.max_opening_m
+                    print(f"[그리퍼] 개구 {1000*command:.1f} mm"
+                          f"{' 물기' if clamp else ' 이동'}"
+                          f" (힘 {gh.force_newton(self.gripper.force):.0f} N)"
+                          f" -> {state.describe()}")
+                    self.ui.SetSliderValue(slider, 1000.0 * state.opening_m)
+                self.update_grasp_pads(self.gripper_opening_m())
+                override = False                       # 명령을 바꿨으면 다시 확인
+
+            if "done" in pressed:
+                state = state if state is not None else self._safe_status()
+                held = bool(state is not None and state.holding)
+                miss = 1000.0 * abs(self.gripper_opening_m()
+                                    - self.jaw_opening_m)
+                if not override and not closed_once:
+                    print("[파지] 아직 무는 명령을 준 적이 없습니다."
+                          " ② 로 물린 뒤 ③ 을 누르세요.")
+                elif not override and not held:
+                    print("[파지] 그리퍼가 '물었다'(gOBJ) 를 보고하지 않습니다"
+                          f" — {state.describe() if state else '상태 불명'}."
+                          " 정말 물려 있다면 ③ 을 한 번 더 누르세요.")
+                    override = True
+                elif not override and miss > 2.0:
+                    print(f"[파지] 개구량이 계획과 {miss:.1f} mm 다릅니다"
+                          f" (지금 {1000*self.gripper_opening_m():.1f},"
+                          f" 계획 {target_mm:.1f}). 파지점이 그만큼 어긋납니다"
+                          " — 이대로 가려면 ③ 을 한 번 더 누르세요.")
+                    override = True
+                else:
+                    break
+            time.sleep(0.05)
+        return closed_once, override, state
+
+    def _finish_grasp(self, state):
+        opening = self.gripper_opening_m()
+        self.grasp_report = dict(
+            opening_m=opening, planned_opening_m=self.jaw_opening_m,
+            force_n=gh.force_newton(self.gripper.force),
+            verified=bool(state is not None and state.holding),
+            source=f"그리퍼 {getattr(self.gripper, 'port', '?')}")
+        print(f"[파지] 확정 — 개구 {1000*opening:.1f} mm"
+              f" (계획 {1000*self.jaw_opening_m:.1f} mm,"
+              f" 어긋남 {1000*abs(opening - self.jaw_opening_m):.1f} mm),"
+              f" 파지력 {gh.force_newton(self.gripper.force):.0f} N,"
+              f" 물림 확인 {'예' if self.grasp_report['verified'] else '아니오'}")
+
+    def _safe_status(self):
+        try:
+            return self.gripper.status()
+        except Exception:                              # noqa: BLE001
+            return None
 
     def begin(self):
         """두 화면이 같이 시작하도록 시작 버튼을 기다린다.
@@ -1131,9 +1720,16 @@ class RobotScreen:
         self.console.measuring()
         readings = []
         for g_hat in alg.G_DIRS:
-            if not self.move_to(solutions[tuple(g_hat)],
-                                f"탐색 자세 (중력 {np.round(g_hat, 0)})"):
-                return dict(round=target["round"], aborted=True)
+            name = f"탐색 자세 (중력 {np.round(g_hat, 0)})"
+            if not self.move_to(solutions[tuple(g_hat)], name):
+                # 직접 간선이 막혔다. 시작 자세를 거쳐 돌아간다 — prepare()
+                # 가 home 왕복을 함께 검증해 두므로 이 길은 있어야 한다.
+                # 라운드를 통째로 버리는 것보다 8초 더 도는 편이 낫다.
+                print("[로봇] 직접 경로가 막혀 시작 자세를 거쳐 갑니다")
+                if not self.move_to(self.setup["start_q"], "시작 자세 경유"):
+                    return dict(round=target["round"], aborted=True)
+                if not self.move_to(solutions[tuple(g_hat)], name):
+                    return dict(round=target["round"], aborted=True)
             time.sleep(self.settle_s)         # 흔들림이 가라앉기를 기다린다
             readings.append(self.read_one(g_hat, actual))
         wrench = np.concatenate(readings)
@@ -1347,14 +1943,66 @@ def simulated_hardware():
                 raise RuntimeError("set_pose 가 먼저 불려야 합니다")
             return alg.measure(self.theta, g_dirs=[self.g_hat])
 
+    class _Pose(hw.SimPose):
+        """리허설용 트래커. '실물 관절' 자리를 슬라이더가 대신 채운다.
+
+        예전에는 모의 장비에 자세 센서를 아예 안 붙였다. 그러면 리허설이
+        adjust_manually(슬라이더로 판정) 로 가고 실물은 adjust_by_pose
+        (트래커로 판정) 로 가서, **리허설이 실물과 다른 길을 밟았다.**
+        여기에 센서를 붙여 두면 두 경우가 같은 코드를 지나간다.
+        """
+
+        def __init__(self):
+            self._truth = None
+            super().__init__(lambda: self._truth)
+
+        def set_truth(self, degrees):
+            self._truth = np.atleast_1d(np.asarray(degrees, dtype=float))
+
+        def object_joint_deg(self):
+            if self._truth is None:
+                raise RuntimeError("set_truth 가 먼저 불려야 합니다")
+            return super().object_joint_deg()
+
     tare = hw.TareTable()
     for g_hat in alg.G_DIRS:
         tare.record(g_hat, np.zeros(6))
-    return None, _Wrench(), None, tare
+    return None, _Wrench(), _Pose(), tare, None
 
 
-def connect_hardware(args):
-    """실물 장비를 붙인다. 반환: (RobotDriver, WrenchSensor, PoseSensor, TareTable)
+def connect_gripper(args, spec):
+    """실물 그리퍼를 붙인다. 못 붙이면 None (사람이 손으로 여닫는 옛 흐름).
+
+    --gripper-port none 또는 --no-gripper 면 아예 안 붙인다. --hardware sim
+    이면 모의 그리퍼를 붙여 UI 절차만 그대로 돌린다.
+    """
+    if getattr(args, "no_gripper", False):
+        return None
+    port = getattr(args, "gripper_port", gh.DEFAULT_PORT)
+    if str(port).lower() in ("none", "off", ""):
+        return None
+    if getattr(args, "gripper", "robotiq2f85") != "robotiq2f85":
+        print("  [주의] 실물 그리퍼 드라이버는 Robotiq 2F-85 만 있습니다"
+              " — PGC 는 손으로 여닫으세요.")
+        return None
+    force = gh.counts_for_force(getattr(args, "gripper_force", None)
+                                or gh.force_newton(gh.DEFAULT_FORCE))
+    if getattr(args, "hardware", "real") != "real":
+        print("  모의 그리퍼를 붙입니다 (절차만 확인).")
+        return gh.SimGripper(hold_below_m=rs.jaw_dimension_m(spec),
+                             force=force)
+    try:
+        return gh.Robotiq2F85(port=port, force=force)
+    except gh.GripperError as exc:
+        print(f"  [주의] {exc}")
+        print("  그리퍼 없이 계속합니다 — 파지 단계는 손으로 하세요.")
+        return None
+
+
+def connect_hardware(args, spec=None):
+    """실물 장비를 붙인다.
+
+    반환: (RobotDriver, WrenchSensor, PoseSensor, TareTable, Gripper)
 
     안전 로직(속도 상한·준정적 시간·도착 검증·서보 상태기계·타어링 유효기간·
     센서 부호 규약)은 전부 hardware_real 에 구현돼 있고 장비 없이 검증된다.
@@ -1370,39 +2018,130 @@ def connect_hardware(args):
     import hardware_real as hr
 
     backend_kind = getattr(args, "arm_backend", "rbpodo")
-    tare = hr.TimedTare()
+    tare = _load_tare(args)
+
+    # 그리퍼는 팔 백엔드와 따로 붙는다. 팔이 가짜여도 그리퍼는 실물일 수
+    # 있고 (파지 절차만 실물로 리허설하는 경우), 그 반대도 된다.
+    gripper = connect_gripper(args, spec) if spec is not None else None
 
     if backend_kind == "fake":
-        print("  [리허설] 가짜 팔로 실물 경로를 돕니다. 장비는 안 씁니다.")
+        print("  [리허설] 가짜 팔로 실물 경로를 돕니다. 팔 장비는 안 씁니다.")
         driver = hr.Rb5Driver(hr.FakeArm())
-        wrench, pose, _ = simulated_hardware()[1:]
-        return driver, wrench, pose, tare
+        wrench, pose = simulated_hardware()[1:3]
+        return driver, wrench, pose, tare, gripper
 
     driver = hr.Rb5Driver(hr.RbpodoBackend(
         host=getattr(args, "robot_host", "192.168.0.10")))
     wrench = hr.Aft200Sensor(sample_fn=_ft_sample_fn(args))
+    pose_fn, stamp_fn = _pose_fn(args)
     pose = hr.FoundationPoseSensor(
-        pose_fn=_pose_fn(args),
-        n_joint=getattr(args, "n_object_joint", 1),
-        default_sigma_deg=getattr(args, "angle_error", 0.05) * 100.0)
-    return driver, wrench, pose, tare
+        pose_fn=pose_fn, stamp_fn=stamp_fn,
+        n_joint=len(spec.joints) if spec is not None else 1,
+        default_sigma_deg=getattr(args, "angle_error", 0.05) * 100.0,
+        max_age_s=getattr(args, "pose_max_age_s", 2.0))
+    return driver, wrench, pose, tare, gripper
+
+
+# FoundationPose 가 내는 각도 키를 PIVOT 관절 순서에 맞춘다.
+#
+# 부호와 영점은 **아직 안 맞췄다** (my_work/NAMING.md). 여기서 잇는 것은
+# '어느 키가 어느 관절인가' 뿐이다. 실물에서 한 자세를 두 방법으로 읽어
+# 비교하기 전까지는 판정이 반대로 나올 수 있다.
+POSE_KEYS = {
+    # Final URDF를 link_3(support) 기준으로 다시 세우면
+    # [support->base, support->head] 순서다.
+    "desklamp": ("base_support_deg", "support_head_deg"),
+    "laptop": ("opening_angle_deg",),
+}
+
+
+def _load_tare(args):
+    """3자세 타어를 파일에서 읽어 온다.
+
+    예전에는 여기서 **빈** TimedTare 를 만들고 끝이었다. 그러면 첫 측정에서
+    tare.apply 가 "missing tare for gravity direction" 으로 죽는다. 타어는
+    별도 절차(MeshPCA pivot/tare_real.py)로 미리 재 두는 값이라, 세션은
+    그걸 **읽어야** 한다.
+
+    파일 형식은 팀원 aft_tare.TareTable.save 가 낸 그대로다:
+        {"entries": [{"g_hat": [...], "wrench": [...]}, ...]}
+    """
+    import hardware_real as hr
+    import json
+
+    max_age = getattr(args, "tare_max_age_s", None)
+    tare = hr.TimedTare(max_age_s=(hr.TARE_MAX_AGE_S if max_age is None
+                                   else max_age))
+    path = getattr(args, "tare_file", None)
+    if not path:
+        print("  [주의] --tare-file 이 없습니다. 첫 측정에서 그리퍼 무게를"
+              " 못 빼고 멈춥니다 (MeshPCA pivot/tare_real.py 로 먼저 재세요).")
+        return tare
+    path = Path(path).expanduser()
+    entries = json.loads(path.read_text())["entries"]
+    for entry in entries:
+        tare.record(entry["g_hat"], np.asarray(entry["wrench"], dtype=float))
+    missing = [g for g in alg.G_DIRS if tare.key(g) not in tare.table]
+    if missing:
+        raise RuntimeError(
+            f"{path} 에 중력 방향 {[np.round(g, 3).tolist() for g in missing]}"
+            f" 의 타어가 없습니다. 3자세를 모두 재야 합니다.")
+    print(f"  타어 {len(entries)} 방향을 읽었습니다: {path.name}")
+    return tare
 
 
 def _ft_sample_fn(args):
-    """AFT200 한 샘플을 돌려주는 함수. ★ 팀이 채울 곳 (한 줄)."""
-    raise NotImplementedError(
-        "AFT200 스트림에서 한 샘플 [Fx Fy Fz Tx Ty Tz] 를 돌려주는 함수를 "
-        "여기서 만들어 주세요. 평균·이상치 제거·부호 검사는 "
-        "hardware_real.Aft200Sensor 가 이미 합니다.")
+    """AFT200 한 샘플 [Fx Fy Fz Tx Ty Tz] 를 돌려주는 함수.
+
+    팀원의 MeshPCA `pivot/aft_tare.Aft200Sensor` 를 쓴다. 그쪽 read_raw 는
+    부를 때마다 TCP 를 새로 열고 n 개를 평균내는데, 여기서는 **한 샘플씩**
+    필요하므로 stream() 생성기를 한 번 열어 두고 계속 뽑는다. 연결을 매번
+    여닫으면 1000 샘플 평균 하나에 그만큼 시간이 더 든다.
+    """
+    sys.path.insert(0, str(Path(args.meshpca_root).expanduser() / "pivot"))
+    from aft_tare import Aft200Sensor
+
+    sensor = Aft200Sensor(args.aft_host, hz=args.aft_hz)
+    stream = sensor.stream()
+    return lambda: next(stream)
 
 
 def _pose_fn(args):
-    """FoundationPose 에서 (각도 deg, 불확실성 deg) 를 돌려주는 함수.
-    ★ 팀이 채울 곳 (한 줄)."""
-    raise NotImplementedError(
-        "FoundationPose 노드에서 (관절각 deg, sigma deg) 를 돌려주는 함수를 "
-        "여기서 만들어 주세요. 차원·유한성·stale 검사는 "
-        "hardware_real.FoundationPoseSensor 가 이미 합니다.")
+    """FoundationPose latest.json 에서 (각도 deg, sigma deg) 를 읽는 함수.
+
+    팀원 `run_desk_lamp_live.py` 가 그 파일을 **원자적으로**(tmp 에 쓰고
+    replace) 계속 갱신한다. 그래서 읽는 쪽은 잠금이 필요 없다.
+
+    같이 돌려주는 stamp_fn 이 중요하다. 트래커가 멈췄는데 마지막 값을 계속
+    주면 알고리즘은 각도가 맞다고 믿고 측정을 진행한다 — 가장 위험한
+    고장이다 (hardware_real.FoundationPoseSensor 주석).
+    """
+    import json
+
+    path = Path(args.pose_file).expanduser()
+    keys = POSE_KEYS.get(args.object)
+    if args.pose_keys:
+        keys = tuple(args.pose_keys)
+    if not keys:
+        raise RuntimeError(
+            f"{args.object} 의 FoundationPose 각도 키를 모릅니다."
+            f" --pose-keys 로 알려 주세요 (관절 순서대로).")
+    state = {"stamp": 0.0}
+
+    def read():
+        data = json.loads(path.read_text())
+        state["stamp"] = float(data.get("timestamp_s", 0.0))
+        missing = [k for k in keys if k not in data]
+        if missing:
+            raise RuntimeError(f"{path} 에 {missing} 가 없습니다")
+        angles = [float(data[k]) for k in keys]
+        # **항상 2-튜플로 돌려준다.** hardware_real 은 길이 2 인 리스트를
+        # (각도, sigma) 로 읽는데, 관절이 2개인 물체(램프)는 각도 리스트도
+        # 길이가 2라서 그냥 리스트로 주면 각도 하나가 sigma 로 오해된다.
+        # 실제로 그렇게 깨졌다.
+        return angles, data.get("sigma_deg")
+
+    return read, (lambda: state["stamp"])
 
 
 def main():
@@ -1431,8 +2170,10 @@ def main():
                         help="각도 오차의 하한 [deg]. sigma = max(상대오차*|각도|,"
                              " 이 값). --angle-error 0 --angle-floor-deg 2 면"
                              " 각도와 무관한 고정 2도 오차가 된다")
-    parser.add_argument("--prior", choices=("weight", "mesh"), default="weight",
-                        help="초기값: weight=저울로 총무게만 잼, mesh=메시만 앎")
+    parser.add_argument("--prior", choices=("weight", "mesh", "water"),
+                        default="weight",
+                        help="초기값: weight=저울로 총무게만 잼, mesh=메시만 앎,"
+                             " water=모든 부위를 물 밀도(1000)로 시작")
     parser.add_argument("--urdf-out", default=None)
     parser.add_argument("--plan-iters", type=int, default=20000,
                         help="RRT-Connect 최대 반복")
@@ -1481,13 +2222,47 @@ def main():
     parser.add_argument("--block-radius-deg", type=float, default=15.0,
                         help="탈락한 후보 주변을 목적함수에서 눌러 두는 반경")
     parser.add_argument("--grasp", default="centroid",
-                        choices=("centroid", "base_frame"),
+                        choices=("centroid", "pinch", "base_frame"),
                         help="desklamp 전용: 잡는 부위의 어디를 잡는가."
-                             " centroid=그 부위 도심(기본)")
+                             " centroid=그 부위 도심(기본),"
+                             " pinch=볼록 조각에서 고른 '실제로 물리는 자리'"
+                             " (desk_lamp.pinch_grasp — 굽은 팔은 도심이"
+                             " 단면 중심이 아니라 패드가 허공을 문다)")
     parser.add_argument("--gripper", default="robotiq2f85",
                         choices=("pgc140", "robotiq2f85"),
                         help="그리퍼. pgc140=개구 53 mm, robotiq2f85=개구 78 mm."
                              " 램프처럼 단면이 굵은 물체는 robotiq2f85 가 필요")
+    parser.add_argument("--gripper-port", default=gh.DEFAULT_PORT,
+                        help="Robotiq 2F-85 의 USB(FTDI) 포트."
+                             " none 이면 안 붙이고 사람이 손으로 여닫는다")
+    parser.add_argument("--no-gripper", action="store_true",
+                        help="그리퍼를 소프트웨어로 몰지 않는다")
+    parser.add_argument("--gripper-force", type=float, default=None,
+                        help=f"파지력 [N], {gh.FORCE_MIN_N:.0f}~"
+                             f"{gh.FORCE_MAX_N:.0f} (기본"
+                             f" {gh.force_newton(gh.DEFAULT_FORCE):.0f})."
+                             " 세션 중에는 작업자 화면의 '파지력 [N]'"
+                             " 슬라이더로 계속 바꿀 수 있다")
+    parser.add_argument("--pose-file", default=None,
+                        help="FoundationPose 가 갱신하는 latest.json 경로."
+                             " 실물(--hardware real)에서 관절각을 여기서 읽는다")
+    parser.add_argument("--pose-keys", nargs="+", default=None,
+                        help="latest.json 에서 읽을 각도 키를 관절 순서대로."
+                             " 기본값은 물체별 표(POSE_KEYS)")
+    parser.add_argument("--pose-max-age-s", type=float, default=2.0,
+                        help="이보다 오래된 트래커 값은 거부한다")
+    parser.add_argument("--tare-file", default=None,
+                        help="3자세 타어 JSON (MeshPCA pivot/tare_real.py 산출)."
+                             " 실물에서는 반드시 필요하다")
+    parser.add_argument("--tare-max-age-s", type=float, default=None,
+                        help="이보다 오래된 타어는 거부한다 (기본 hardware_real)")
+    parser.add_argument("--aft-host", default="192.168.50.51",
+                        help="AFT200 컨트롤러 주소 (Modbus TCP 502)")
+    parser.add_argument("--aft-hz", type=float, default=50.0)
+    parser.add_argument("--meshpca-root", default="~/MeshPCA",
+                        help="팀원 MeshPCA 체크아웃 (pivot/aft_tare.py 위치)")
+    parser.add_argument("--no-density-view", action="store_true",
+                        help="탐색이 끝난 뒤 밀도 비교 화면을 띄우지 않는다")
     parser.add_argument("--grasp-part", default="link_3",
                         choices=("link_1", "link_2", "link_3"),
                         help="desklamp 전용: 어느 부위를 잡는가."
@@ -1626,14 +2401,17 @@ def main():
         print("  로봇 쪽은 robot_node.py 가 맡습니다."
               " 이 프로세스는 계획만 합니다.")
         robot = None
-    driver = wrench_sensor = pose_sensor = tare = None
+    driver = wrench_sensor = pose_sensor = tare = gripper = None
     if args.mode == "deploy" and args.bus != "tcp":
         if args.hardware == "real":
             print("  실물 배포 모드 — hardware.py 의 드라이버를 연결합니다.")
-            driver, wrench_sensor, pose_sensor, tare = connect_hardware(args)
+            (driver, wrench_sensor, pose_sensor, tare,
+             gripper) = connect_hardware(args, spec)
         else:
             print("  실물 배포 모드 (모의 장비) — 배선만 확인합니다.")
-            driver, wrench_sensor, pose_sensor, tare = simulated_hardware()
+            (driver, wrench_sensor, pose_sensor,
+             tare, _) = simulated_hardware()
+            gripper = connect_gripper(args, spec)
 
     robot = RobotScreen(spec, setup, robot_meshcat,
                         console_meshcat=console_meshcat,
@@ -1649,11 +2427,31 @@ def main():
                         seed=args.seed,
                         grasp_error_m=grasp_error_m,
                         max_joint_speed_deg=args.max_joint_speed_deg,
-                        settle_s=args.settle_s)
+                        settle_s=args.settle_s,
+                        gripper=gripper)
     share = robot.inertial_share(args.move_duration)
     print(f"  준정적 이동: 한 번에 {args.move_duration:.0f}초"
           f"  -> 관성 토크가 중력 토크의 {100*share:.3f}%"
           f"  ({'충분히 준정적' if share < 0.01 else '더 느리게 권장'})")
+    # ---- 창 4: 라운드마다 갱신되는 밀도 화면 ----
+    # 탐색이 끝난 뒤 한 번만 띄우면 작업자는 "지금 더 해야 하나" 를 알 수
+    # 없다. 라운드마다 갱신해서 반폭이 목표 안으로 들어왔는지 보여준다.
+    live_panel = None
+    if not args.no_density_view:
+        try:
+            import density_view as dvw
+
+            panel_meshcat = StartMeshcat()
+            live_panel = dvw.DensityPanel(
+                spec, panel_meshcat,
+                theta_deg=setup["feasible"][0] * 180.0 / np.pi)
+            live_panel.begin(planner.rho_prior, target_rel=args.target,
+                             gt=(planner.rho_gt if args.mode == "sim"
+                                 or args.hardware != "real" else None))
+            print(f"  [4] 밀도 결과 화면   {panel_meshcat.web_url()}")
+        except Exception as exc:                       # noqa: BLE001
+            print(f"  [주의] 밀도 화면을 못 띄웠습니다: {exc}")
+
     bus = LocalBus() if args.bus == "local" else TcpBus.serve(args.bus_port)
     remote = args.bus == "tcp"      # 로봇 쪽은 robot_node.py 가 맡는다
 
@@ -1672,6 +2470,13 @@ def main():
             print("[왼쪽] 이 라운드는 실행되지 못했습니다. 다음으로 넘어갑니다.")
             continue
         planner.update(reply)
+        if live_panel is not None:
+            try:
+                live_panel.update(planner.rho_hat,
+                                  planner.half_width(per_part=True),
+                                  index, planner.converged())
+            except Exception as exc:                   # noqa: BLE001
+                print(f"[주의] 밀도 화면 갱신 실패: {exc}")
         if planner.converged():
             print(f"\n[왼쪽] 목표 불확실성 도달 — {index} 라운드에서 정지")
             break
@@ -1693,6 +2498,38 @@ def main():
         print(f"  {row['name']:<13} 밀도 {est:8.1f} +/-{1.96*sd:6.1f} kg/m^3"
               f"   [GT {gt:7.0f}  오차 {100*abs(est-gt)/gt:5.2f}%]{mark}")
     print("=" * 66)
+    if robot is not None and robot.grasp_report is not None:
+        report = robot.grasp_report
+        print(f"  파지: 개구 {1000*report['opening_m']:.1f} mm"
+              f" ({report['source']},"
+              f" 물림 확인 {'예' if report.get('verified') else '아니오'})")
+
+    # ---- 결과를 색으로 보여주는 화면 ----
+    # 숫자표는 위에 이미 있다. 여기서는 "어느 부위가 무겁다고 나왔나" 를
+    # 물체 그림 위에서 보게 한다. 정답 열은 시뮬레이션에서만 붙는다 —
+    # 실물에서는 애초에 모르는 값이고, 어차피 채점용이다.
+    density_panel = None
+    if not args.no_density_view:
+        # 이 화면 하나 때문에 세션 마지막에 죽으면 안 된다. 바로 뒤가
+        # URDF 산출이고, 그게 이 실험의 결과물이다.
+        try:
+            import density_view as dvw
+
+            show_gt = args.hardware != "real" or args.mode == "sim"
+            panel_meshcat = StartMeshcat()
+            density_panel = dvw.DensityPanel(
+                spec, panel_meshcat,
+                theta_deg=getattr(robot, "object_q_deg", None))
+            density_panel.show(
+                dvw.panel_columns(planner.rho_prior, planner.rho_hat,
+                                  planner.rho_gt if show_gt else None),
+                half_width=1.96 * np.sqrt(np.diag(planner.Sigma)))
+            print(f"\n  [밀도 비교 화면] {panel_meshcat.web_url()}")
+            print("    왼쪽=초기값(저울 총무게만 앎), 가운데=탐색 결과"
+                  + (", 오른쪽=정답(채점용)" if show_gt else "")
+                  + f".  색은 {dvw.COLORMAP} 무지개 컬러맵입니다.")
+        except Exception as exc:                       # noqa: BLE001
+            print(f"\n  [주의] 밀도 비교 화면을 못 띄웠습니다: {exc}")
 
     out = Path(args.urdf_out or Path("outputs") / f"estimated_{spec.key}.urdf")
     try:
@@ -1709,6 +2546,13 @@ def main():
                   f"  관성 상대오차 {row['inertia_err']:.1e}")
     else:
         print("  URDF 를 만들지 않았습니다.")
+
+    # 화면은 이 프로세스와 함께 죽는다. 다 보기 전에 닫히지 않게 붙잡는다.
+    if density_panel is not None:
+        try:
+            input("\n밀도 비교 화면을 다 보셨으면 Enter 를 누르세요: ")
+        except EOFError:
+            pass
     print("\n종료합니다.")
 
 

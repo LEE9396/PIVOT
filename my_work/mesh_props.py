@@ -116,6 +116,19 @@ def read_ply(path):
     return vertices, np.asarray(faces, dtype=np.int64)
 
 
+def read_obj(path):
+    """삼각 OBJ의 정점과 면. texture/normal 인덱스는 질량 특성에 불필요하다."""
+    vertices, faces = [], []
+    for line in open(path):
+        if line.startswith("v "):
+            vertices.append([float(v) for v in line.split()[1:4]])
+        elif line.startswith("f "):
+            indices = [int(v.split("/", 1)[0]) - 1 for v in line.split()[1:]]
+            for k in range(1, len(indices) - 1):
+                faces.append([indices[0], indices[k], indices[k + 1]])
+    return np.asarray(vertices, dtype=float), np.asarray(faces, dtype=np.int64)
+
+
 def _read_ply_ascii(text, n_vert, n_face, names):
     lines = [l for l in text.splitlines() if l.strip()]
     vertices = np.array([[float(v) for v in lines[i].split()[:3]]
@@ -134,6 +147,8 @@ def read_mesh(path):
         return read_stl(path)
     if path.lower().endswith(".ply"):
         return read_ply(path)
+    if path.lower().endswith(".obj"):
+        return read_obj(path)
     raise ValueError(f"지원하지 않는 확장자: {path}")
 
 

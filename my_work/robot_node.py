@@ -61,9 +61,18 @@ def main():
                     choices=tuple(obj.OBJECTS) + ("desklamp",))
     ap.add_argument("--joint-range-deg", type=float, nargs="+", default=None)
     ap.add_argument("--grasp", default="centroid",
-                    choices=("centroid", "base_frame"))
+                    choices=("centroid", "pinch", "base_frame"))
     ap.add_argument("--gripper", default="robotiq2f85",
                     choices=("pgc140", "robotiq2f85"))
+    ap.add_argument("--gripper-port", default=None,
+                    help="Robotiq 2F-85 의 USB(FTDI) 포트."
+                         " none 이면 사람이 손으로 여닫는다."
+                         " 기본은 gripper_hw.DEFAULT_PORT")
+    ap.add_argument("--no-gripper", action="store_true",
+                    help="그리퍼를 소프트웨어로 몰지 않는다")
+    ap.add_argument("--gripper-force", type=float, default=None,
+                    help="파지력 [N] 20~235. 세션 중에는 작업자 화면의"
+                         " '파지력 [N]' 슬라이더로 계속 바꿀 수 있다")
     ap.add_argument("--grasp-part", default="link_3",
                     choices=("link_1", "link_2", "link_3"))
     ap.add_argument("--steps", type=int, default=5)
@@ -97,11 +106,16 @@ def main():
                        args.min_distance_mm * rs.MM, 1.0, prior="weight",
                        gripper=args.gripper)
 
+    if args.gripper_port is None:
+        import gripper_hw as gh
+        args.gripper_port = gh.DEFAULT_PORT
     if args.hardware == "real":
-        driver, wrench, pose, tare = dv.connect_hardware(args)
+        driver, wrench, pose, tare, gripper = dv.connect_hardware(args, spec)
     else:
         print("  모의 장비 — 배선만 확인합니다.")
-        driver, wrench, pose, tare = dv.simulated_hardware()
+        driver, wrench, pose, tare, _ = dv.simulated_hardware()
+        # 그리퍼만은 실물을 붙일 수 있다. 파지 절차는 팔이 없어도 리허설된다.
+        gripper = dv.connect_gripper(args, spec)
 
     console_meshcat = StartMeshcat()
     print(f"\n  작업자 UI 화면   {console_meshcat.web_url()}\n")
@@ -115,7 +129,8 @@ def main():
                            move_duration_s=args.move_duration,
                            min_distance_m=args.min_distance_mm * rs.MM,
                            plan_iters=args.plan_iters,
-                           settle_s=args.settle_s)
+                           settle_s=args.settle_s,
+                           gripper=gripper)
     robot.samples_per_hold = args.samples_per_hold
 
     bus = TcpBus.connect(args.host, args.port)

@@ -101,10 +101,22 @@ class RbpodoBackend(ArmBackend):
 
     def __init__(self, host, port=5000, deg_api=True):
         self.host, self.port, self.deg_api = host, port, deg_api
-        self._cobot = None
-        raise NotImplementedError(
-            "rbpodo 연결을 채우세요. 예: self._cobot = rbpodo.Cobot(host)\n"
-            "  joint_positions / move_to / halt / set_servo 네 개만 채우면 됩니다.")
+        try:
+            import rbpodo
+        except ImportError as exc:
+            raise RuntimeError(
+                "rbpodo가 없습니다. ./setup/bootstrap.sh를 실행하세요.") from exc
+        self._rb = rbpodo
+        self._cobot = self._data = self._rc = None
+
+    def _connect(self):
+        if self._cobot is not None:
+            return
+        cobot = self._rb.Cobot(self.host, self.port)
+        data = self._rb.CobotData(self.host, self.port + 1)
+        rc = self._rb.ResponseCollector()
+        cobot.enable_waiting_ack(rc)
+        self._cobot, self._data, self._rc = cobot, data, rc
 
     def _to_rad(self, q):
         return np.deg2rad(q) if self.deg_api else np.asarray(q, dtype=float)
@@ -112,17 +124,66 @@ class RbpodoBackend(ArmBackend):
     def _from_rad(self, q):
         return np.rad2deg(q) if self.deg_api else np.asarray(q, dtype=float)
 
-    def joint_positions(self):       # TODO(팀): 현재 관절각 6개
-        ...
+    def joint_positions(self):
+        self._connect()
+        reply = self._data.request_data(2.0)
+        if reply is None:
+            raise TimeoutError(f"RB5 {self.host}:{self.port + 1} 상태 응답 없음")
+        return self._to_rad(np.asarray(reply.sdata.jnt_ang[:N_ARM_JOINT],
+                                       dtype=float))
 
-    def move_to(self, q, duration_s):  # TODO(팀): 블로킹 이동
-        ...
+    def move_to(self, q, duration_s):
+        self._connect()
+        if duration_s <= 0:
+            raise ValueError("이동 시간은 양수여야 한다")
+        reply = self._data.request_data(2.0)
+        if reply is None:
+            raise TimeoutError(f"RB5 {self.host}:{self.port + 1} 상태 응답 없음")
+        current = np.asarray(reply.sdata.jnt_ang[:N_ARM_JOINT], dtype=float)
+        target = np.asarray(self._from_rad(q), dtype=float)
+        if self.deg_api:
+            limits = np.array([360.0, 360.0, 165.0, 360.0, 360.0, 360.0])
+            for i in range(N_ARM_JOINT):
+                choices = [target[i] + 360.0 * k for k in range(-2, 3)
+                           if abs(target[i] + 360.0 * k) <= limits[i]]
+                if not choices:
+                    raise SafetyViolation(f"RB5 관절 {i + 1} 목표가 제어기 한계 밖이다")
+                target[i] = min(choices, key=lambda value: abs(value - current[i]))
+        distance = float(np.max(np.abs(target - current)))
+        speed = max(0.5, distance / float(duration_s))
+        acceleration = max(1.0, 2.0 * speed)
+        self._cobot.flush(self._rc)
+        self._cobot.set_operation_mode(self._rc, self._rb.OperationMode.Real)
+        self._cobot.set_speed_bar(self._rc, 1.0)
+        self._cobot.move_j(self._rc, target, speed, acceleration)
+        self._rc.error().throw_if_not_empty()
+        started = self._cobot.wait_for_move_started(self._rc, 2.0)
+        if not started.is_success():
+            self.halt()
+            raise RuntimeError(f"RB5 이동 시작 확인 실패: {started.type()}")
+        finished = self._cobot.wait_for_move_finished(
+            self._rc, max(30.0, 5.0 * float(duration_s)))
+        self._rc.error().throw_if_not_empty()
+        if not finished.is_success():
+            self.halt()
+            raise RuntimeError("RB5 이동 완료 확인 실패")
 
-    def halt(self):                  # TODO(팀): 즉시 정지
-        ...
+    def halt(self):
+        self._connect()
+        self._cobot.task_stop(self._rc)
+        self._cobot.flush(self._rc)
 
-    def set_servo(self, on):         # TODO(팀): 서보 on/off
-        ...
+    def set_servo(self, on):
+        self._connect()
+        self._cobot.flush(self._rc)
+        command = self._cobot.activate if on else self._cobot.shutdown
+        result = command(self._rc, 30.0)
+        if on and result.is_success():
+            self._cobot.set_operation_mode(self._rc, self._rb.OperationMode.Real)
+        self._rc.error().throw_if_not_empty()
+        self._cobot.flush(self._rc)
+        if not result.is_success():
+            raise RuntimeError(f"RB5 서보 {'ON' if on else 'OFF'} 실패: {result.type()}")
 
 
 class FakeArm(ArmBackend):

@@ -1,0 +1,54 @@
+# 실물 실험 설정 — 이 파일을 experiment.conf 로 복사해 PC 에 맞게 고칩니다.
+#
+#   cp setup/experiment.conf.example setup/experiment.conf
+#
+# setup/launch_experiment.sh 가 이 값을 읽어 창 4개를 띄웁니다.
+# 경로에 ~ 를 써도 됩니다.
+
+# ---- 저장소 위치 -----------------------------------------------------------
+PIVOT_ROOT=~/Desktop/PIVOT
+MESHPCA_ROOT=~/MeshPCA
+FOUNDATIONPOSE_ROOT=~/FoundationPose
+SAM3_ROOT=~/sam3
+
+# ---- 파이썬 환경 -----------------------------------------------------------
+# 창 3 (Tk UI) 이 쓰는 MeshPCA venv 의 파이썬
+MESHPCA_PYTHON=~/MeshPCA/.venv/bin/python
+# 창 2 (FoundationPose) 가 쓰는 conda 환경 이름
+FOUNDATIONPOSE_CONDA_ENV=bundlesdf
+# SAM3 전용 파이썬 (없으면 위 환경과 같게 두세요)
+SAM3_PYTHON=~/sam3/env/bin/python
+
+# ---- 장비 -----------------------------------------------------------------
+ROBOT_HOST=192.168.50.51
+AFT_HOST=192.168.50.51
+GRIPPER_PORT=/dev/ttyUSB0
+# 파지력 [N] 20~235. 얇은 플라스틱은 낮추세요.
+GRIPPER_FORCE=205
+
+# ---- 물체 -----------------------------------------------------------------
+# desklamp 또는 3link / 2link
+OBJECT=desklamp
+# PIVOT 이 잡는 부위 (desklamp 전용). link_3 = 연결부/팔
+GRASP_PART=link_3
+# FoundationPose 가 추적하는 부위 이름 (파지점을 계산할 메시)
+FP_GRASP_PART=support
+FP_MESH_DIR=~/MeshPCA/foundationpose/assets/lamp
+FP_LIVE_SCRIPT=foundationpose/run_desk_lamp_live.py
+
+# ---- 미리 만들어 둔 파일 ----------------------------------------------------
+# 3자세 타어 (MeshPCA pivot/tare_real.py 산출)
+TARE_FILE=~/Desktop/PIVOT/my_work/calibration/aft_tare_current.json
+# FoundationPose 초기화 입력 (한 번 캡처해 두면 --reuse-init 로 재사용)
+FP_INIT_RGB=/tmp/lamp_live_rgb.png
+FP_INIT_DEPTH=/tmp/lamp_live_depth_m.npy
+FP_INTRINSICS=/tmp/lamp_live_intrinsics.json
+FP_MASKS=/tmp/lamp_sam3_masks
+FP_OUTPUT=/tmp/lamp_foundationpose_live
+
+# ---- 탐색 설정 -------------------------------------------------------------
+# 정지 조건: 밀도의 95% 상대 반폭
+TARGET=0.05
+MAX_ROUNDS=8
+# 이동 하나에 쓰는 시간 [s]. 클수록 준정적.
+MOVE_DURATION=8
