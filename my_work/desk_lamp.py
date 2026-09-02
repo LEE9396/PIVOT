@@ -74,6 +74,10 @@ REPO_ASSETS = Path(__file__).resolve().parents[1] / "assets"
 
 def _layout_of(root):
     root = Path(root)
+    if ((root / "visual_meshes").is_dir()
+            and (root / "collision_meshes").is_dir()
+            and list(root.glob("standlamp*.urdf"))):
+        return "final"
     if (root / "drake" / "visuals").is_dir() and (root / "drake"
                                                   / "collisions").is_dir():
         # 0814 판: 볼록 분해와 glTF 화면 메시를 직접 준다. 우리가 만들 것이 없다.
@@ -109,7 +113,13 @@ def _resolve_delivery():
 
 
 DELIVERY, LAYOUT = _resolve_delivery()
-if LAYOUT == "minimal_v2":
+FINAL_PART = {"link_1": "base", "link_2": "head", "link_3": "support"}
+if LAYOUT == "final":
+    URDF = sorted(DELIVERY.glob("standlamp*.urdf"))[0]
+    PARTS = COLLISIONS = DELIVERY / "collision_meshes"
+    VISUALS = DELIVERY / "visual_meshes"
+    SCAN = None
+elif LAYOUT == "minimal_v2":
     URDF = DELIVERY / "drake" / "object.urdf"
     PARTS = DELIVERY / "geometry" / "parts"
     VISUALS = DELIVERY / "drake" / "visuals"
@@ -133,16 +143,22 @@ else:
 #   link_2  AABB 282x190x88, 도심 z 가장 낮음, 뿌리에 용접  -> 베이스
 #   link_3  AABB  70x256x274, 가늘고 김                     -> 연결부(Arm)
 #   link_1  AABB 196x 90x148, 도심 z 가장 높음, 사슬 끝     -> Head
+# 2026-08-30: gt_list.md (사용자 확정본) 로 갱신. 저울 질량과 배수법 부피를
+# 모두 재측정한 값이다. 이전 값(0.396/290.20, 0.082/72.89, 0.084/52.82)은
+# desk_lamp.py.v1bak 에 남아 있다.
+#
+# 부위 이름 대응은 FINAL_PART 와 같다 (link_1=base, link_2=head, link_3=support).
+# 근거는 my_work/NAMING.md — 최대 평면 넓이와 도심 순서로 확정했다.
 GROUND_TRUTH = {
-    "link_2": dict(label="베이스", mass_kg=0.396, material_cm3=290.20),
-    "link_3": dict(label="연결부(Arm)", mass_kg=0.082, material_cm3=72.89),
-    "link_1": dict(label="Head", mass_kg=0.084, material_cm3=52.82),
+    "link_1": dict(label="베이스", mass_kg=0.399, material_cm3=273.00),
+    "link_3": dict(label="연결부(Arm)", mass_kg=0.085, material_cm3=84.50),
+    "link_2": dict(label="Head", mass_kg=0.087, material_cm3=64.10),
 }
 
 # 색이 없는 배달물을 만났을 때만 쓰는 짐작값 (재질에서 유추).
-FALLBACK_COLORS = {"link_2": (0.16, 0.17, 0.19, 1.0),   # 베이스: 무광 검정
+FALLBACK_COLORS = {"link_1": (0.16, 0.17, 0.19, 1.0),   # 베이스: 무광 검정
                    "link_3": (0.62, 0.63, 0.65, 1.0),   # 연결부: 알루미늄
-                   "link_1": (0.93, 0.93, 0.90, 1.0)}   # 갓: 미색
+                   "link_2": (0.93, 0.93, 0.90, 1.0)}   # 갓: 미색
 
 # Drake 의 Mesh/Convex 는 .obj 를 받고 스캔은 .ply/.stl 을 내므로 한 번 바꿔
 # 캐시한다. 화면용은 분할 메시 하나, 충돌용은 **볼록 조각들** 이다.
@@ -171,11 +187,24 @@ def _raw_mesh(path):
 
 
 def _mesh_path(name):
+    if LAYOUT == "final":
+        return COLLISIONS / f"{FINAL_PART[name]}.obj"
     if LAYOUT in ("minimal", "minimal_v2"):
         hits = sorted(PARTS.glob(f"{name}_*rgb.ply")) or sorted(
             PARTS.glob(f"{name}_*.ply"))
         return hits[0] if hits else DELIVERY / "drake" / "meshes" / f"{name}.stl"
     return SCAN / f"segment_mesh/{name}.ply"
+
+
+def visual_mesh_path(name):
+    """FoundationPose가 읽을, collision과 같은 좌표계의 최종 visual mesh."""
+    if LAYOUT == "final":
+        for suffix in (".ply", ".obj"):
+            path = VISUALS / f"{FINAL_PART[name]}{suffix}"
+            if path.is_file():
+                return path
+        raise FileNotFoundError(f"{VISUALS}에 {FINAL_PART[name]} visual mesh가 없다")
+    return _mesh_path(name)
 
 
 def _white_balance_gain():
@@ -231,6 +260,29 @@ def collision_meshes(name):
     219.58 로 일치). 캐시도 없으면 링크 메시 하나를 통째로 넘기는데,
     Drake 의 Convex 가 볼록 껍질로 감싸므로 굽은 팔이 실제보다 굵어진다.
     """
+    if LAYOUT == "final":
+        folder = COLLISIONS / "convex" / FINAL_PART[name]
+        pieces = sorted(folder.glob("part_*.obj"))
+        if pieces:
+            return tuple(map(str, pieces))
+        # 조각이 없다고 통짜 메시로 조용히 넘어가면 안 된다. Drake 의 Convex
+        # 는 그것을 볼록 껍질 하나로 감싸고, 그러면 (a) 형상이 1.5~2.9 배로
+        # 부풀고 (b) pinch_grasp 이 조각 하나의 정점 평균 = 팔 한가운데를
+        # 파지점으로 잡는다. 2026-09-02 에 이 침묵 때문에 head 가 AFT200
+        # 마운트를 41 mm 파고든 채로 "자세가 없다" 만 나왔다.
+        whole = COLLISIONS / f"{FINAL_PART[name]}.obj"
+        if os.environ.get("PIVOT_ALLOW_HULL_COLLISION", "") in ("1", "true", "yes"):
+            print(f"  [경고] {name}: 볼록 분해가 없어 {whole.name} 을 볼록 껍질"
+                  " 하나로 씁니다. 충돌 검사와 파지점을 믿지 마세요."
+                  " (PIVOT_ALLOW_HULL_COLLISION 로 켜져 있음)")
+            return (str(whole),)
+        raise FileNotFoundError(
+            f"{name} ({FINAL_PART[name]}) 의 볼록 분해가 없다: {folder}\n"
+            "  이 자산으로는 충돌 검사도 파지점도 믿을 수 없다. 셋 중 하나를 하라.\n"
+            f"  1) 분해가 있는 자산을 쓰기 (LAMP_ASSET_DIR / DESK_LAMP_DELIVERY)\n"
+            f"  2) 여기에 구워 넣기:  python -m pip install coacd  후\n"
+            f"     tools/make_convex.py {whole}  ->  {folder}/part_NN.obj\n"
+            "  3) 알고도 그냥 돌리기: PIVOT_ALLOW_HULL_COLLISION=1 (권장하지 않음)")
     if LAYOUT == "minimal_v2":
         # 배달물이 볼록 분해를 직접 준다. 우리가 만들 것이 없다.
         pieces = sorted((COLLISIONS / name).glob("part_*.obj"))
@@ -273,6 +325,11 @@ def ensure_obj(pitch=0.002, n_color=N_COLOR_PIECES):
     out = {}
     for index in (1, 2, 3):
         name = f"link_{index}"
+        if LAYOUT == "final":
+            out[name] = dict(
+                visual=str(visual_mesh_path(name)), pieces=(),
+                collision=collision_meshes(name))
+            continue
         if LAYOUT == "minimal_v2":
             # 배달물이 화면용 glTF 를 준다. 정점 색(COLOR_0)이 들어 있어
             # Meshcat 이 그대로 그린다 — 색 무리로 쪼갤 필요가 없다.
@@ -328,17 +385,24 @@ def read_urdf(path=URDF):
         if visual is None:
             continue
         offset = np.array([float(v) for v in visual.get("xyz").split()])
-        frame_origin[link.get("name")] = -offset      # 스캔좌표 기준 프레임 원점
+        name = link.get("name")
+        if LAYOUT == "final":
+            name = {v: k for k, v in FINAL_PART.items()}[name]
+        frame_origin[name] = -offset      # 스캔좌표 기준 프레임 원점
 
     joints = []
     for joint in root.findall("joint"):
         if joint.get("type") != "revolute":
             continue
         limit = joint.find("limit")
+        parent = joint.find("parent").get("link")
+        child = joint.find("child").get("link")
+        if LAYOUT == "final":
+            inverse = {v: k for k, v in FINAL_PART.items()}
+            parent, child = inverse[parent], inverse[child]
         joints.append(dict(
             name=joint.get("name"),
-            parent=joint.find("parent").get("link"),
-            child=joint.find("child").get("link"),
+            parent=parent, child=child,
             origin=np.array([float(v)
                              for v in joint.find("origin").get("xyz").split()]),
             axis=np.array([float(v)
@@ -412,6 +476,8 @@ def pinch_grasp(name, min_width_mm=12.0, max_width_mm=70.0):
 
     돌려주는 것: dict(point, jaw_axis, long_axis, width_mm)  — 스캔 좌표계.
     """
+    if LAYOUT == "final":
+        min_width_mm = min(min_width_mm, 5.0)
     best = None
     for path in collision_meshes(name):
         vertices = np.array([[float(t) for t in line.split()[1:4]]
@@ -531,6 +597,23 @@ def build_spec(pitch=0.002, com_error_mm=0.0, seed=0, grasp_at=DEFAULT_GRASP,
     # 이 스캔에서 물체 바깥 허공일 수 있어 파지점으로 쓰면 모멘트팔이 어긋난다.
     root = order[0]
     pinch = pinch_grasp(root) if grasp_at == "pinch" else None
+    if pinch is not None and LAYOUT == "final":
+        # 볼록 조각의 정점 평균은 조각이 굵은 쪽(head 방향)으로 치우친다.
+        # 실제 파지는 긴 support 의 체적 중심에 두고, 조각에서는 죠 방향과
+        # 폭만 가져온다. 그리고 장축 부호를 head 쪽으로 맞춘다 — 이 부호가
+        # 뒤집히면 head 가 손목축 뒤쪽, 즉 그리퍼 몸통과 AFT200 마운트가
+        # 있는 자리로 간다 (2026-09-02: -41.2 mm 관통).
+        pinch["point"] = geometry[root]["centroid"]
+        head_row = next((row for row in joint_rows
+                         if row["parent"] == root
+                         and FINAL_PART.get(row["child"]) == "head"), None)
+        if head_row is None:
+            print(f"  [주의] {root} 에 head 가 직접 붙어 있지 않아 장축 부호를"
+                  " 못 정했습니다 — 파지 방향을 창 2 에서 눈으로 확인하세요")
+        else:
+            head_point = frame_origin[root] + head_row["origin"]
+            if np.dot(head_point - pinch["point"], pinch["long_axis"]) < 0:
+                pinch["long_axis"] = -pinch["long_axis"]
     if pinch is None and grasp_at == "pinch":
         print(f"  [주의] {root} 에서 물 만한 볼록 조각을 못 찾아 도심을 씁니다")
     if grasp_at == "base_frame":

@@ -149,11 +149,34 @@ def from_mesh(path, max_opening_m, **kwargs):
     return target
 
 
+def from_pivot_part(path, part, max_opening_m):
+    """PIVOT 밀도 모델이 쓰는 명목 파지점을 같은 메시 좌표로 내보낸다."""
+    import desk_lamp
+
+    expected = desk_lamp.visual_mesh_path(part).resolve()
+    if Path(path).resolve() != expected:
+        raise RuntimeError(f"FoundationPose mesh must be PIVOT's {expected}")
+    pinch = desk_lamp.pinch_grasp(part)
+    if pinch is None:
+        raise RuntimeError(f"PIVOT has no pinch grasp for {part}")
+    width = pinch["width_mm"] * 1e-3
+    return dict(
+        point=[float(v) for v in pinch["point"]],
+        jaw_axis=[float(v) for v in pinch["jaw_axis"]],
+        long_axis=[float(v) for v in pinch["long_axis"]],
+        width_m=width,
+        opening_m=float(min(width + JAW_CLEARANCE_M, max_opening_m)),
+        mesh=str(expected),
+        pivot_part=part,
+    )
+
+
 def describe(target):
     point = np.array(target["point"]) * 1000.0
+    across = (f" (가로 {1000*target['across_m']:.1f} mm)"
+              if "across_m" in target else "")
     return (f"파지점 {np.round(point, 1)} mm"
-            f"  단면 {1000*target['width_m']:.1f} mm"
-            f" (가로 {1000*target['across_m']:.1f} mm)"
+            f"  단면 {1000*target['width_m']:.1f} mm{across}"
             f"  개구 {1000*target['opening_m']:.1f} mm")
 
 
@@ -165,6 +188,8 @@ def main():
                         help="부위 하나의 워터타이트 메시 (.ply/.obj/.stl)")
     parser.add_argument("--part", default=None,
                         help="FoundationPose 가 쓰는 부위 이름 (예: support)")
+    parser.add_argument("--pivot-part", default=None,
+                        help="PIVOT 명목 파지점을 그대로 사용 (예: link_3)")
     parser.add_argument("--gripper", default="robotiq2f85",
                         choices=tuple(gr.GRIPPERS))
     parser.add_argument("--slab-mm", type=float, default=1000.0 * SLAB_M)
@@ -172,8 +197,10 @@ def main():
     args = parser.parse_args()
 
     spec = gr.GRIPPERS[args.gripper]
-    target = from_mesh(args.mesh, spec.max_opening_m,
-                       slab_m=args.slab_mm * 1e-3)
+    target = (from_pivot_part(args.mesh, args.pivot_part, spec.max_opening_m)
+              if args.pivot_part else
+              from_mesh(args.mesh, spec.max_opening_m,
+                        slab_m=args.slab_mm * 1e-3))
     target["part"] = args.part or Path(args.mesh).stem
     target["gripper"] = spec.key
     print(f"{target['part']}  ({spec.label}, 최대 개구"

@@ -64,6 +64,14 @@ PAD_SIZE_M = (0.004, 0.022, 0.0375)
 MIN_VIEW_GAIN = 1.15
 
 
+class NoFeasibleAngle(RuntimeError):
+    """이 파지 자세에서 측정 가능한 각도가 하나도 없다.
+
+    프로그램을 죽일 것이 아니라 사용자에게 "다시 물려 주세요" 를 띄워야 하는
+    상황이다. 창 1 이 이것을 잡아 안내로 바꾼다.
+    """
+
+
 def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
             density_scale, prior="weight", gripper="robotiq2f85",
             view_poses=True):
@@ -139,9 +147,26 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
             q[joint.position_start()] = value
         planner.set_fixed(q)
         home = np.array(start_q)[indices]
-        if all(planner.plan(home, np.array(arm)[indices]) is not None
-               and planner.plan(np.array(arm)[indices], home) is not None
-               for arm in arm_solutions[key].values()):
+        # **실행과 같은 사슬**을 검사한다.
+        #
+        # 실행부(explore_once)는 중력 3방향을 home 에 안 들르고 이어서 돈다:
+        #     start -> g1 -> g2 -> g3
+        # 그런데 예전에는 여기서 home<->g_k 왕복(별 모양)만 검사했다. 별의
+        # 모든 간선이 있어도 g1->g2 간선은 없을 수 있다. 그러면 필터를
+        # 통과한 각도가 실행 중에 막혀 **라운드가 통째로 날아간다** — 그것도
+        # 로봇이 이미 움직이고 렌치를 한두 개 읽은 뒤에.
+        #
+        # 그래서 실제로 지날 간선만, 실제로 지날 순서로 검사한다.
+        # home 왕복도 함께 본다 — 사슬 간선이 막혔을 때 되돌아갈 길이다.
+        legs = [np.array(arm)[indices]
+                for arm in arm_solutions[key].values()]
+        chain = [home] + legs + [home]
+        ok = all(planner.plan(chain[i], chain[i + 1]) is not None
+                 for i in range(len(chain) - 1))
+        if ok:
+            ok = all(planner.plan(home, leg) is not None
+                     and planner.plan(leg, home) is not None for leg in legs)
+        if ok:
             connected.append(theta)
         else:
             dropped.append(np.degrees(theta))
@@ -434,11 +459,16 @@ class PlannerScreen:
             q[joint.position_start()] = value
         planner.set_fixed(q)
         home = np.array(self.setup["start_q"])[indices]
-        for arm in solutions.values():
-            goal = np.array(arm)[indices]
-            if planner.plan(home, goal) is None:
+        legs = [np.array(arm)[indices] for arm in solutions.values()]
+        # prepare() 와 같은 기준: 실행할 사슬 + home 왕복(되돌아갈 길).
+        chain = [home] + legs + [home]
+        for i in range(len(chain) - 1):
+            if planner.plan(chain[i], chain[i + 1]) is None:
                 return False
-            if planner.plan(goal, home) is None:
+        for leg in legs:
+            if planner.plan(home, leg) is None:
+                return False
+            if planner.plan(leg, home) is None:
                 return False
         return True
 
@@ -490,11 +520,21 @@ class PlannerScreen:
                 best, best_score, best_sol = (np.atleast_1d(candidate),
                                               self.score(candidate), solutions)
                 break
-        if best is None:                # 그래도 없으면 검증 없이 최고값
+        if best is None:
+            # 예전에는 여기서 "검증 없이 최고값" 을 그냥 보여줬다. 그러면
+            # 사용자는 그 각도가 미검증인 줄 모르고 물체를 그 각도로 맞추고,
+            # 로봇은 경로 계획에서 멈춘다. 팔 자세(best_sol)가 없으므로
+            # 어차피 측정도 못 한다. 추천할 것이 없으면 없다고 말해야 한다.
             candidates = self.setup["feasible"]
             scores = [self.score(t) for t in candidates]
-            best = np.atleast_1d(candidates[int(np.argmax(scores))])
-            best_score, best_sol = float(np.max(scores)), None
+            hint = np.round(np.degrees(np.atleast_1d(
+                candidates[int(np.argmax(scores))])), 1)
+            raise NoFeasibleAngle(
+                f"이 파지 자세에서는 측정 가능한 각도가 없습니다"
+                f" ({len(blocked)}곳이 충돌·도달·경로 검사에 막힘).\n"
+                f"  준비 단계에서 통과했던 {hint} 도 지금은 막힙니다 —\n"
+                f"  물체가 처음 계획과 다르게 물려 있다는 뜻입니다.\n"
+                f"  물체를 다시 물리거나, 파지 자리를 팔의 더 끝쪽으로 옮기세요.")
         self.show(best)
         return best, best_score, best_sol
 
@@ -875,6 +915,22 @@ class RobotScreen:
             for joint, value in zip(self.arm_joints, actual):
                 self.q[joint.position_start()] = value
             self.publish()
+            # 실물에서는 follow() 가 도착할 때까지 막히므로 프레임마다
+            # 간격을 볼 수 없다 (그 감시는 시뮬 분기에만 있다). 대신
+            # **도착한 자리**에서 한 번 잰다. 로봇이 계획한 곳에 안 갔거나
+            # 책상 캘리브레이션이 틀렸으면 여기서 드러난다.
+            if self.check_motion:
+                distance, pair = self.clearance()
+                gap = np.degrees(np.abs(actual - target)).max()
+                if gap > 1.0:
+                    print(f"[진단] 도착 자세가 목표와 {gap:.1f} deg 다릅니다")
+                if distance < 0.0:
+                    print(f"[로봇] **경고: 도착 자세가 {1000*abs(distance):.1f} mm"
+                          f" 겹칩니다** {pair} — 모형과 실물이 어긋났습니다."
+                          f" 계속하기 전에 확인하세요.")
+                elif distance < self.min_distance_m:
+                    print(f"[로봇] 주의: 도착 자세 간격 {1000*distance:.1f} mm"
+                          f" (요구 {1000*self.min_distance_m:.0f}) {pair}")
             return True
 
         worst, worst_pair = np.inf, None
@@ -1664,9 +1720,16 @@ class RobotScreen:
         self.console.measuring()
         readings = []
         for g_hat in alg.G_DIRS:
-            if not self.move_to(solutions[tuple(g_hat)],
-                                f"탐색 자세 (중력 {np.round(g_hat, 0)})"):
-                return dict(round=target["round"], aborted=True)
+            name = f"탐색 자세 (중력 {np.round(g_hat, 0)})"
+            if not self.move_to(solutions[tuple(g_hat)], name):
+                # 직접 간선이 막혔다. 시작 자세를 거쳐 돌아간다 — prepare()
+                # 가 home 왕복을 함께 검증해 두므로 이 길은 있어야 한다.
+                # 라운드를 통째로 버리는 것보다 8초 더 도는 편이 낫다.
+                print("[로봇] 직접 경로가 막혀 시작 자세를 거쳐 갑니다")
+                if not self.move_to(self.setup["start_q"], "시작 자세 경유"):
+                    return dict(round=target["round"], aborted=True)
+                if not self.move_to(solutions[tuple(g_hat)], name):
+                    return dict(round=target["round"], aborted=True)
             time.sleep(self.settle_s)         # 흔들림이 가라앉기를 기다린다
             readings.append(self.read_one(g_hat, actual))
         wrench = np.concatenate(readings)
@@ -1985,10 +2048,9 @@ def connect_hardware(args, spec=None):
 # '어느 키가 어느 관절인가' 뿐이다. 실물에서 한 자세를 두 방법으로 읽어
 # 비교하기 전까지는 판정이 반대로 나올 수 있다.
 POSE_KEYS = {
-    # desklamp, --grasp-part link_3 일 때 spec.joints 는 [joint_2_3, joint_3_1].
-    #   joint_2_3 : link_3(support) -> link_2(Head)   = support_head_deg
-    #   joint_3_1 : link_3(support) -> link_1(베이스)  = base_support_deg
-    "desklamp": ("support_head_deg", "base_support_deg"),
+    # Final URDF를 link_3(support) 기준으로 다시 세우면
+    # [support->base, support->head] 순서다.
+    "desklamp": ("base_support_deg", "support_head_deg"),
     "laptop": ("opening_angle_deg",),
 }
 
