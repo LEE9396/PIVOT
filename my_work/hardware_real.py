@@ -16,7 +16,7 @@ RB5 나 AFT200 의 API 를 코드 곳곳에 흩뿌리면 두 가지가 나빠진
     backend.set_servo(on: bool)      -> 서보 on/off
 
 이 네 개 바깥의 모든 것 — 속도 상한, 준정적 조건, 도착 검증, 서보 상태기계,
-타어링 유효기간, 센서 프레임 부호, 단위 변환 — 은 여기서 구현하고
+영점 조정 유효기간, 센서 프레임 부호, 단위 변환 — 은 여기서 구현하고
 **지금 장비 없이 검증한다** (`python hardware_real.py --check`).
 
 실물 붙이는 날 팀이 할 일은 `RbpodoBackend` 의 네 함수를 채우는 것뿐이다.
@@ -27,6 +27,7 @@ RB5 나 AFT200 의 API 를 코드 곳곳에 흩뿌리면 두 가지가 나빠진
 
 import argparse
 import time
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -37,12 +38,18 @@ import hardware as hw
 # ---------------------------------------------------------------------------
 MAX_JOINT_SPEED_RAD_S = 0.35      # 사람이 옆에 있는 준정적 작업 기준
 ARRIVAL_TOL_RAD = np.deg2rad(0.5)  # 도착 판정 허용오차
-TARE_MAX_AGE_S = 30 * 60           # AFT200 온도 드리프트. 30분마다 다시.
+TARE_MAX_AGE_S = 0                 # 실험 시작 때 한 번 측정해 세션 동안 재사용.
 N_ARM_JOINT = 6
 
 
 class SafetyViolation(RuntimeError):
     """안전 불변식이 깨졌다. 절대 삼키지 말 것."""
+
+
+def principal_angles(q):
+    """같은 물리 자세를 경로계획기와 같은 -pi..pi 표현으로 맞춘다."""
+    q = np.asarray(q, dtype=float)
+    return np.arctan2(np.sin(q), np.cos(q))
 
 
 def quasi_static_duration(q_from, q_to, ratio=0.01, reach_m=0.85):
@@ -56,7 +63,7 @@ def quasi_static_duration(q_from, q_to, ratio=0.01, reach_m=0.85):
     L_max 는 관절 이동량의 최댓값, reach 는 말단까지의 팔 길이다. 정확한
     야코비안 대신 reach 를 쓰는 것은 **보수적인 쪽으로 틀리기** 위해서다.
     """
-    L = float(np.max(np.abs(np.asarray(q_to) - np.asarray(q_from))))
+    L = float(np.max(np.abs(principal_angles(np.asarray(q_to) - np.asarray(q_from)))))
     if L <= 0.0:
         return 0.0
     return float(np.sqrt(2.0 * np.pi * L * reach_m / (ratio * 9.81)))
@@ -124,22 +131,50 @@ class RbpodoBackend(ArmBackend):
     def _from_rad(self, q):
         return np.rad2deg(q) if self.deg_api else np.asarray(q, dtype=float)
 
-    def joint_positions(self):
-        self._connect()
+    def _read_status(self):
         reply = self._data.request_data(2.0)
         if reply is None:
             raise TimeoutError(f"RB5 {self.host}:{self.port + 1} 상태 응답 없음")
-        return self._to_rad(np.asarray(reply.sdata.jnt_ang[:N_ARM_JOINT],
-                                       dtype=float))
+        return reply.sdata
+
+    def joint_positions(self):
+        self._connect()
+        return principal_angles(self._to_rad(np.asarray(
+            self._read_status().jnt_ang[:N_ARM_JOINT], dtype=float)))
+
+    @staticmethod
+    def _joint_gap_deg(actual, target):
+        delta = np.deg2rad(np.asarray(actual) - np.asarray(target))
+        return float(np.max(np.abs(np.rad2deg(principal_angles(delta)))))
+
+    def _wait_for_arrival(self, target, timeout_s):
+        """이벤트 메시지 대신 실제 상태 채널로 이동 완료를 확인한다."""
+        started_at = time.monotonic()
+        saw_motion = False
+        while True:
+            status = self._read_status()
+            if any((status.op_stat_collision_occur, status.op_stat_sos_flag,
+                    status.op_stat_soft_estop_occur, status.op_stat_ems_flag)):
+                raise SafetyViolation("RB5 충돌/SOS/비상정지 상태를 감지했다")
+            gap = self._joint_gap_deg(status.jnt_ang[:N_ARM_JOINT], target)
+            moving = status.robot_state != 1 or status.task_state != 1
+            saw_motion = saw_motion or moving
+            if not moving and gap <= np.rad2deg(ARRIVAL_TOL_RAD):
+                return
+            elapsed = time.monotonic() - started_at
+            if not moving and saw_motion:
+                raise SafetyViolation(f"RB5가 목표 {gap:.2f}도 전에 정지했다")
+            if not moving and elapsed > 2.0:
+                raise RuntimeError("RB5 상태 채널에서 이동 시작을 확인하지 못했다")
+            if elapsed > timeout_s:
+                raise TimeoutError(f"RB5 이동이 {timeout_s:.1f}초 안에 끝나지 않았다")
+            time.sleep(0.05)
 
     def move_to(self, q, duration_s):
         self._connect()
         if duration_s <= 0:
             raise ValueError("이동 시간은 양수여야 한다")
-        reply = self._data.request_data(2.0)
-        if reply is None:
-            raise TimeoutError(f"RB5 {self.host}:{self.port + 1} 상태 응답 없음")
-        current = np.asarray(reply.sdata.jnt_ang[:N_ARM_JOINT], dtype=float)
+        current = np.asarray(self._read_status().jnt_ang[:N_ARM_JOINT], dtype=float)
         target = np.asarray(self._from_rad(q), dtype=float)
         if self.deg_api:
             limits = np.array([360.0, 360.0, 165.0, 360.0, 360.0, 360.0])
@@ -161,12 +196,12 @@ class RbpodoBackend(ArmBackend):
         if not started.is_success():
             self.halt()
             raise RuntimeError(f"RB5 이동 시작 확인 실패: {started.type()}")
-        finished = self._cobot.wait_for_move_finished(
-            self._rc, max(30.0, 5.0 * float(duration_s)))
-        self._rc.error().throw_if_not_empty()
-        if not finished.is_success():
+        try:
+            self._wait_for_arrival(target, max(30.0, 5.0 * float(duration_s)))
+        except Exception:
             self.halt()
-            raise RuntimeError("RB5 이동 완료 확인 실패")
+            raise
+        self._rc.error().throw_if_not_empty()
 
     def halt(self):
         self._connect()
@@ -260,7 +295,7 @@ class Rb5Driver(hw.RobotDriver):
     # -- 이동 ---------------------------------------------------------------
     def safe_duration(self, q_from, q_to, requested_s):
         """요청 시간이 안전 조건을 만족하는지 보고, 모자라면 늘린다."""
-        move = float(np.max(np.abs(np.asarray(q_to) - np.asarray(q_from))))
+        move = float(np.max(np.abs(principal_angles(np.asarray(q_to) - np.asarray(q_from)))))
         by_speed = move / self.max_speed if self.max_speed > 0 else 0.0
         by_quasi = quasi_static_duration(q_from, q_to, reach_m=self.reach_m)
         need = max(by_speed, by_quasi)
@@ -280,10 +315,12 @@ class Rb5Driver(hw.RobotDriver):
             target = np.asarray(target, dtype=float)
             if target.shape != (N_ARM_JOINT,):
                 raise SafetyViolation(f"경유점 차원이 {target.shape} 다")
+            if np.max(np.abs(principal_angles(target - q))) <= self.arrival_tol:
+                continue
             dt = self.safe_duration(q, target, duration_s)
             self.backend.move_to(target, dt)
             q = self.joint_positions()                 # 도착을 **확인**한다
-            gap = float(np.max(np.abs(q - target)))
+            gap = float(np.max(np.abs(principal_angles(q - target))))
             if gap > self.arrival_tol:
                 self.backend.halt()
                 raise SafetyViolation(
@@ -430,10 +467,10 @@ class FoundationPoseSensor(hw.PoseSensor):
 
 
 # ---------------------------------------------------------------------------
-# 타어링 유효기간
+# 영점 조정 유효기간
 # ---------------------------------------------------------------------------
 class TimedTare(hw.TareTable):
-    """타어링에 시각을 붙여 오래된 값을 거부한다.
+    """영점 조정값에 시각을 붙여 오래된 값을 거부한다.
 
     AFT200 은 온도 드리프트가 있다. 아침에 잰 값을 오후에 쓰면 그리퍼 무게를
     잘못 빼게 되고, 그건 라운드를 늘려도 안 없어지는 치우침이 된다.
@@ -452,11 +489,11 @@ class TimedTare(hw.TareTable):
     def apply(self, g_hat, wrench):
         t = self.stamped.get(self.key(g_hat))
         if t is None:
-            raise KeyError(f"중력 방향 {np.round(g_hat, 3)} 타어링 값이 없다.")
+            raise KeyError(f"중력 방향 {np.round(g_hat, 3)} 영점 조정값이 없다.")
         age = self.clock() - t
-        if age > self.max_age_s:
+        if self.max_age_s > 0 and age > self.max_age_s:
             raise SafetyViolation(
-                f"타어링이 {age/60:.0f}분 전 값이다 (허용 {self.max_age_s/60:.0f}분). "
+                f"영점 조정값이 {age/60:.0f}분 전 값이다 (허용 {self.max_age_s/60:.0f}분). "
                 "온도 드리프트로 그리퍼 몫이 달라졌을 수 있으니 다시 재세요.")
         return super().apply(g_hat, wrench)
 
@@ -486,6 +523,24 @@ def self_check(verbose=True):
         assert got >= quasi_static_duration(q0, q1) - 1e-9, "준정적 조건 미적용"
         assert d.safe_duration(q0, q1, 999.0) == 999.0, "충분한 시간을 줄이면 안 된다"
 
+    def t_angle_wrap():
+        raw = np.deg2rad([278.36, 37.52, 48.15, 16.92, -99.17, -272.42])
+        expected = [-81.64, 37.52, 48.15, 16.92, -99.17, 87.58]
+        assert np.allclose(np.rad2deg(principal_angles(raw)), expected, atol=1e-9)
+
+    def t_backend_arrival_poll():
+        backend = RbpodoBackend.__new__(RbpodoBackend)
+        states = iter([
+            SimpleNamespace(jnt_ang=[0] * 6, robot_state=3, task_state=1,
+                            op_stat_collision_occur=0, op_stat_sos_flag=0,
+                            op_stat_soft_estop_occur=0, op_stat_ems_flag=0),
+            SimpleNamespace(jnt_ang=[10] * 6, robot_state=1, task_state=1,
+                            op_stat_collision_occur=0, op_stat_sos_flag=0,
+                            op_stat_soft_estop_occur=0, op_stat_ems_flag=0),
+        ])
+        backend._read_status = lambda: next(states)
+        backend._wait_for_arrival(np.full(6, 10.0), 1.0)
+
     # 2. 도착 실패를 잡아내는가 (블로킹이 아닌 백엔드 흉내)
     def t_arrival():
         class Lazy(FakeArm):
@@ -498,6 +553,11 @@ def self_check(verbose=True):
         except SafetyViolation:
             return
         raise AssertionError("도착하지 않았는데 통과시켰다")
+
+    def t_skip_same():
+        arm = FakeArm()
+        Rb5Driver(arm, log=lambda *a: None).follow([np.zeros(6)], 10.0)
+        assert not arm.log, "현재 자세에 0거리 이동 명령을 보냈다"
 
     # 3. 서보 OFF 중 이동 거부 + ON 후 각도 재확인
     def t_servo():
@@ -568,7 +628,7 @@ def self_check(verbose=True):
         _, sig = p.object_joint_deg()
         assert sig[0] >= 0.5, f"sigma 하한 미적용 {sig}"
 
-    # 8. 타어링 유효기간
+    # 8. 영점 조정 유효기간
     def t_tare_age():
         clock = [0.0]
         t = TimedTare(max_age_s=60.0, clock=lambda: clock[0])
@@ -578,16 +638,16 @@ def self_check(verbose=True):
         clock[0] = 3600.0
         try:
             t.apply(g, np.ones(6) * 2)
-            raise AssertionError("1시간 지난 타어링을 통과시켰다")
+            raise AssertionError("1시간 지난 영점 조정값을 통과시켰다")
         except SafetyViolation:
             pass
 
-    # 9. 타어링이 없으면 측정이 진행되지 않는가
+    # 9. 영점 조정값이 없으면 측정이 진행되지 않는가
     def t_tare_missing():
         t = TimedTare()
         try:
             t.apply(np.array([1.0, 0, 0]), np.ones(6))
-            raise AssertionError("타어링 없이 측정을 허용했다")
+            raise AssertionError("영점 조정 없이 측정을 허용했다")
         except KeyError:
             pass
 
@@ -603,14 +663,17 @@ def self_check(verbose=True):
 
     for name, fn in [
             ("이동 시간이 속도·준정적 조건에 맞춰 늘어난다", t_stretch),
+            ("제어기 360도 표현을 경로계획기 표현으로 맞춘다", t_angle_wrap),
+            ("상태 채널의 실제 관절각으로 도착을 확인한다", t_backend_arrival_poll),
             ("도착하지 않으면 예외를 던진다 (블로킹 검증)", t_arrival),
+            ("현재 자세와 같은 경유점은 건너뛴다", t_skip_same),
             ("서보 OFF 중 이동 거부 / ON 후 각도 재확인", t_servo),
             ("렌치 평균 + 튀는 샘플 제거", t_wrench),
             ("센서 힘 방향 부호 규약 검사", t_sign),
             ("오래된 물체 자세를 거부한다", t_stale),
             ("자세 불확실성 하한 적용", t_sigma_floor),
-            ("타어링 유효기간(30분) 적용", t_tare_age),
-            ("타어링 없으면 측정 진행 불가", t_tare_missing),
+            ("설정한 영점 조정 유효기간 적용", t_tare_age),
+            ("영점 조정 없으면 측정 진행 불가", t_tare_missing),
             ("run_tare 가 중력 3방향을 모두 채운다", t_run_tare)]:
         case(name, fn)
 

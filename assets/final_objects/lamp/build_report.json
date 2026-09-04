@@ -1,0 +1,26 @@
+{
+  "source": "2d_gaussian_splatting_final.ply (provenance only)",
+  "parts": {
+    "base": {
+      "output_vertices_faces": [
+        38269,
+        76382
+      ],
+      "split": "nearest physical part; source coordinates preserved"
+    },
+    "support": {
+      "output_vertices_faces": [
+        36908,
+        73520
+      ],
+      "split": "nearest physical part; source coordinates preserved"
+    },
+    "head": {
+      "output_vertices_faces": [
+        47277,
+        94410
+      ],
+      "split": "nearest physical part; source coordinates preserved"
+    }
+  }
+}

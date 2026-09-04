@@ -181,9 +181,7 @@ def main():
                     changed = True
             if meshcat.GetButtonClicks(camera_button) != camera_clicks:
                 camera_clicks = meshcat.GetButtonClicks(camera_button)
-                meshcat.SetCameraPose(
-                    np.array(rs.CAMERA["position_xyz_m"]),
-                    np.array(rs.CAMERA["look_at_xyz_m"]))
+                meshcat.SetCameraPose(*rs.camera_view(rs.CAMERA))
                 print("  -> D456 시점")
             if meshcat.GetButtonClicks(reset_button) != reset_clicks:
                 reset_clicks = meshcat.GetButtonClicks(reset_button)

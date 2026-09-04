@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# RB5 손목 전용 3자세 영점 조정. 기본은 무동작 계획 검증이다.
+#
+#   setup/wrist_tare.sh --plan   J1-J3 고정 경로만 계산
+#   setup/wrist_tare.sh --run    J4-J6 자동 영점 조정 실행 (원위치 복귀 없음)
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONF="${HERE}/experiment.conf"
+MODE="${1:---plan}"
+
+if [[ ! -f "${CONF}" ]]; then
+  echo "설정 파일이 없습니다: ${CONF}"
+  echo "  cp setup/experiment.conf.example setup/experiment.conf"
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "${CONF}"
+
+expand() { eval echo "$1"; }
+PIVOT_ROOT="$(expand "${PIVOT_ROOT}")"
+MESHPCA_ROOT="$(expand "${MESHPCA_ROOT}")"
+TARE_FILE="$(expand "${TARE_FILE}")"
+R="${PIVOT_ROOT}/robot_learning/scripts/run_drake_env.sh"
+SCRIPT="${PIVOT_ROOT}/integration/meshpca/tare_real.py"
+
+case "${MODE}" in
+  --plan)
+    ACTION=(--plan-only)
+    ;;
+  --run)
+    if pgrep -f 'python .*dual_view.py .*--hardware real' >/dev/null; then
+      echo "실물 통합 UI가 실행 중입니다. UI를 종료한 뒤 영점 조정을 실행하세요." >&2
+      exit 1
+    fi
+    echo "5초 뒤 손목 J4-J6 자동 영점 조정을 시작합니다. 작업영역에서 물러나세요."
+    echo "세 번째 자세에서 저장·종료하며 원위치로 복귀하지 않습니다."
+    sleep 5
+    ACTION=(--setup --overwrite)
+    ;;
+  -h|--help)
+    sed -n '2,5p' "$0"
+    exit 0
+    ;;
+  *)
+    echo "사용법: $0 --plan|--run" >&2
+    exit 2
+    ;;
+esac
+
+export PIVOT_WORKDIR="${PIVOT_ROOT}/my_work"
+exec "${R}" env PYTHONPATH="${MESHPCA_ROOT}/pivot" python -u "${SCRIPT}" \
+  --robot-ip "${ROBOT_HOST}" --output "${TARE_FILE}" "${ACTION[@]}"

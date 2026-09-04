@@ -13,8 +13,8 @@
         {"id": ..., "X_WC": 4x4,       월드 <- 카메라
          "depth_intrinsics": {fx, fy, cx, cy}}
 
-PIVOT 의 월드는 **로봇 베이스**다 (robot_scene 이 link0 을 월드에 용접한다).
-그래서 `base_from_camera` 가 곧 `X_WC` 다 — 행렬을 옮기고 이름만 바꾸면 된다.
+PIVOT 의 월드는 실험실 `lab_world` 이고 RB5 베이스는 그 안의 고정 자세다.
+따라서 `base_from_camera` 에 `lab_world_from_base` 를 곱해 `X_WC` 로 바꾼다.
 
 이걸 안 하면 PIVOT 은 캘리브레이션 파일이 없다고 보고 **설정값(명목 위치)**
 으로 돕는다. 그러면 각도 측정 자세를 실제와 다른 카메라 위치 기준으로 고르고,
@@ -44,16 +44,17 @@ def convert(data, camera_id=None):
     if "base_from_camera" not in data:
         raise KeyError("base_from_camera 가 없습니다. import_easyhec.py 의"
                        " 출력이 맞는지 확인하세요")
-    X_WC = np.asarray(data["base_from_camera"], dtype=float)
-    if X_WC.shape != (4, 4):
-        raise ValueError(f"base_from_camera 가 4x4 가 아닙니다: {X_WC.shape}")
-    if not np.allclose(X_WC[3], [0.0, 0.0, 0.0, 1.0], atol=1e-6):
+    X_BC = np.asarray(data["base_from_camera"], dtype=float)
+    if X_BC.shape != (4, 4):
+        raise ValueError(f"base_from_camera 가 4x4 가 아닙니다: {X_BC.shape}")
+    if not np.allclose(X_BC[3], [0.0, 0.0, 0.0, 1.0], atol=1e-6):
         raise ValueError("base_from_camera 가 동차변환이 아닙니다")
-    rotation = X_WC[:3, :3]
+    rotation = X_BC[:3, :3]
     error = float(np.abs(rotation.T @ rotation - np.eye(3)).max())
     if error > 2e-3:
         raise ValueError(f"회전이 직교하지 않습니다 (오차 {error:.2e})")
 
+    X_WC = rs._robot_base_pose().GetAsMatrix4() @ X_BC
     camera = data.get("camera", {})
     payload = {
         "id": camera_id or rs.CAMERA_ID,
@@ -62,7 +63,13 @@ def convert(data, camera_id=None):
         "source_file": data.get("source"),
     }
     if "intrinsics" in data:
-        payload["depth_intrinsics"] = dict(data["intrinsics"])
+        intrinsics = dict(data["intrinsics"])
+        payload["depth_intrinsics"] = {
+            key: intrinsics[key] for key in ("fx", "fy", "cx", "cy")
+            if key in intrinsics}
+        if "width" in intrinsics and "height" in intrinsics:
+            payload["resolution"] = [int(intrinsics["width"]),
+                                     int(intrinsics["height"])]
     if camera.get("serial"):
         payload["serial"] = camera["serial"]
     if camera.get("model"):
@@ -90,7 +97,7 @@ def main():
 
     position = np.asarray(payload["X_WC"], dtype=float)[:3, 3]
     print(f"저장 -> {out}")
-    print(f"  카메라 위치 (로봇 베이스 기준) {np.round(position, 3)} m")
+    print(f"  카메라 위치 (lab_world 기준) {np.round(position, 3)} m")
     # 되읽어서 PIVOT 이 실제로 쓰는지 확인한다. 파일만 쓰고 끝내면
     # 이름이 틀려도 알 수 없다.
     camera = rs.load_camera(payload["id"], announce=True)

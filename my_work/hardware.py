@@ -6,13 +6,13 @@ dual_view 의 오른쪽 화면은 이미 '로봇에게 시키고 렌치를 받�
 그 일을 하는 주체를 갈아끼울 수 있게 인터페이스로 뽑아 둔 것이 이 모듈이다.
 
     RobotDriver   팔을 궤적대로 움직이고 현재 관절각을 알려준다
-    WrenchSensor  손목 렌치를 읽는다 (평균 + 타어링)
+    WrenchSensor  손목 렌치를 읽는다 (평균 + 영점 조정)
     PoseSensor    물체 관절각을 알려준다 (FoundationPose)
 
 각각 Sim* 구현이 기본으로 들어 있어 하드웨어 없이도 전 과정을 돌릴 수 있고,
 Rb5Driver / Aft200Sensor / FoundationPoseSensor 는 실물 붙일 자리다.
 
-실물에서 반드시 해야 하는 것 — 타어링
+실물에서 반드시 해야 하는 것 — 영점 조정
 --------------------------------------
 모형의 y 는 **물체만** 만드는 렌치다. 그런데 센서는 이것까지 다 읽는다.
 
@@ -73,7 +73,7 @@ class WrenchSensor(ABC):
 
     @abstractmethod
     def read_raw(self, n_samples):
-        """평균 렌치 [Fx Fy Fz Tx Ty Tz]. 타어링 전 원값."""
+        """평균 렌치 [Fx Fy Fz Tx Ty Tz]. 영점 조정 전 원값."""
 
 
 class PoseSensor(ABC):
@@ -85,7 +85,7 @@ class PoseSensor(ABC):
 
 
 # ---------------------------------------------------------------------------
-# 타어링 — 실물에서 가장 놓치기 쉬운 단계
+# 영점 조정 — 실물에서 가장 놓치기 쉬운 단계
 # ---------------------------------------------------------------------------
 class TareTable:
     """중력 방향별 공회전 렌치.
@@ -94,7 +94,7 @@ class TareTable:
     그 값이 그리퍼 + 마운트 + 손가락이 만드는 몫이다.
 
     주의: 그리퍼를 열고 닫으면 손가락 위치가 바뀌어 무게중심이 움직인다.
-    타어링과 측정에서 **같은 개구량** 을 써야 한다.
+    영점 조정과 측정에서 **같은 개구량** 을 써야 한다.
     """
 
     def __init__(self):
@@ -110,7 +110,7 @@ class TareTable:
         offset = self.table.get(self.key(g_hat))
         if offset is None:
             raise KeyError(
-                f"중력 방향 {np.round(g_hat, 3)} 의 타어링 값이 없다. "
+                f"중력 방향 {np.round(g_hat, 3)} 의 영점 조정값이 없다. "
                 "물체를 잡기 전에 run_tare() 를 먼저 돌려야 한다.")
         return np.asarray(wrench, dtype=float) - offset
 
@@ -127,7 +127,7 @@ def run_tare(robot, sensor, arm_poses, n_samples, settle_s=1.0,
     import time
 
     table = TareTable()
-    log("[타어] 물체를 잡지 않은 상태인지 확인하세요. 그리퍼 개구량은"
+    log("[영점 조정] 물체를 잡지 않은 상태인지 확인하세요. 그리퍼 개구량은"
         " 측정 때와 같아야 합니다.")
     for g_hat, arm_q in arm_poses.items():
         robot.follow([arm_q], duration_s)
@@ -135,7 +135,7 @@ def run_tare(robot, sensor, arm_poses, n_samples, settle_s=1.0,
         time.sleep(settle_s)
         raw = sensor.read_raw(n_samples)
         table.record(g_hat, raw)
-        log(f"[타어] g={np.round(g_hat, 2)}  "
+        log(f"[영점 조정] g={np.round(g_hat, 2)}  "
             f"F={np.round(raw[:3], 4)} N  T={np.round(raw[3:], 5)} N·m")
     return table
 
@@ -175,7 +175,7 @@ class SimRobot(RobotDriver):
 
 
 class SimWrench(WrenchSensor):
-    """진리 plant 에서 계산한 렌치 + 잡음. 타어링 값은 0 이다."""
+    """진리 plant 에서 계산한 렌치 + 잡음. 영점 조정값은 0 이다."""
 
     def __init__(self, theta_getter, g_hat_getter, rng=None):
         self.theta_getter = theta_getter
@@ -247,7 +247,8 @@ class Aft200Sensor(WrenchSensor):
       read_raw : n_samples 개를 모아 축별 평균
 
     주의
-      - 온도 드리프트가 있다. 세션 시작 때, 그리고 30분마다 타어링을 다시 한다.
+      - 이 실험은 세션 시작 때 한 번 영점을 조정하고 세션 동안 재사용한다.
+        온도 변화나 드리프트가 의심될 때만 작업자가 다시 측정한다.
       - 코드의 잡음 모형은 1000 샘플 평균 + 평균으로 안 줄어드는 5 % 바이어스
         를 가정한다 (obj.set_measurement_averaging).
       - 센서 좌표계가 모형의 센서 프레임과 같은 방향인지 확인해야 한다.

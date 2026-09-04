@@ -30,6 +30,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
@@ -177,12 +178,32 @@ def check_same_build(report, conf):
     return report.add(OK, "빌드 일치", f"메시 차이 {1000*worst:.1f} mm")
 
 
-def check_calibration(report, conf, work):
-    """핸드아이·타어·책상·각도부호 — 없으면 조용히 명목값으로 돈다."""
-    calib = work / "calibration"
+def check_calibration(report, conf, root):
+    """핸드아이·영점 조정·책상·각도부호 — 없으면 조용히 명목값으로 돈다."""
+    calib = root / "calibration"
     camera = sorted(calib.glob("camera_*.json"))
     if camera:
         report.add(OK, "핸드아이", f"{camera[0].name}")
+        stream = conf.get("FP_INTRINSICS")
+        try:
+            calibrated = json.loads(camera[0].read_text())
+            live = json.loads(Path(stream).read_text())
+            keys = ("fx", "fy", "cx", "cy")
+            if not all(k in live for k in keys + ("width", "height")):
+                raise ValueError("현재 스트림의 K/해상도가 불완전합니다")
+            if not all(float(live[k]) > 0 for k in ("fx", "fy")):
+                raise ValueError("현재 스트림의 fx/fy가 유효하지 않습니다")
+            expected_size = [int(conf.get("FP_CAMERA_WIDTH", live["width"])),
+                             int(conf.get("FP_CAMERA_HEIGHT", live["height"]))]
+            if [int(live["width"]), int(live["height"])] != expected_size:
+                raise ValueError("설정 해상도와 현재 스트림 해상도가 다릅니다")
+            report.add(OK, "카메라 내부보정",
+                       f"현재 스트림 {live['width']}x{live['height']} ·"
+                       f" fx={live['fx']:.2f}")
+        except Exception as exc:                       # noqa: BLE001
+            report.add(FAIL, "카메라 내부보정", str(exc),
+                       "tools/import_easyhec.py 에 --intrinsics FP_INTRINSICS 를"
+                       " 주어 다시 가져오세요")
     else:
         report.add(FAIL, "핸드아이", f"{calib}/camera_*.json 이 없습니다",
                    "import_calibration.py 로 옮기세요.\n"
@@ -191,10 +212,35 @@ def check_calibration(report, conf, work):
 
     tare = conf.get("TARE_FILE")
     if tare and Path(tare).is_file():
-        report.add(OK, "3자세 타어", Path(tare).name)
+        try:
+            payload = json.loads(Path(tare).read_text())
+            entries = payload.get("entries", [])
+            if len(entries) != 3 or any("joint_deg" not in e or
+                                        "direction_error_deg" not in e
+                                        for e in entries):
+                raise ValueError("3방향 joint_deg/direction_error_deg 기록이 불완전")
+            worst = max(float(e["direction_error_deg"]) for e in entries)
+            verified = [float(v["time"]) for v in payload.get("verifications", [])
+                        if v.get("passed")]
+            stamp = max([float(payload.get("created_at_s", 0.0))] + verified)
+            age = time.time() - stamp
+            max_age_s = float(conf.get("TARE_MAX_AGE_S", 30 * 60))
+            if worst > 1.0:
+                report.add(FAIL, "3자세 영점 조정", f"방향오차 최대 {worst:.2f} deg",
+                           "1 deg 이내로 다시 재세요")
+            elif stamp <= 0 or (max_age_s > 0 and age > max_age_s):
+                report.add(FAIL, "3자세 영점 조정", "유효한 측정/검증 기록이 없습니다",
+                           "tare_real.py --verify 또는 --setup 을 실행하세요")
+            else:
+                report.add(OK, "3자세 영점 조정",
+                           f"{Path(tare).name}, 최대 {worst:.2f} deg, "
+                           + ("세션 재사용" if max_age_s <= 0 else f"{age/60:.0f}분 전"))
+        except Exception as exc:                       # noqa: BLE001
+            report.add(FAIL, "3자세 영점 조정", f"파일이 불완전합니다: {exc}",
+                       "현재 tare_real.py --setup 으로 다시 재세요")
     else:
-        report.add(FAIL, "3자세 타어", f"없습니다: {tare}",
-                   "MeshPCA pivot/tare_real.py 로 빈 그리퍼 타어를 재세요")
+        report.add(FAIL, "3자세 영점 조정", f"없습니다: {tare}",
+                   "MeshPCA pivot/tare_real.py 로 빈 그리퍼 영점을 다시 조정하세요")
 
     table = calib / "rb5_table_current.json"
     if table.is_file():
@@ -239,9 +285,41 @@ def check_tracker(report, conf):
         data = json.loads(latest.read_text())
     except Exception as exc:                                   # noqa: BLE001
         return report.add(FAIL, "FoundationPose", f"latest.json 을 못 읽습니다: {exc}")
+    age = time.time() - float(data.get("timestamp_s", latest.stat().st_mtime))
+    if age > 2.0:
+        return report.add(FAIL, "FoundationPose",
+                          f"마지막 값이 {age:.1f}초 전입니다 — 트래커가 멈췄습니다",
+                          "창 2를 다시 띄워 latest.json 이 갱신되는지 확인하세요")
     angles = [k for k in data if k.endswith("_deg")]
     return report.add(OK, "FoundationPose",
                       f"각도 수신 {', '.join(angles) if angles else list(data)[:3]}")
+
+
+def check_robot(report, conf):
+    """실물 UI가 움직임을 허용하기 전에 RB5 전원·초기화를 확인한다."""
+    host = conf.get("ROBOT_HOST")
+    if not host:
+        return report.add(WARN, "RB5 상태", "ROBOT_HOST가 없습니다")
+    try:
+        import rbpodo
+        reply = rbpodo.CobotData(host).request_data(2.0)
+        if reply is None:
+            raise TimeoutError("상태 응답 없음")
+        state = reply.sdata
+        power = (state.information_chunk_1 >> 6) & 1
+        faults = any((state.op_stat_collision_occur, state.op_stat_sos_flag,
+                      state.op_stat_soft_estop_occur, state.op_stat_ems_flag))
+        ready = (state.init_state_info == 6 and state.init_error == 0
+                 and power == 1 and not faults)
+        detail = (f"초기화={state.init_state_info}, 전원={'ON' if power else 'OFF'}, "
+                  f"fault={'있음' if faults else '없음'}")
+        if ready:
+            return report.add(OK, "RB5 상태", detail)
+        return report.add(FAIL, "RB5 상태", detail,
+                          "티칭펜던트의 경고를 확인하고 Initialize를 완료하세요")
+    except Exception as exc:                                  # noqa: BLE001
+        return report.add(FAIL, "RB5 상태", f"읽기 실패: {exc}",
+                          "제어기 전원과 192.168.50.x 네트워크를 확인하세요")
 
 
 def check_masks(report, conf):
@@ -273,13 +351,14 @@ def main():
     conf = read_conf(args.conf.expanduser())
     if not conf:
         print(f"[주의] {args.conf} 를 못 읽었습니다 — 환경변수만 봅니다\n")
-    work = Path(conf.get("PIVOT_ROOT", ".")).expanduser() / "my_work"
+    root = Path(conf.get("PIVOT_ROOT", ".")).expanduser()
 
     print(f"PIVOT 0단계 준비 점검   ({args.conf})\n")
     report = Report()
+    check_robot(report, conf)
     check_asset(report, conf)
     check_same_build(report, conf)
-    check_calibration(report, conf, work)
+    check_calibration(report, conf, root)
     check_masks(report, conf)
     check_tracker(report, conf)
     report.show()
