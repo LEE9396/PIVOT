@@ -67,6 +67,8 @@ G_ACC = 9.81
 FORCE_RESIDUAL_MAX_N = 0.5
 TORQUE_RESIDUAL_MAX_NM = 0.02
 LEVER_MIN_M, LEVER_MAX_M = 0.02, 0.10
+# 센서 축이 모형과 이보다 더 돌아가 있으면 장착 변환이 틀린 것이다.
+AXIS_ANGLE_MAX_DEG = 5.0
 
 
 def _skew(v):
@@ -104,6 +106,58 @@ def fit_torque(g_dirs, torques):
     A, y = np.vstack(rows), np.concatenate(rhs)
     x, *_ = np.linalg.lstsq(A, y, rcond=None)
     return x[:3], x[3:], float(np.linalg.norm(y - A @ x))
+
+
+def solve_sensor_axes(g_dirs, forces):
+    """센서 축이 모형과 얼마나 어긋나 있는지 푼다. (R, 공구무게, 잔차)
+
+    모형은 "중력이 센서 좌표계에서 g_hat 이다" 라고 믿는다. 실제 센서 축이
+    거기서 R 만큼 돌아가 있으면 읽히는 힘은
+
+        f_k = b + W * (R @ g_hat_k)
+
+    가 된다. 방향끼리 빼면 고정 바이어스 b 가 사라지므로
+
+        f_i - f_j = W * R * (g_hat_i - g_hat_j)
+
+    이고, 이건 직교 프로크루스테스 문제다 (SVD 한 번). 방향이 3개면 겨우
+    맞아떨어져 검산할 여유가 없고, 5개 이상이면 남는 잔차로 "이 답을 믿어도
+    되나" 까지 판정된다.
+
+    R 이 항등에 가까우면 축이 맞는 것이고, 크게 돌아가 있으면 robot_scene 의
+    GRIPPER_MOUNT_YAW_RAD / MakeXRotation 이 실물과 다른 것이다.
+    """
+    g_dirs = np.asarray(g_dirs, dtype=float)
+    forces = np.asarray(forces, dtype=float)
+    A, B = [], []
+    for i in range(len(g_dirs)):
+        for j in range(i + 1, len(g_dirs)):
+            A.append(g_dirs[i] - g_dirs[j])
+            B.append(forces[i] - forces[j])
+    A, B = np.asarray(A).T, np.asarray(B).T          # (3, 쌍수)
+
+    def procrustes(target):
+        U, sigma, Vt = np.linalg.svd(target @ A.T)
+        # 반사(det=-1)는 회전이 아니다. 마지막 특이값 부호를 뒤집어 막는다.
+        D = np.diag([1.0, 1.0, float(np.sign(np.linalg.det(U @ Vt)))])
+        R = U @ D @ Vt
+        s = float(np.sum(sigma * np.diag(D)) / max(np.sum(A * A), 1e-12))
+        return R, s, float(np.linalg.norm(target - s * R @ A))
+
+    # 공구 무게항의 부호(+g 냐 -g 냐)는 회전으로 흡수되지 않는다. 순수한
+    # 부호 뒤집기는 det=-1 이라 회전이 아니기 때문이다. 그래서 양쪽을 다
+    # 풀어 보고 잘 맞는 쪽을 고른다. 고른 부호가 곧 센서의 힘 규약이다.
+    R_pos, s_pos, res_pos = procrustes(B)
+    R_neg, s_neg, res_neg = procrustes(-B)
+    if res_neg < res_pos:
+        return R_neg, -s_neg, res_neg
+    return R_pos, s_pos, res_pos
+
+
+def rotation_angle_deg(R):
+    """회전 행렬이 몇 도짜리 회전인가."""
+    return float(np.degrees(np.arccos(
+        np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))))
 
 
 def load(path):
@@ -152,7 +206,26 @@ def check(path, tool_kg=DEFAULT_TOOL_KG, log=print):
          "위와 같음"),
     ]
 
+    # 방향이 4개 이상이면 센서 축까지 풀어 본다.
+    axes = None
+    if len(g_dirs) >= 4:
+        R, signed, res_axis = solve_sensor_axes(g_dirs, forces)
+        axes = dict(R=R, force_n=signed, residual_n=res_axis,
+                    angle_deg=rotation_angle_deg(R))
+        rows.append((
+            "센서 축 정렬",
+            axes["angle_deg"] <= AXIS_ANGLE_MAX_DEG,
+            f"모형 대비 {axes['angle_deg']:.1f} deg 회전"
+            f"  (잔차 {res_axis:.3f} N)",
+            "robot_scene 의 GRIPPER_MOUNT_YAW_RAD / MakeXRotation 이 실물과 "
+            "다릅니다. 여기서 나온 회전으로 바꾸세요"))
+
     log(f"[영점 검산] {path}")
+    if len(g_dirs) < 4:
+        log(f"  [주의] 방향이 {len(g_dirs)}개뿐입니다. 미지수와 식의 수가 거의"
+            " 같아 잔차가 실제보다 작게 나오고,\n"
+            "         센서 축은 풀 수 없습니다. --setup 을 5방향 이상으로"
+            " 돌리세요.")
     log(f"  고정 바이어스  힘 {np.round(bias_f, 2)} N"
         f"   토크 {np.round(bias_t, 3)} N·m")
     for name, ok, value, hint in rows:
@@ -168,12 +241,20 @@ def check(path, tool_kg=DEFAULT_TOOL_KG, log=print):
             log("  [주의] 파일에 sensor_to_pivot 회전이 들어 있는데 코드가 읽지"
                 " 않습니다. 저장된 wrench 가 이미 회전된 값인지 확인하세요.")
 
+    if axes is not None and axes["angle_deg"] > AXIS_ANGLE_MAX_DEG \
+            and res_f > FORCE_RESIDUAL_MAX_N:
+        log(f"  [참고] 위의 '힘 맞춤 잔차' {res_f:.2f} N 은 축이 맞다고 보고 잰"
+            " 값이라 축 회전 몫이 섞여 있습니다.\n"
+            f"         축까지 풀고 남은 잔차는 {axes['residual_n']:.3f} N"
+            " 입니다. 축을 먼저 고치세요.")
+
     passed = all(ok for _, ok, _, _ in rows)
     log(f"  => {'합격' if passed else '불합격 — 이 상태로 측정하면 안 됩니다'}")
     return passed, dict(bias_force=bias_f, bias_torque=bias_t,
                         tool_mass_kg=mass, force_sign=np.sign(w_signed),
                         lever_m=lever, residual_force_n=res_f,
-                        residual_torque_nm=res_t, rows=rows)
+                        residual_torque_nm=res_t, axes=axes, rows=rows,
+                        n_directions=len(g_dirs))
 
 
 def main(argv):

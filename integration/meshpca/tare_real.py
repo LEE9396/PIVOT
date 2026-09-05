@@ -70,6 +70,40 @@ from path_planning import ArmPathPlanner
 import robot_scene as scene
 
 
+# 영점 조정에서 밟을 중력 방향들.
+#
+# 앞의 셋은 **반드시** 여기 있어야 한다 — dual_view 의 TareTable 이 이 키로
+# 값을 찾는다 (density_id_drake.G_DIRS 와 같은 셋).
+#
+# 뒤의 다섯은 검산용이다. 미지수가 축(3) + 바이어스(3) + 무게(1) = 7 개인데
+# 방향이 3 개면 식이 9 개뿐이라 거의 맞아떨어진다. 그러면 잔차가 0 에 가깝게
+# 나와서 "값이 맞다" 와 "검산할 여유가 없다" 를 구별할 수 없다. 실제로 3
+# 방향으로는 잔차 0.011 N, 같은 데이터를 8 방향으로 재면 0.102 N 이 나온다.
+#
+# 방향 하나당 손목 이동 몇 초. 전체가 5 분쯤 늘어난다.
+TARE_DIRECTIONS = [
+    (0.0, 0.0, -1.0),        # 필수 — 센서 +Z축을 천장으로
+    (1.0, 0.0, 0.0),         # 필수 — 센서 +X축을 바닥으로
+    (0.0, 1.0, 0.0),         # 필수 — 센서 +Y축을 바닥으로
+    (-1.0, 0.0, 0.0),
+    (0.0, -1.0, 0.0),
+    (0.57735, 0.57735, -0.57735),
+    (-0.57735, 0.57735, -0.57735),
+    (0.57735, -0.57735, -0.57735),
+]
+REQUIRED_DIRECTIONS = TARE_DIRECTIONS[:3]
+MIN_DIRECTIONS_FOR_AXES = 5
+
+
+def direction_label(g_hat):
+    return {
+        (0.0, 0.0, -1.0): "센서 +Z축을 천장으로",
+        (1.0, 0.0, 0.0): "센서 +X축을 바닥으로",
+        (0.0, 1.0, 0.0): "센서 +Y축을 바닥으로",
+    }.get(tuple(float(v) for v in g_hat),
+          f"중력이 센서 좌표계에서 {np.round(g_hat, 2).tolist()}")
+
+
 def empty_tool_spec():
     part = obj.Part("tool", (2.0, 78.0, 2.0), 0.01, 1000.0,
                     (1.0, 0.0, 0.0), (1.0, 0.0, 0.0),
@@ -150,7 +184,8 @@ def plan_paths(current, clearance_m, max_iters):
     return start, paths, clearances
 
 
-def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0):
+def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
+                     directions=None, log=print):
     """J1--J3를 고정하고 손목 J4--J6만으로 세 중력방향을 만든다."""
     checker = scene.PoseChecker(
         empty_tool_spec(), densities=[1000.0], joint_limits_rad=[],
@@ -194,22 +229,35 @@ def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0):
         result = Solve(prog)
         return None if not result.is_success() else result.GetSolution(q)[indices]
 
-    paths, clearances, targets, state = [], [], [], start
-    for g_hat in alg.G_DIRS:
+    wanted = [np.asarray(g, dtype=float)
+              for g in (directions if directions is not None else alg.G_DIRS)]
+    paths, clearances, reached, state = [], [], [], start
+    for g_hat in wanted:
+        required = any(np.allclose(g_hat, r) for r in REQUIRED_DIRECTIONS)
         target = solve_wrist(state, g_hat)
+        why = None
         if target is None:
-            raise RuntimeError(f"손목만으로 중력 방향 {g_hat.tolist()}를 못 만듭니다")
-        if np.max(np.abs(target[:3] - start[:3])) > 1e-9:
-            raise RuntimeError("손목 전용 계획이 J1--J3를 움직였습니다")
-        if not planner.edge_valid(state, target):
-            raise RuntimeError(f"손목 직선 경로가 충돌합니다: {g_hat.tolist()}")
+            why = "손목만으로 그 방향을 못 만듭니다"
+        elif np.max(np.abs(target[:3] - start[:3])) > 1e-9:
+            why = "손목 전용 계획이 J1--J3 를 움직였습니다"
+        elif not planner.edge_valid(state, target):
+            why = "손목 직선 경로가 충돌합니다"
+        if why is not None:
+            # 필수 셋은 없으면 영점 표 자체가 못 만들어지므로 멈춘다.
+            # 검산용 방향은 못 가도 그냥 건너뛴다 — 몇 개는 손목 한계(120 deg)
+            # 밖일 수 있고, 그것 때문에 준비가 막히면 안 된다.
+            if required:
+                raise RuntimeError(
+                    f"필수 중력 방향 {g_hat.tolist()}: {why}")
+            log(f"  건너뜀 {np.round(g_hat, 2).tolist()}: {why}")
+            continue
         path = [state, target]
         paths.append(path)
         clearances.append(planner.path_clearance(path, samples_per_edge=60))
-        targets.append(target)
+        reached.append(g_hat)
         state = target
 
-    return start, paths, clearances
+    return start, paths, clearances, reached
 
 
 def gravity_in_sensor(checker, q):
@@ -484,6 +532,14 @@ def main():
     parser.add_argument("--speed-deg-s", type=float, default=3.0)
     parser.add_argument("--clearance-mm", type=float, default=10.0)
     parser.add_argument("--max-iters", type=int, default=10000)
+    parser.add_argument("--dirs", type=int, default=len(TARE_DIRECTIONS),
+                        help="밟을 중력 방향 개수 (앞의 3개는 필수). 5개 이상이면"
+                             " 센서 축까지 풀리고 잔차로 검산할 여유가 생긴다")
+    parser.add_argument("--tool-kg", type=float, default=1.0,
+                        help="센서 아래 매달린 무게의 카탈로그 값"
+                             " (Robotiq 2F-85 0.925 + 커플러)")
+    parser.add_argument("--force", action="store_true",
+                        help="검산에 불합격해도 저장한다")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--manual", action="store_true",
@@ -517,13 +573,18 @@ def main():
     if args.manual:
         return run_manual(args, data, current)
 
-    start, paths, clearances = plan_wrist_paths(
-        current, args.clearance_mm / 1000.0)
+    directions = TARE_DIRECTIONS[:max(3, args.dirs)]
+    start, paths, clearances, reached = plan_wrist_paths(
+        current, args.clearance_mm / 1000.0, directions=directions)
     print("start joints [deg]:", np.round(np.degrees(start), 2).tolist())
-    for label, path, clearance in zip(("g-down", "g-x", "g-y"),
-                                      paths, clearances):
-        print(f"{label}: {len(path)} waypoints, clearance {clearance*1000:.2f} mm, "
-              f"goal {np.round(np.degrees(path[-1]), 1).tolist()} deg")
+    for g_hat, path, clearance in zip(reached, paths, clearances):
+        print(f"g={np.round(g_hat, 2).tolist()}: {len(path)} waypoints,"
+              f" clearance {clearance*1000:.2f} mm,"
+              f" goal {np.round(np.degrees(path[-1]), 1).tolist()} deg")
+    if len(reached) < MIN_DIRECTIONS_FOR_AXES:
+        print(f"  [주의] 갈 수 있는 방향이 {len(reached)}개뿐입니다."
+              f" {MIN_DIRECTIONS_FOR_AXES}개 미만이면 센서 축을 못 풀고,"
+              f" 잔차도 실제보다 작게 나옵니다.")
     if args.plan_only:
         print("PLAN ONLY: no robot command")
         return
@@ -542,7 +603,7 @@ def main():
     records = []
     try:
         require_ready(data)
-        for g_hat, path in zip(alg.G_DIRS, paths[:3]):
+        for g_hat, path in zip(reached, paths):
             robot.follow(path, path_duration(path, args.speed_deg_s))
             robot.stop()
             time.sleep(1.0)
@@ -559,16 +620,71 @@ def main():
     finally:
         robot.stop()
 
-    tare.save(args.output)
     import json
+    import tempfile
+
+    tare.save(args.output)
     payload = json.loads(args.output.read_text())
     for entry, (q, error_deg) in zip(payload["entries"], records):
         entry["joint_deg"] = np.degrees(q).tolist()
         entry["direction_error_deg"] = error_deg
-    payload["automatic"] = {"method": "J1-J3 fixed, J4-J6 only"}
+    payload["automatic"] = {"method": "J1-J3 fixed, J4-J6 only",
+                            "n_directions": len(reached)}
     payload["created_at_s"] = time.time()
+
+    # 저장하기 전에 **물리적으로 말이 되는지 검산한다.**
+    #
+    # 지금까지는 재서 저장하고 끝이었다. 그런데 그리퍼 질량은 이미 아는 값
+    # (2F-85 = 0.925 kg + 커플러) 이므로, 이 3~8 자세는 그 자체로 "알려진 추를
+    # 여러 방향에서 재는" 검증 실험이다. 추가 장비가 필요 없다.
+    #
+    # 검산이 이 넷을 한 번에 판정한다.
+    #   힘의 부호      density_id_drake.FORCE_SIGN 과 맞나
+    #   힘의 크기·단위 되찾은 공구 질량이 카탈로그와 맞나
+    #   토크 기준점    되찾은 지렛대가 그리퍼 무게중심 거리인가
+    #   배선 상태      맞춤 잔차. 케이블이 센서를 당기면 여기로 나온다
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "my_work"))
+    import tare_check
+
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tmp:
+        tmp.write(json.dumps(payload))
+        tmp_path = tmp.name
+    print()
+    ok, info = tare_check.check(tmp_path, tool_kg=args.tool_kg)
+    Path(tmp_path).unlink(missing_ok=True)
+
+    # 검산에서 나온 값을 파일에 남긴다. 코드에 박아둔 상수(TOOL_MASS_KG,
+    # robot_scene.GRIPPER_MOUNT_YAW_RAD)와 대조하라는 뜻이다.
+    payload["measured"] = {
+        "tool_mass_kg": float(info["tool_mass_kg"]),
+        "force_sign_vs_gravity": int(info["force_sign"]),
+        "com_lever_m": float(info["lever_m"]),
+        "residual_force_n": float(info["residual_force_n"]),
+        "residual_torque_nm": float(info["residual_torque_nm"]),
+        "bias_force_n": [float(v) for v in info["bias_force"]],
+        "passed": bool(ok),
+    }
+    if info.get("axes") is not None:
+        payload["measured"]["sensor_axis_rotation_deg"] = float(
+            info["axes"]["angle_deg"])
+        payload["measured"]["sensor_axis_R"] = [
+            [float(v) for v in row] for row in info["axes"]["R"]]
+    if abs(info["tool_mass_kg"] - TOOL_MASS_KG) > 0.1:
+        print(f"\n  [주의] 코드의 TOOL_MASS_KG = {TOOL_MASS_KG:.3f} kg 인데"
+              f" 실측은 {info['tool_mass_kg']:.3f} kg 입니다.")
+        print( "         tare_error_n() 의 자세오차 -> 힘오차 환산이 그만큼"
+               " 틀립니다.")
+
+    if not ok and not args.force:
+        fail = args.output.with_suffix(".failed.json")
+        fail.write_text(json.dumps(payload, indent=2) + "\n")
+        print(f"\n  검산 불합격 — {args.output.name} 를 쓰지 않았습니다.")
+        print(f"  잰 값은 확인용으로 {fail} 에 남겼습니다.")
+        print( "  고치고 다시 재세요. 그래도 이 값을 쓰려면 --force 입니다.")
+        raise SystemExit(1)
+
     args.output.write_text(json.dumps(payload, indent=2) + "\n")
-    print(f"saved: {args.output.resolve()}")
+    print(f"\nsaved: {args.output.resolve()}")
 
 
 if __name__ == "__main__":
