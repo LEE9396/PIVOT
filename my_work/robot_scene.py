@@ -391,7 +391,15 @@ def fov_self_test():
 # 이 중 파지점 어긋남은 이미 추정기가 미지수로 풀지만(design_core.grasp_columns),
 # 그건 **렌치를 고치는** 것이지 충돌 검사에 반영되지는 않는다. 충돌 검사는
 # 명목 형상만 본다. 그래서 여유를 형상 쪽에 따로 주어야 한다.
-MIN_DISTANCE_M = 0.010
+#
+# 10 mm 에서 20 mm 로 올린다. 이유 둘.
+#   1) 위 오차 예산의 합이 이미 10~13 mm 다. 10 mm 는 여유가 아니라 본전이었다.
+#   2) 실물이 움직일 때 10 mm 는 사람 눈으로 위험 여부를 판단할 수 없다.
+#      20 mm 면 보인다. 사람이 옆에 서 있는 실험이므로 이게 안전 조건이다.
+# 후보가 줄지 않는 것은 확인했다 — 램프 4x4 격자에서 10 mm 와 20 mm 가 똑같이
+# 8/16 을 통과한다. 22 mm 에서 9/16, 25 mm 에서 0/16 이므로 20 mm 는 절벽 앞
+# 안전한 자리다. 가장 빠듯한 쌍은 link_2(램프 머리) <-> base_floor 였다.
+MIN_DISTANCE_M = 0.020
 
 # IK 에만 얹는 추가 여유.
 #
@@ -400,7 +408,7 @@ MIN_DISTANCE_M = 0.010
 # 부동소수점 차이만으로 그 해를 탈락시킨다.
 #
 # 예전에는 계획기 문턱을 10% 낮춰(PLANNER_MARGIN_RATIO) 피했는데, 그러면
-# 실제로 보장되는 간격이 문턱보다 작아진다 — 10 mm 를 요구해도 경로는
+# 실제로 보장되는 간격이 문턱보다 작아진다 — 20 mm 를 요구해도 경로는
 # 9 mm 까지 파고들 수 있었다. 여유는 **지켜야 하는 쪽을 낮추는 게 아니라
 # 만드는 쪽을 높여서** 주는 것이 맞다. 그래서 IK 만 1 mm 더 요구한다.
 IK_SLACK_M = 0.001
@@ -416,8 +424,8 @@ ANGLE_TOL_RAD = np.deg2rad(1.0)
 #     head (joint_2 에서 최대 지레팔 304 mm)   1도 5.3 mm   2도 10.6   3도 15.9
 #     base (joint_1 에서 최대 지레팔 151 mm)   1도 2.6 mm   2도  5.3   3도  7.9
 #
-# 3 도면 head 끝이 15.9 mm 움직인다 — MIN_DISTANCE_M(10 mm) 보다 크다.
-# 즉 "여유 10 mm" 라고 판정한 자세가 실제로는 6 mm 파고들 수 있다.
+# 3 도면 head 끝이 15.9 mm 움직인다 — MIN_DISTANCE_M(20 mm) 에 육박한다.
+# 즉 "여유 20 mm" 라고 판정한 자세가 실제로는 4 mm 까지 줄어들 수 있다.
 #
 # 그래서 IK 로 찾은 팔 자세를 물체 각도 +-여유의 **모서리에서 다시 검사**한다.
 # IK 를 다시 풀지 않고 arm_pose_is_clear 로 간격만 재므로 값이 싸다.
@@ -1052,15 +1060,49 @@ class PoseChecker:
         작업자가 물체를 손으로 돌리는 동안 로봇은 멈춰 있으므로,
         이 검사가 시작 자세의 안전 조건이다.
         """
+        return self.pose_block_reason(arm_q, theta) is None
+
+    def pose_block_reason(self, arm_q, theta):
+        """막힌 이유를 사람이 읽을 수 있게 돌려준다. 안 막혔으면 None.
+
+        왜 이유를 따로 돌려주나
+        -----------------------
+        예전에는 참/거짓만 돌려주어서 화면에 "충돌/FOV 경로 실패" 라고만 떴다.
+        둘 중 어느 쪽인지, 어디가 몇 mm 모자란지 알 수 없으니 사람이 고칠 수가
+        없다. 시작 자세를 사람이 직접 정하게 된 뒤로는 더 그렇다 —
+        무엇을 얼마나 옮기면 되는지 알려주어야 한다.
+        """
         q = np.asarray(arm_q).copy()
         for joint, value in zip(self.object_joints, np.atleast_1d(theta)):
             q[joint.position_start()] = value
         self.plant.SetPositions(self.context, q)
         query = self.plant.get_geometry_query_input_port().Eval(self.context)
-        return (pp.collision_free(self.plant, query, self.min_distance_m,
-                                  self.arm)
-                and object_in_camera(self.plant, self.context, self.spec,
-                                     self.payload))
+        if not pp.collision_free(self.plant, query, self.min_distance_m,
+                                 self.arm):
+            return f"충돌 ({self.closest_pair_text(query)})"
+        if not object_in_camera(self.plant, self.context, self.spec,
+                                self.payload):
+            return "카메라 시야 밖 (물체 전체가 화면 안에 안 들어옴)"
+        return None
+
+    def closest_pair_text(self, query):
+        """가장 빠듯한 충돌쌍을 "A <-> B, 필요 20 mm 현재 4 mm" 로 적는다."""
+        inspector = query.inspector()
+        worst, text = np.inf, "가장 가까운 쌍을 못 찾음"
+        for pair in query.ComputeSignedDistancePairwiseClosestPoints(
+                self.min_distance_m):
+            bodies = [self.plant.GetBodyFromFrameId(inspector.GetFrameId(gid))
+                      for gid in (pair.id_A, pair.id_B)]
+            required = pp._required_clearance(bodies[0].model_instance(),
+                                              bodies[1].model_instance(),
+                                              self.arm, self.min_distance_m)
+            slack = pair.distance - required
+            if slack < worst:
+                worst = slack
+                text = (f"{bodies[0].name()} <-> {bodies[1].name()},"
+                        f" 필요 {1000*required:.0f} mm"
+                        f" 현재 {1000*pair.distance:.1f} mm")
+        return text
 
     def solve_robust(self, theta, g_hat, workspace=None):
         """초기추측을 바꿔가며 IK 를 여러 번 시도한다.

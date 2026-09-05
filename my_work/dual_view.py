@@ -21,6 +21,7 @@ ROS1 토픽으로 바꿔 끼우면 오른쪽 화면이 그대로 실물 로봇�
 """
 
 import argparse
+import itertools
 import json
 import os
 import sys
@@ -72,6 +73,22 @@ class NoFeasibleAngle(RuntimeError):
     프로그램을 죽일 것이 아니라 사용자에게 "다시 물려 주세요" 를 띄워야 하는
     상황이다. 창 1 이 이것을 잡아 안내로 바꾼다.
     """
+
+
+def start_pose_probes(checker, theta, tol_deg=None):
+    """시작 자세를 검사할 물체 각도들 — 명목값 + 사람 허용오차의 모서리.
+
+    작업자 판정(adjust_manually)이 목표에서 ANGLE_TOL_DEG 까지 벗어난 각도를
+    통과시키므로, 그 범위 안이면 어디서든 안전해야 한다.
+    """
+    theta = np.atleast_1d(np.asarray(theta, dtype=float))
+    reach = np.deg2rad(ANGLE_TOL_DEG if tol_deg is None else tol_deg)
+    if reach <= 0.0:
+        return [theta]
+    corners = itertools.product(*[(-reach, 0.0, reach)] * theta.size)
+    lows = np.array([lo for lo, _ in [j.limits_rad for j in checker.spec.joints]])
+    highs = np.array([hi for _, hi in [j.limits_rad for j in checker.spec.joints]])
+    return [np.clip(theta + np.asarray(c), lows, highs) for c in corners]
 
 
 def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
@@ -152,9 +169,31 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
         presentation = checker.sensor_frame.CalcPoseInWorld(
             checker.context).translation()
         print(f"  시작 자세: 현재 RB5 관절각 {np.round(np.degrees(start_arm_q), 1)} deg")
-        if not checker.arm_pose_is_clear(start_q, shown_theta):
-            print("  [주의] 현재 물체 각도에서 가상환경 충돌/FOV 불일치가 있습니다."
-                  " 오른쪽 보정 환경에서 확인하세요")
+        if start_theta is None:
+            print("  [주의] 물체 각도를 못 읽어 후보 격자의 첫 값"
+                  f" {np.round(np.degrees(shown_theta), 1)} deg 로 검사합니다."
+                  " 실제 각도와 다르면 이 검사는 의미가 없습니다 —"
+                  " --pose-file 로 실측 각도를 주세요")
+
+        # 시작 자세는 **사람이 물체를 손으로 돌리는 자리**다. 그동안 로봇은
+        # 멈춰 있지만 물체 모양은 계속 바뀐다. 그러므로 각도 하나가 아니라
+        # 사람이 지나갈 범위 전체에서 안전해야 한다.
+        #
+        # 예전에는 각도 하나만 보고, 막혀도 경고만 찍고 그대로 진행했다.
+        # 그러면 사람이 이미 물체를 다 돌려놓은 뒤에 로봇이 못 움직인다.
+        blocked = []
+        for probe in start_pose_probes(checker, shown_theta):
+            why = checker.pose_block_reason(start_q, probe)
+            if why is not None:
+                blocked.append((np.degrees(probe), why))
+        if blocked:
+            deg, why = blocked[0]
+            raise RuntimeError(
+                "시작 자세를 쓸 수 없습니다.\n"
+                f"  물체 각도 {np.round(deg, 1)} deg 에서: {why}\n"
+                f"  (사람이 돌리는 범위 +-{ANGLE_TOL_DEG:.0f} deg 중"
+                f" {len(blocked)} 곳이 막힘)\n"
+                "  시작 관절각을 바꾸거나, 물체를 다시 잡아 주세요.")
 
     # 자세가 안전해도 시작 자세에서 거기까지 가는 **경로**가 없을 수 있다.
     # 반복 횟수를 15배 늘려도 못 찾는 자세가 있는데, 그건 탐색 부족이 아니라
@@ -815,6 +854,8 @@ class RobotScreen:
         self.tcp_z_m = scene["tcp_z_m"]
         # 실제로 물었을 때의 개구량. 파지 단계에서 채워지고 보고에 쓰인다.
         self.grasp_report = None
+        # 라운드마다 영점 적용 전/후 렌치를 모아 둔다 (explore_once 가 비운다).
+        self.last_raw, self.last_tare = [], []
         # 파지력이 충분한지 가늠하는 데 쓴다 (실물에서는 저울로 잰 값).
         self.object_mass_kg = float(obj.assembled_mass_kg(spec,
                                                           setup["rho_gt"]))
@@ -1834,6 +1875,7 @@ class RobotScreen:
         # 손목에 걸린 것만 읽으므로, 중력 방향마다 그 자리에서 재야 한다.
         self.console.measuring()
         readings = []
+        self.last_raw, self.last_tare = [], []
         for g_hat in alg.G_DIRS:
             name = f"탐색 자세 (중력 {np.round(g_hat, 0)})"
             if not self.move_to(solutions[tuple(g_hat)], name):
@@ -1848,10 +1890,18 @@ class RobotScreen:
             time.sleep(self.settle_s)         # 흔들림이 가라앉기를 기다린다
             readings.append(self.read_one(g_hat, actual))
         wrench = np.concatenate(readings)
+        flat = lambda rows: ([float(v) for v in np.concatenate(rows)]
+                             if rows else None)
         return dict(round=target["round"],
                     object_joint_deg=[float(v) for v in actual],
                     object_joint_deg_measured=[float(v) for v in measured],
                     wrench=[float(v) for v in wrench],
+                    wrench_raw=flat(self.last_raw),
+                    tare_applied=flat(self.last_tare),
+                    robot_joint_deg=[float(v) for v in
+                                     np.degrees(np.asarray(self.q)[
+                                         [j.position_start()
+                                          for j in self.arm_joints]])],
                     aborted=False)
 
     # -- 각도 측정 ------------------------------------------------------
@@ -1999,7 +2049,14 @@ class RobotScreen:
             self.wrench_sensor.set_pose(
                 np.deg2rad(np.atleast_1d(actual_deg)), g_hat)
         raw = self.wrench_sensor.read_raw(self.samples_per_hold)
-        return self.tare.apply(g_hat, raw)
+        tared = self.tare.apply(g_hat, raw)
+        # 영점 적용 **전** 값을 남긴다. 이게 없으면 나중에 "센서가 이상한가,
+        # 영점이 이상한가" 를 못 가른다. session_20260904_1736 이 정확히 그
+        # 이유로 사후 분석에서 막혔다 — 잔차 팽창 6506 의 출처를 못 찾았다.
+        self.last_raw.append(np.asarray(raw, dtype=float).copy())
+        self.last_tare.append(np.asarray(raw, dtype=float) - np.asarray(tared,
+                                                                        dtype=float))
+        return tared
 
     def solve_exploration_poses(self, angle_deg):
         """측정된 관절각에서 중력 3방향의 팔 자세를 새로 푼다.
@@ -2697,7 +2754,19 @@ def main():
                     "object_joint_deg_actual": reply["object_joint_deg"],
                     "object_joint_deg_measured": reply["object_joint_deg_measured"],
                     "wrench": reply["wrench"],
+                    # 아래 셋이 없으면 실패했을 때 원인을 못 가른다.
+                    #   wrench_raw   영점 적용 **전** 센서 값
+                    #   tare_applied 실제로 빼낸 값
+                    #   robot_joint_deg  그때 로봇이 어디 있었나
+                    "wrench_raw": reply.get("wrench_raw"),
+                    "tare_applied": reply.get("tare_applied"),
+                    "robot_joint_deg": reply.get("robot_joint_deg"),
                 },
+                # 추정이 스스로 매긴 점수. 1 에 가까우면 모형이 데이터를
+                # 설명한 것이고, 크면 설명 못 한 것이다. 이 값과 위의 원시
+                # 렌치가 같이 있어야 사후에 원인을 좁힐 수 있다.
+                "residual_inflation": float(planner.inflate),
+                "grasp_offset_mm": [float(1000 * v) for v in planner.grasp_hat],
                 "parts": [{"name": row["name"],
                            "label": labels.get(row["name"], row["name"]),
                            "volume_m3": float(row["volume_m3"])}

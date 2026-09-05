@@ -46,6 +46,21 @@ except ImportError:
 G_ACC = 9.81
 RNG = np.random.default_rng(0)
 
+# 센서가 어느 쪽을 읽는가. **이 저장소에서 힘 부호를 정하는 유일한 자리다.**
+#
+#   +1.0  센서가 물체가 아래로 당기는 힘을 읽는다   f = +m g ghat
+#   -1.0  센서가 손목이 떠받치는 힘을 읽는다        f = -m g ghat
+#
+# 시뮬레이션에서는 measure() 가 만들고 regressor() 가 소비하므로 어느 쪽이든
+# 상쇄되어 안 드러난다. 실물에서는 드러난다 — 반대로 잡으면 최소제곱이 밀도를
+# 음수로 밀고, RHO_BOUNDS 하한(50)에 붙어 버린다. 실제로 그렇게 실패한 세션이
+# 있다 (experiments/session_20260904_1736: 부위 3개 중 2개가 정확히 50).
+#
+# 실물이 어느 쪽인지는 **영점 조정 데이터로 확인한다.** 그리퍼 질량을 이미
+# 아니까 추가 장비가 필요 없다. my_work/tare_check.py 가 그 검산을 한다.
+# 값을 바꿀 때는 여기만 바꾼다. 읽는 쪽에서 또 뒤집으면 원위치가 된다.
+FORCE_SIGN = +1.0
+
 # ---------------------------------------------------------------------------
 # Object definition: (name, box dims lx,ly,lz [m], true density [kg/m^3])
 # Body frame of every part sits at its box centroid, so c_bar_local = 0 and
@@ -182,8 +197,10 @@ def regressor(theta, g_dirs=G_DIRS):
     c = part_centroids_in_S(theta)                       # (P, 3)
     blocks = []
     for g_hat in g_dirs:
-        force_rows = G_ACC * np.outer(g_hat, VOLUMES)    # (3, P)
-        torque_rows = G_ACC * (np.cross(c, g_hat).T * VOLUMES)  # (3, P)
+        # 예측식도 measure() 와 **같은 부호 규약**을 써야 한다. 한쪽만 뒤집으면
+        # y 와 A*rho 의 부호가 어긋나 밀도가 음수로 나온다.
+        force_rows = FORCE_SIGN * G_ACC * np.outer(g_hat, VOLUMES)    # (3, P)
+        torque_rows = FORCE_SIGN * G_ACC * (np.cross(c, g_hat).T * VOLUMES)
         blocks.append(np.vstack([force_rows, torque_rows]))
     return np.vstack(blocks)
 
@@ -198,7 +215,7 @@ def measure(theta, g_dirs=G_DIRS, rng=RNG):
     p_com = TRUTH_PLANT.CalcCenterOfMassPositionInWorld(TRUTH_CTX)
     ys = []
     for g_hat in g_dirs:
-        f = m * G_ACC * g_hat
+        f = FORCE_SIGN * m * G_ACC * g_hat
         tau = np.cross(p_com, f)
         noise = rng.normal(0.0, np.sqrt(R_EPS_DIAG))
         ys.append(np.concatenate([f, tau]) + noise)

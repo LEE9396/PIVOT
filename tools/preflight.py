@@ -242,6 +242,41 @@ def check_calibration(report, conf, root):
         report.add(FAIL, "3자세 영점 조정", f"없습니다: {tare}",
                    "MeshPCA pivot/tare_real.py 로 빈 그리퍼 영점을 다시 조정하세요")
 
+    # 영점을 "쟀다" 와 "맞다" 는 다르다.
+    #
+    # 위 검사는 로봇이 세 자세를 제대로 밟았는지(방향오차)와 값이 언제 것인지만
+    # 본다. 값 자체가 물리적으로 말이 되는지는 안 본다. session_20260904_1736 은
+    # 위 검사를 OK 로 통과했지만, 잰 값을 강체 하나가 중력 방향만 바꾼 것으로
+    # 설명하면 14.7 N 이 남았다 — 재려던 램프 전체가 5.6 N 인데.
+    #
+    # 그리퍼 질량은 이미 아는 값이므로 추 없이 그 자리에서 검산할 수 있다.
+    # my_work/tare_check.py 를 보라.
+    if tare and Path(tare).is_file():
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "my_work"))
+            import tare_check
+            lines = []
+            passed, info = tare_check.check(tare, log=lines.append)
+            detail = (f"공구 {info['tool_mass_kg']:.3f} kg, "
+                      f"부호 {'-g' if info['force_sign'] < 0 else '+g'}, "
+                      f"지렛대 {1000*info['lever_m']:.0f} mm, "
+                      f"잔차 {info['residual_force_n']:.2f} N /"
+                      f" {info['residual_torque_nm']:.3f} N·m")
+            failed = [name for name, ok, _, _ in info["rows"] if not ok]
+            report.add(OK if passed else FAIL, "영점 물리 검산", detail,
+                       None if passed else
+                       "실패 항목: " + ", ".join(failed) + "\n"
+                       "  자세한 이유와 조치는 다음을 실행하세요:\n"
+                       f"  cd my_work && python tare_check.py {tare}")
+        except Exception as exc:                       # noqa: BLE001
+            report.add(WARN, "영점 물리 검산", f"검산을 못 돌렸습니다: {exc}",
+                       "my_work/tare_check.py 가 있는지 확인하세요")
+
+    if tare and float(conf.get("TARE_MAX_AGE_S", 30 * 60)) <= 0:
+        report.add(WARN, "영점 유효기간", "TARE_MAX_AGE_S=0 (무제한)",
+                   "AFT200 은 온도 드리프트가 있습니다. 세션마다 다시 재고\n"
+                   "  기본값(1800초)으로 되돌리는 편이 안전합니다.")
+
     table = calib / "rb5_table_current.json"
     if table.is_file():
         data = json.loads(table.read_text())
