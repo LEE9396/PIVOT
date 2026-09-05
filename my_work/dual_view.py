@@ -93,15 +93,34 @@ def start_pose_probes(checker, theta, tol_deg=None):
 
 def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
             density_scale, prior="weight", gripper="robotiq2f85",
-            view_poses=True, start_arm_q=None, start_theta=None):
+            view_poses=True, start_arm_q=None, start_theta=None,
+            grasp_frame="legacy"):
     """hinge=None 이면 관절이 절대 움직이지 않는다고 보고 토크 필터를 건너뛴다.
 
     이 연구는 노트북·스탠드·폴더블처럼 사용자가 각도를 맞춰 두면 그대로
     고정되는 물체를 대상으로 한다. 힌지가 버티는지 따질 필요가 없으므로,
     남는 제약은 로봇 쪽 세 가지(도달·자세 충돌·경로)뿐이다.
     """
+    # 회귀행렬의 모멘트팔을 어느 파지 기준으로 세울 것인가.
+    #
+    #   legacy   자산에 적어둔 짐작값 (위치만, 회전 없음). 지금까지의 동작.
+    #   measured 로봇 장면이 이미 쓰고 있는 **실측 파지**를 그대로 쓴다.
+    #            토크 기준점도 AFT200 몸체 원점으로 맞춘다.
+    #
+    # measured 를 켜기 전에 반드시 tools/check_grasp_frames.py 를 돌려서
+    # 두 좌표계 규약이 맞는지 확인해야 한다. 회전 차이가 수십 도로 나오면
+    # 그건 파지 오차가 아니라 메시 좌표계가 서로 다른 것이고, 그 상태로 켜면
+    # 지금보다 나빠진다.
+    X_sensor_object = None
+    if grasp_frame == "measured":
+        X_sensor_object = rs.sensor_object_transform(
+            spec, gripper, rs.load_measured_grasp(), origin="aft",
+            joint_limits_rad=joint_limits_rad)
+        print(f"  회귀행렬 파지: **실측값** 사용"
+              f" (위치 {np.round(1000 * X_sensor_object[:3, 3], 1)} mm)")
     rho_gt = obj.bind_object(spec, hinge=hinge, safety=safety,
-                             density_scale=density_scale)
+                             density_scale=density_scale,
+                             X_sensor_object=X_sensor_object)
     alg.JOINT_LIMITS = list(joint_limits_rad)
 
     # 초기값. 정답은 여기에 절대 들어가지 않는다.
@@ -2390,6 +2409,12 @@ def main():
                              " 절대 움직이지 않는다고 가정한다")
     parser.add_argument("--safety", type=float, default=obj.DEFAULT_SAFETY)
     parser.add_argument("--auto-scale", action="store_true")
+    parser.add_argument("--grasp-frame", choices=("legacy", "measured"),
+                        default="legacy",
+                        help="회귀행렬의 모멘트팔을 어느 파지 기준으로 세울지."
+                             " measured 는 tools/grasp_measure.py 가 잰 X_G_O 를"
+                             " 쓴다. 켜기 전에 tools/check_grasp_frames.py 로"
+                             " 좌표계 규약을 먼저 확인하세요.")
     parser.add_argument("--min-distance-mm", type=float,
                         default=rs.MIN_DISTANCE_M / rs.MM,
                         help="충돌로 보는 최소 간격. 자세와 경로 모두 지킨다.")
@@ -2599,7 +2624,8 @@ def main():
     setup = prepare(spec, hinge, limits, args.safety, args.steps,
                     args.min_distance_mm * rs.MM, scale, prior=args.prior,
                     gripper=args.gripper, view_poses=not args.no_view_poses,
-                    start_arm_q=start_arm_q, start_theta=start_theta)
+                    start_arm_q=start_arm_q, start_theta=start_theta,
+                    grasp_frame=args.grasp_frame)
     print(f"  사용 가능한 자세 {len(setup['feasible'])}/{setup['n_grid']}")
     print(f"  시작 자세 제시 위치 {np.round(setup['presentation'], 3)} m")
     # 각도 측정 자세는 카메라가 어디서 보느냐로 정해진다. 어느 값을 쓰고

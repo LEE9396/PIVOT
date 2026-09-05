@@ -630,6 +630,53 @@ def _add_object(plant, spec, densities, joint_limits_rad):
     return model, bodies, sensor_frame
 
 
+def sensor_object_transform(spec, gripper="robotiq2f85", grasp_transform=None,
+                            origin="model", joint_limits_rad=None):
+    """센서 좌표계에서 본 물체의 자세 X_S_O 를 4x4 로 돌려준다.
+
+    왜 필요한가
+    -----------
+    가상환경이 두 벌이다.
+
+      robot_scene   충돌·IK·경로·카메라 시야를 본다.
+                    tools/grasp_measure.py 가 **실측한** X_G_O 를 쓴다.
+      density_id_objects  회귀행렬의 모멘트팔을 만든다.
+                    자산에 적어둔 **짐작값**을 쓰고, 회전은 아예 없다.
+
+    둘이 어긋나면 로봇은 맞게 움직이는데 밀도만 틀린다. 그리고 시뮬레이션에서는
+    렌치도 같은 plant 에서 나오므로 절대 안 드러난다.
+
+    이 함수가 robot_scene 쪽 장면에서 값을 뽑아 density 쪽에 넘겨줄 4x4 를
+    만든다. density_id_objects.build_plant(X_sensor_object=...) 에 그대로 준다.
+
+    origin 은 **토크를 어느 점 기준으로 볼 것인가**다.
+
+      "model"  지금 회귀행렬이 쓰는 자리 (obj_sensor 프레임).
+      "aft"    AFT200 몸체 원점 — 실제로 렌치를 재는 자리.
+
+    램프·Robotiq 조합에서 이 둘은 173 mm 떨어져 있다. 렌치를 옮기지 않고
+    쓰면 토크가 |r x F| 만큼 틀어진다 (571 g 물체에서 0.97 N.m, 센서 잡음의
+    324 배). 파지 오프셋 미지수의 허용 범위가 +-50 mm 뿐이라 이 몫은 흡수되지
+    않고 경계에 붙는다 — session_20260904_1736 에서 실제로 그랬다.
+    """
+    limits = (joint_limits_rad if joint_limits_rad is not None
+              else [j.limits_rad for j in spec.joints])
+    scene = build_scene(spec, None, limits, include_visuals=False,
+                        gripper=gripper, grasp_transform=grasp_transform)
+    plant = scene["plant"]
+    context = plant.CreateDefaultContext()
+    if origin == "aft":
+        X_W_ref = plant.GetBodyByName("ft_mount").body_frame().CalcPoseInWorld(
+            context)
+    elif origin == "model":
+        X_W_ref = scene["sensor_frame"].CalcPoseInWorld(context)
+    else:
+        raise ValueError(f"origin 은 'model' 또는 'aft' 다: {origin}")
+    X_W_obj = scene["parts"][spec.parts[0].name].body_frame().CalcPoseInWorld(
+        context)
+    return (X_W_ref.inverse() @ X_W_obj).GetAsMatrix4()
+
+
 def build_scene(spec, densities=None, joint_limits_rad=None,
                 builder=None, include_visuals=True, gripper="robotiq2f85",
                 grasp_transform=None, payload_pose_tcp=None,
