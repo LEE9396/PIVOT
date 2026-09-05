@@ -30,16 +30,20 @@ git stash            # 필요할 때만
 
 git remote add lee https://github.com/LEE9396/PIVOT.git 2>/dev/null || true
 git fetch lee
-git checkout -b fix/measurement-chain lee/fix/measurement-chain
+
+# lee/master 가 이제 최신이다 (포크의 실험 환경 + 이번 수정이 모두 들어 있다)
+git checkout -B recheck lee/master
 
 # 잘 갱신됐는지
-git log --oneline -4
+git log --oneline -6
 ls my_work/tare_check.py tools/check_grasp_frames.py tools/check_tare_poses.py
 ```
 
-네 커밋이 보여야 한다.
+이 커밋들이 보여야 한다.
 
 ```
+목표 반폭이 이 물체·이 센서로 가능한지 재기 전에 계산해서 찍는다
+재실험 전 점검 절차를 팀원 PC 용으로 적는다
 목적지와 경로를 같은 세계에서 검사하고, 검사 간격을 안전 여유에서 유도한다
 영점 조정을 "쟀다" 에서 "맞다" 로 바꾼다
 실측 파지를 밀도 계산까지 잇는 길을 놓고, 토크 기준점 어긋남을 드러낸다
