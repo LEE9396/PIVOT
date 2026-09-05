@@ -1,0 +1,4 @@
+round,recommended_base_deg,recommended_head_deg,measured_base_deg,measured_head_deg,arm_density_kg_m3,base_density_kg_m3,head_density_kg_m3,relative_half_width_percent,residual_inflation,raw_wrench_saved
+1,89.7,60.6,88.96,60.48,50.0,1104.7,50.0,8124968.52,6506.70,false
+2,106.4,64.0,106.28,63.67,50.0,1420.1,50.0,6017126.90,5705.03,false
+3,92.4,40.5,92.00,40.36,50.00000000213091,1500.2605181060007,50.00000000304894,2743356.90,5527.33,false

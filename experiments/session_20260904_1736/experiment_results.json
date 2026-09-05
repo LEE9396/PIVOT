@@ -1,0 +1,64 @@
+{
+  "session": "session_20260904_1736",
+  "object": "desklamp",
+  "status": "stopped_by_user",
+  "saved_at": "2026-09-04T18:09:19+09:00",
+  "completed_measurement_rounds": 3,
+  "aborted_rounds": [4],
+  "interrupted_while_planning_round": 5,
+  "robot_halted": true,
+  "robot_joint_deg_at_stop": [84.556221, 7.177444, -122.810181, 92.616707, -82.912186, 86.799622],
+  "raw_wrench_recovery": {
+    "available": false,
+    "reason": "이 실행은 라운드별 wrench 배열을 파일에 저장하지 않았고 터미널에도 출력하지 않았습니다. 추정에는 사용됐지만 프로세스 종료 뒤 원시 18개 값은 복구할 수 없습니다.",
+    "future_fix": "다음 실행부터 exploration_round_N.json에 commanded/actual/measured angle, 18개 wrench, posterior density를 함께 저장합니다."
+  },
+  "parts_order": [
+    {"name": "link_3", "label": "연결부(Arm)"},
+    {"name": "link_1", "label": "베이스"},
+    {"name": "link_2", "label": "Head"}
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "recommended_physical_deg": [89.7, 60.6],
+      "foundationpose_model_deg": [27.48, 51.27],
+      "foundationpose_physical_deg": [88.96, 60.48],
+      "wrench": null,
+      "estimated_density_kg_m3": [50.0, 1104.7, 50.0],
+      "density_95pct_half_width_kg_m3": [4062484.3, 728991.6, 3514725.1],
+      "overall_relative_half_width_percent": 8124968.52,
+      "residual_inflation": 6506.70,
+      "estimated_grasp_offset_mm": [50.0, -50.0, 50.0]
+    },
+    {
+      "round": 2,
+      "recommended_physical_deg": [106.4, 64.0],
+      "foundationpose_model_deg": [10.15, 48.08],
+      "foundationpose_physical_deg": [106.28, 63.67],
+      "wrench": null,
+      "estimated_density_kg_m3": [50.0, 1420.1, 50.0],
+      "density_95pct_half_width_kg_m3": [3008563.5, 477748.3, 2849941.7],
+      "overall_relative_half_width_percent": 6017126.90,
+      "residual_inflation": 5705.03,
+      "estimated_grasp_offset_mm": [37.35, -50.0, 50.0]
+    },
+    {
+      "round": 3,
+      "recommended_physical_deg": [92.4, 40.5],
+      "foundationpose_model_deg": [24.43, 71.39],
+      "foundationpose_physical_deg": [92.0, 40.36],
+      "wrench": null,
+      "estimated_density_kg_m3": [50.00000000213091, 1500.2605181060007, 50.00000000304894],
+      "density_95pct_half_width_kg_m3": [1371678.5, 425090.9, 523895.7],
+      "overall_relative_half_width_percent": 2743356.90,
+      "residual_inflation": 5527.33,
+      "estimated_grasp_offset_mm": [37.14, -50.0, 50.0]
+    }
+  ],
+  "result_quality": {
+    "converged": false,
+    "target_relative_half_width_percent": 5.0,
+    "warning": "연결부와 Head 밀도가 하한 50 kg/m^3에 붙었고 불확실성과 잔차팽창이 매우 큽니다. 유효한 최종 밀도 결과로 해석하면 안 됩니다."
+  }
+}

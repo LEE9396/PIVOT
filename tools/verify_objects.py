@@ -8,7 +8,7 @@
 
   1) 스펙      부위 부피·볼록 조각 수·파지 단면
   2) 파지      그리퍼 개구 안에 들어오나
-  3) 도달·충돌  각도 격자마다 중력 3방향 IK 가 풀리나 (여유 10 mm)
+  3) 도달·충돌  각도 격자마다 중력 3방향 IK 가 풀리나 (여유 robot_scene.MIN_DISTANCE_M)
   4) 경로      start -> g1 -> g2 -> g3 -> start 사슬이 이어지나
   5) 최소 간격  실제로 몇 mm 남나 — 이 값이 실물의 여유를 정한다
 
@@ -158,7 +158,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--object", action="append", default=None)
     ap.add_argument("--steps", type=int, default=3)
-    ap.add_argument("--min-distance-mm", type=float, default=10.0)
+    ap.add_argument("--min-distance-mm", type=float,
+                    default=rs.MIN_DISTANCE_M / rs.MM)
     ap.add_argument("--no-plan", action="store_true")
     ap.add_argument("--json", type=Path, default=None)
     args = ap.parse_args()

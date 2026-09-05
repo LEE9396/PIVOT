@@ -367,7 +367,7 @@ $R python robot_node.py --host <작업PC IP> --object 3link --gripper robotiq2f8
 | 자세가 화면 밖 | 캘리브레이션을 안 했거나 `--check-poses` 로 재확인 |
 | 도착 실패 예외 | `move_to` 가 블로킹이 아닌 것. `hardware_real.Rb5Driver.follow` 주석 |
 | 힘 방향 경고 | 센서 프레임 축 순서. `check_sign_convention` |
-| 타어링 만료 | 30분 지남. 다시 재세요 (온도 드리프트) |
+| 영점 조정 확인 | 실험 시작 때 한 번 측정해 같은 세션에서 재사용합니다 |
 | **루프가 안 끝남** | 옛 판본인지 확인 (§0). `git log --oneline -1` |
 | **반폭이 터무니없이 큼** | 〃. 잔차 팽창 버그는 79배까지 갔습니다 |
 | 알고리즘이 이해 안 됨 | [ALGORITHM.md](ALGORITHM.md), [THEORY.md](THEORY.md) |

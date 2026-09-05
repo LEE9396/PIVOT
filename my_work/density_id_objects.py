@@ -554,7 +554,8 @@ def register_part_visual(plant, body, part, dims_m, prefix=""):
 # ---------------------------------------------------------------------------
 # Drake plant 생성 (body frame = 각 part의 외형 도심)
 # ---------------------------------------------------------------------------
-def build_plant(spec, densities, builder=None, shell_com=False):
+def build_plant(spec, densities, builder=None, shell_com=False,
+                X_sensor_object=None):
     """body frame 원점 = 각 part의 외형(bbox) 중심.
 
     shell_com=True 면 무게중심만 geometry.csv 의 셸 도심으로 옮긴다. 균일밀도
@@ -584,11 +585,32 @@ def build_plant(spec, densities, builder=None, shell_com=False):
         if scene_graph is not None:
             register_part_visual(plant, bodies[part.name], part, dims_m)
 
-    # base를 센서 프레임에 고정
+    # base(파지되는 part)를 센서 프레임에 고정.
+    #
+    # **이 한 줄이 모멘트팔 전체를 정한다.** 회귀행렬의 토크 열은
+    #     tau_i = V_i * (c_i x g)
+    # 이고 c_i 는 여기서 정한 좌표계 기준의 부위 도심이다. 즉 이 용접이
+    # 틀리면 밀도가 통째로 틀어진다 — 그런데 시뮬레이션에서는 measure() 도
+    # 같은 plant 에서 나오므로 절대 안 드러난다.
+    #
+    # 기본값 spec.base_bbox_center_in_sensor_mm 은 **위치 3개뿐이고 회전이
+    # 없으며**, 자산에 미리 적어둔 짐작이다. 실물에서 사람이 잡은 자리는
+    # 그 짐작과 다르다 (session_20260904_1736 에서 위치 43 mm, 회전 10 deg).
+    #
+    # X_sensor_object 를 주면 그 4x4 가 이긴다. robot_scene 쪽 장면은 이미
+    # tools/grasp_measure.py 가 잰 X_G_O 를 쓰고 있으므로, 이 인자를 넘겨야
+    # **두 가상환경이 같은 파지를 보게 된다.**
+    # 값은 robot_scene.sensor_object_transform() 이 만들어 준다.
+    if X_sensor_object is not None:
+        matrix = np.asarray(X_sensor_object, dtype=float).reshape(4, 4)
+        X_S_O = RigidTransform(RotationMatrix(matrix[:3, :3]), matrix[:3, 3])
+    else:
+        X_S_O = RigidTransform(
+            np.array(spec.base_bbox_center_in_sensor_mm) * MM)
     plant.WeldFrames(
         plant.world_frame(),
         bodies[spec.parts[0].name].body_frame(),
-        RigidTransform(np.array(spec.base_bbox_center_in_sensor_mm) * MM),
+        X_S_O,
     )
 
     for joint in spec.joints:
@@ -653,7 +675,7 @@ def build_plant(spec, densities, builder=None, shell_com=False):
 # 추정기 함수 자체는 전혀 수정하지 않는다.
 # ---------------------------------------------------------------------------
 def bind_object(spec, shell_com=False, hinge=None, safety=DEFAULT_SAFETY,
-                density_scale=1.0):
+                density_scale=1.0, X_sensor_object=None):
     """density_scale 은 하드웨어 한계에 맞춰 밀도 GT 를 통째로 줄일 때 쓴다.
     base(파지되는 part)는 관절 토크를 받지 않으므로 배율에서 제외한다."""
     table = body_table(spec)
@@ -665,8 +687,12 @@ def bind_object(spec, shell_com=False, hinge=None, safety=DEFAULT_SAFETY,
     volumes = np.array([row["volume_m3"] for row in table])
 
     # 진리(측정) plant 에만 셸 도심을 반영할 수 있다. 추정기 쪽은 항상 균일밀도.
-    truth_plant, truth_bodies = build_plant(spec, rho_gt, shell_com=shell_com)
-    kin_plant, kin_bodies = build_plant(spec, np.ones(len(table)))
+    # 두 plant 가 **같은 파지**를 봐야 한다. 진리 plant 는 시뮬레이션에서
+    # 렌치를 만들고, 운동학 plant 는 회귀행렬의 모멘트팔을 만든다.
+    truth_plant, truth_bodies = build_plant(spec, rho_gt, shell_com=shell_com,
+                                            X_sensor_object=X_sensor_object)
+    kin_plant, kin_bodies = build_plant(spec, np.ones(len(table)),
+                                        X_sensor_object=X_sensor_object)
 
     alg.PARTS = ([(p.name, tuple(d * MM for d in p.bbox_mm), p.rho_gt)
                   for p in spec.parts]

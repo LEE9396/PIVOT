@@ -26,6 +26,7 @@ robot_scene.py 가 미리 계산해 둔 계획(JSON)을 받아 라운드마다 �
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
@@ -61,6 +62,71 @@ MOVE_STEPS = 60              # 이동 애니메이션 분할 수
 MOVE_DT_S = 0.02
 
 
+class SessionMeshcat:
+    """Meshcat 버튼을 통합 HTML UI에서도 누를 수 있게 하는 얇은 어댑터."""
+
+    def __init__(self, meshcat, session):
+        self.meshcat = meshcat
+        self.root = Path(session)
+        self.state_path = self.root / "operator_ui.json"
+        self.action_path = self.root / "operator_action.json"
+        self.buttons, self.clicks = [], {}
+        self.status, self.last_action = "실험 준비 중", None
+        self.planner_url = self.scene_url = None
+        self._write()
+
+    def __getattr__(self, name):
+        return getattr(self.meshcat, name)
+
+    def _write(self):
+        body = {"status": self.status, "buttons": self.buttons,
+                "planner_url": self.planner_url, "scene_url": self.scene_url,
+                "updated_at": time.time()}
+        temporary = self.state_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(body, ensure_ascii=False) + "\n")
+        os.replace(temporary, self.state_path)
+
+    def set_status(self, status):
+        self.status = str(status)
+        self._write()
+
+    def set_planner_url(self, url):
+        self.planner_url = str(url)
+        self._write()
+
+    def set_scene_url(self, url):
+        self.scene_url = str(url)
+        self._write()
+
+    def AddButton(self, name, *args, **kwargs):
+        self.meshcat.AddButton(name, *args, **kwargs)
+        if name not in self.buttons:
+            self.buttons.append(name)
+            self.clicks[name] = 0
+            self._write()
+
+    def DeleteButton(self, name, *args, **kwargs):
+        self.meshcat.DeleteButton(name, *args, **kwargs)
+        if name in self.buttons:
+            self.buttons.remove(name)
+            self._write()
+
+    def _poll(self):
+        try:
+            action = json.loads(self.action_path.read_text())
+        except (OSError, ValueError):
+            return
+        marker = action.get("id")
+        name = action.get("action")
+        if marker != self.last_action and name in self.buttons:
+            self.last_action = marker
+            self.clicks[name] = self.clicks.get(name, 0) + 1
+
+    def GetButtonClicks(self, name):
+        self._poll()
+        return self.meshcat.GetButtonClicks(name) + self.clicks.get(name, 0)
+
+
 class Console:
     """Meshcat 위의 상태 표시와 버튼. 안전 문구를 크게 보여주는 것이 목적."""
 
@@ -75,6 +141,9 @@ class Console:
         self.meshcat.SetObject(STATUS_PATH, Box(0.6, 0.02, 0.22), color)
         self.meshcat.SetTransform(
             STATUS_PATH, RigidTransform([0.55, 0.42, 0.75]))
+        publish = getattr(self.meshcat, "set_status", None)
+        if publish is not None:
+            publish(label)
         print(f"\n  ┌{'─' * 62}")
         print(f"  │ {label}")
         print(f"  └{'─' * 62}")

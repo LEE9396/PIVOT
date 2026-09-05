@@ -27,18 +27,31 @@ GRIPPER_PORT=/dev/ttyUSB0
 GRIPPER_FORCE=205
 
 # ---- 물체 -----------------------------------------------------------------
+LAMP_ASSET_DIR=~/Desktop/PIVOT/assets/final_objects/lamp
+LAPTOP_ASSET_DIR=~/Desktop/PIVOT/assets/final_objects/laptop
 # desklamp 또는 3link / 2link
 OBJECT=desklamp
 # PIVOT 이 잡는 부위 (desklamp 전용). link_3 = 연결부/팔
 GRASP_PART=link_3
 # FoundationPose 가 추적하는 부위 이름 (파지점을 계산할 메시)
 FP_GRASP_PART=support
-FP_MESH_DIR=~/MeshPCA/foundationpose/assets/lamp
+FP_MESH_DIR=~/Desktop/PIVOT/assets/final_objects/lamp/visual_meshes
+GAUSSIAN_DIR=~/Desktop/Lab/issacimport/issac_sim_urdf/desk_lamp_refined_v1_rgb/gaussian
+GAUSSIAN_FILES=base=gaussian_1.ply,support=gaussian_3.ply,head=gaussian_2.ply
 FP_LIVE_SCRIPT=foundationpose/run_desk_lamp_live.py
+FP_CAMERA_WIDTH=640
+FP_CAMERA_HEIGHT=480
+FP_CAMERA_FPS=30
+FP_ANGLE_WINDOW=10
+CAMERA_FOV_MARGIN_PX=20
+MANUAL_MASK=1
+# 같은 물체·같은 위치에서 UI만 재시작할 때 외부에서 REUSE_INIT=1 로 실행합니다.
 
 # ---- 미리 만들어 둔 파일 ----------------------------------------------------
-# 3자세 타어 (MeshPCA pivot/tare_real.py 산출)
-TARE_FILE=~/Desktop/PIVOT/my_work/calibration/aft_tare_current.json
+# 3자세 영점 조정 (MeshPCA pivot/tare_real.py 산출)
+TARE_FILE=~/Desktop/PIVOT/calibration/aft_tare_current.json
+# 0: 실험 시작 때 측정한 영점 조정을 세션 동안 재사용
+TARE_MAX_AGE_S=0
 # FoundationPose 초기화 입력 (한 번 캡처해 두면 --reuse-init 로 재사용)
 FP_INIT_RGB=/tmp/lamp_live_rgb.png
 FP_INIT_DEPTH=/tmp/lamp_live_depth_m.npy

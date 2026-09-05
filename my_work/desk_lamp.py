@@ -7,10 +7,11 @@
     geometry/parts/link_*_watertight_rgb.ply  링크별 닫힌 메시 + **정점 색**
     geometry/raw_watertight_multiview_rgb.ply 통짜 메시 (참고용)
 
-배달물 위치는 세 곳을 이 순서로 찾는다.
+배달물 위치는 네 곳을 이 순서로 찾는다.
     1) 환경변수 DESK_LAMP_DELIVERY
-    2) 저장소 안 assets/desk_lamp_minimal_sim   <- git clone 하면 여기 있다
-    3) ~/Downloads 의 옛 배달물 (구조가 다르면 알아서 맞춘다)
+    2) 저장소 안 assets/final_objects/lamp      <- 실물 실험 기준
+    3) 저장소 안 assets/desk_lamp_minimal_sim   <- 예전 시뮬레이션 자산
+    4) ~/Downloads 의 옛 배달물 (구조가 다르면 알아서 맞춘다)
 
 색을 화면에 어떻게 내나
 -----------------------
@@ -59,6 +60,9 @@ from pathlib import Path
 
 import numpy as np
 
+# 물체만 띄우는 화면의 월드 기준자세: base가 아래, head가 위.
+DISPLAY_ROTATION = np.diag([1.0, -1.0, -1.0])
+
 import mesh_props as mp
 from density_id_objects import Joint, ObjectSpec, Part
 
@@ -95,6 +99,7 @@ def _resolve_delivery():
     env = os.environ.get("DESK_LAMP_DELIVERY")
     if env:
         roots.append(Path(env).expanduser())
+    roots.append(REPO_ASSETS / "final_objects" / "lamp")
     roots.append(REPO_ASSETS / "desk_lamp_minimal_sim")
     downloads = Path.home() / "Downloads"
     if downloads.is_dir():
@@ -107,8 +112,8 @@ def _resolve_delivery():
             return root, layout
     raise FileNotFoundError(
         "램프 배달물을 못 찾았다. 다음 중 하나를 하라.\n"
-        f"  1) 저장소 안에 두기: {REPO_ASSETS / 'desk_lamp_minimal_sim'}\n"
-        "  2) 환경변수로 알려주기: export DESK_LAMP_DELIVERY=/경로/desk_lamp_minimal_sim\n"
+        f"  1) 저장소 안에 두기: {REPO_ASSETS / 'final_objects' / 'lamp'}\n"
+        "  2) 환경변수로 알려주기: export DESK_LAMP_DELIVERY=/경로/lamp\n"
         "찾아본 곳: " + ", ".join(str(r) for r in roots))
 
 
@@ -199,7 +204,7 @@ def _mesh_path(name):
 def visual_mesh_path(name):
     """FoundationPose가 읽을, collision과 같은 좌표계의 최종 visual mesh."""
     if LAYOUT == "final":
-        for suffix in (".ply", ".obj"):
+        for suffix in (".obj", ".ply"):
             path = VISUALS / f"{FINAL_PART[name]}{suffix}"
             if path.is_file():
                 return path
@@ -592,6 +597,17 @@ def build_spec(pitch=0.002, com_error_mm=0.0, seed=0, grasp_at=DEFAULT_GRASP,
 
     # 잡는 부위를 뿌리로 트리를 다시 세운다.
     order, joint_rows = rerooted_joints(joint_rows, grasp_part)
+
+    # 잡는 support를 뿌리로 다시 세우면서 뒤집힌 joint_2 축만 원래 물리
+    # 회전방향에 맞춘다. FoundationPose 물리각과 스캔 기준 q 사이의 영점
+    # 변환은 calibration/angle_signs.json에서 한 번만 적용한다.
+    physical_sign = {"joint_1_base_to_support": 1.0,
+                     "joint_2_support_to_head": -1.0}
+    for row in joint_rows:
+        sign = physical_sign.get(row["name"], 1.0)
+        row["axis"] = sign * np.asarray(row["axis"])
+        bounds = sorted(sign * value for value in row["limits"])
+        row["limits"] = tuple(bounds)
 
     # 센서(파지점) 원점. 잡는 부위의 도심에 둔다. URDF 링크 프레임 원점은
     # 이 스캔에서 물체 바깥 허공일 수 있어 파지점으로 쓰면 모멘트팔이 어긋난다.
