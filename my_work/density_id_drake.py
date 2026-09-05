@@ -81,6 +81,17 @@ P = len(PARTS)
 
 # F/T sensor noise (per axis, 1 sigma) — AFT200-class figures
 SIGMA_F, SIGMA_T = 0.10, 0.003          # [N], [N m]
+
+# AIDIN AFT200-D80 자료값 (잡음 없는 상태의 표준편차).
+#
+# 위 SIGMA_F/SIGMA_T 는 1000 개 평균을 독립 잡음으로 보고 줄인 값이다. 실제로는
+# 온도 드리프트·케이블 장력·정지 후 잔진동처럼 **평균으로 안 없어지는** 몫이
+# 있어서 그만큼 낙관적이다. 어느 쪽을 쓰느냐에 따라 "이 목표가 가능한가" 의
+# 답이 뒤집힌다 (램프 기준 8 라운드에서 4 % vs 30 %).
+#
+# 고정 자세 10 회 반복 측정으로 실측하기 전까지는 이 값을 **참고선**으로만
+# 쓴다. dual_view 시작할 때 양쪽으로 계산해 나란히 찍는다.
+AFT200_DATASHEET_SIGMA = (0.40, 0.025)
 R_EPS_DIAG = np.array([SIGMA_F**2] * 3 + [SIGMA_T**2] * 3)
 
 # Prior: uniform-density heuristic, deliberately wrong and broad

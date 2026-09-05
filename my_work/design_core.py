@@ -539,6 +539,82 @@ def stopping_width(half, n_wanted=None):
 
 
 # ---------------------------------------------------------------------------
+# 5-b. 재기 전에 "이 목표가 가능한가" 를 계산한다
+#
+# 사후 공분산은 **측정값에 의존하지 않는다.** posterior(Sigma, A, R) 를 보면
+# y 가 없다 — A(theta) 와 R 만 들어간다. 그래서 로봇을 움직이기 전에 "이
+# 물체·이 센서로 N 라운드를 돌면 반폭이 얼마까지 내려가나" 를 정확히 계산할
+# 수 있다.
+#
+# 이게 왜 필요한가. session_20260904_1736 은 목표를 5 % 로 잡고 돌았는데,
+# 계산해 보면 램프(571 g) + AFT200 조합에서는 모든 것이 완벽해도 40 % 가
+# 바닥이다. 부위 셋 중 둘이 100 g 미만이고, 100 g 은 약 1 N 인데 센서 잡음이
+# 0.4 N 이다. **원리적으로 도달 불가능한 목표를 놓고 8 라운드를 돌았다.**
+#
+# 여기서 나오는 값은 **최선의 경우**다. 잔차 팽창을 1.0 으로 놓고, 각도도
+# 매번 최적점을 정확히 맞춘다고 본다. 실제는 이보다 나쁘다. 그러므로 목표가
+# 이 값보다 작으면 **확실히** 도달 못 한다.
+# ---------------------------------------------------------------------------
+def forecast_covariance(designs, mu0, Sigma0, g_dirs, total_mass_kg=None,
+                        grasp_sigma_m=0.0):
+    """설계(A, R) 목록만으로 밀도 사후 공분산을 만든다. 측정값이 필요 없다.
+
+    grasp_sigma_m 을 주면 파지점 어긋남을 미지수로 함께 푼 뒤의 밀도 블록을
+    돌려준다 — grasp_map 과 같은 구성이고 y 만 빠진 것이다. 이 몫을 빼먹으면
+    실제보다 좋게 나온다 (자유변수 3 개가 밀도 정보를 나눠 갖기 때문).
+    """
+    n_part = len(mu0)
+    use_grasp = bool(grasp_sigma_m and total_mass_kg)
+    rows = []
+    for A, R in designs:
+        L = np.linalg.cholesky(np.linalg.inv(np.atleast_2d(R)))
+        rows.append(L.T @ (augmented(A, g_dirs, total_mass_kg) if use_grasp
+                           else A))
+    L0 = np.linalg.cholesky(np.linalg.inv(Sigma0)).T
+    if use_grasp:
+        rows.append(np.hstack([L0, np.zeros((n_part, 3))]))
+        rows.append(np.hstack([np.zeros((3, n_part)),
+                               np.eye(3) / grasp_sigma_m]))
+    else:
+        rows.append(L0)
+    M = np.vstack(rows)
+    return np.linalg.inv(M.T @ M)[:n_part, :n_part]
+
+
+def achievable_half_width(bounds, mu0, Sigma0, g_dirs, max_rounds=6,
+                          criterion="D", feasible=None, n_wanted=None,
+                          rel_error=aa.DEFAULT_ANGLE_REL_ERROR,
+                          floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG,
+                          total_mass_kg=None, grasp_sigma_m=0.0,
+                          n_starts=8, seed=0):
+    """라운드를 늘려 가며 도달 가능한 최선의 반폭. [(라운드, 반폭), ...]
+
+    매 라운드 가장 좋은 자세를 고른다 — 실제 탐색과 같은 기준이다. 다만
+    측정을 안 하므로 rho 는 사전분포 평균에 머문다. R_eff 가 rho 에 의존하니
+    정확한 예보는 아니지만, **목표가 가능한지 판정하기에는 충분하다.**
+    """
+    Sigma = np.asarray(Sigma0, dtype=float).copy()
+    designs, out = [], []
+    for index in range(1, max_rounds + 1):
+        def score(theta, _S=Sigma):
+            return utility(theta, mu0, _S, g_dirs, criterion,
+                           rel_error, floor_deg)
+
+        theta, _ = continuous_best(bounds, score, n_starts=n_starts,
+                                   seed=seed + index, feasible=feasible)
+        theta = np.atleast_1d(theta)
+        A = regressor(theta, g_dirs)
+        R = effective_cov(theta, mu0, g_dirs, rel_error, floor_deg)
+        Sigma = posterior(Sigma, A, R)
+        designs.append((A, R))
+        cov = forecast_covariance(designs, mu0, Sigma0, g_dirs,
+                                  total_mass_kg, grasp_sigma_m)
+        half = half_width(cov, mu0, inflate=1.0)
+        out.append((index, stopping_width(half, n_wanted)))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 6. 한 곳으로 모은 폐루프
 #
 # 위 다섯 가지 선택을 인자로 받는 유일한 탐색 루프다. 로봇 없이 숫자만 볼 때

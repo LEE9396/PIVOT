@@ -91,6 +91,62 @@ def start_pose_probes(checker, theta, tol_deg=None):
     return [np.clip(theta + np.asarray(c), lows, highs) for c in corners]
 
 
+def report_reachable_target(spec, joint_limits_rad, args):
+    """재기 전에 "이 목표가 도달 가능한가" 를 찍는다.
+
+    사후 공분산은 측정값에 의존하지 않으므로(design_core.forecast_covariance),
+    로봇을 움직이기 전에 계산할 수 있다. session_20260904_1736 은 목표를 5 %
+    로 놓고 8 라운드를 돌았는데, 실사양 잡음으로 계산하면 그 물체·그 센서로는
+    30 % 가 바닥이었다. **원리적으로 도달 못 하는 목표였다.**
+
+    잡음 모형 두 개로 나란히 찍는다. 어느 쪽을 쓰느냐에 따라 답이 뒤집히기
+    때문이다 — 지금 설정값으로는 5 % 가 가능하다고 나오고, 자료값으로는
+    불가능하다고 나온다. 실측 반복정밀도가 나오기 전에는 사람이 보고 판단해야
+    한다.
+    """
+    bounds = list(joint_limits_rad)
+    n_wanted = len(spec.parts)
+    grasp_sigma = (args.grasp_sigma_mm * 1e-3
+                   if args.grasp_sigma_mm is not None
+                   else (0.005 if args.mode == "deploy" else 0.0))
+    saved = (alg.SIGMA_F, alg.SIGMA_T, alg.R_EPS_DIAG.copy())
+    total_mass = None
+    try:
+        total_mass = float(obj.assembled_mass_kg(spec, alg.TRUE_RHO))
+    except Exception:                                  # noqa: BLE001
+        pass
+
+    print(f"  목표 {100*args.target:.1f} % 가 이 물체·이 센서로 가능한가"
+          f"  (최선의 경우, 잔차 팽창 1.0 가정)")
+    rows = [("설정값", alg.SIGMA_F, alg.SIGMA_T),
+            ("자료값", *alg.AFT200_DATASHEET_SIGMA)]
+    try:
+        for label, sigma_f, sigma_t in rows:
+            alg.SIGMA_F, alg.SIGMA_T = sigma_f, sigma_t
+            alg.R_EPS_DIAG = np.array([sigma_f ** 2] * 3 + [sigma_t ** 2] * 3)
+            curve = dc.achievable_half_width(
+                bounds, alg.MU0, alg.SIGMA0, dc.CANONICAL_TRIAD,
+                max_rounds=args.max_rounds, feasible=alg.is_feasible,
+                n_wanted=n_wanted, rel_error=args.angle_error,
+                floor_deg=args.angle_floor_deg, total_mass_kg=total_mass,
+                grasp_sigma_m=grasp_sigma)
+            best = min(h for _, h in curve)
+            hit = next((n for n, h in curve if h <= args.target), None)
+            verdict = (f"{hit} 라운드에서 도달" if hit
+                       else f"도달 불가 (바닥 {100*best:.0f} %)")
+            print(f"    {label} {sigma_f:.2f} N / {sigma_t:.3f} N·m"
+                  f"  ->  {verdict}")
+    except Exception as exc:                           # noqa: BLE001
+        print(f"    [주의] 예보를 못 냈습니다: {exc}")
+    finally:
+        alg.SIGMA_F, alg.SIGMA_T, alg.R_EPS_DIAG = saved
+
+    print("    자료값 쪽이 도달 불가면, 목표를 올리거나 더 무거운 물체를"
+          " 쓰거나 센서를 바꿔야 합니다.")
+    print("    (설정값은 1000 개 평균을 독립 잡음으로 본 것이라 낙관적입니다."
+          " 고정 자세 10 회 반복으로 실측하세요.)")
+
+
 def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
             density_scale, prior="weight", gripper="robotiq2f85",
             view_poses=True, start_arm_q=None, start_theta=None,
@@ -2627,6 +2683,7 @@ def main():
                     start_arm_q=start_arm_q, start_theta=start_theta,
                     grasp_frame=args.grasp_frame)
     print(f"  사용 가능한 자세 {len(setup['feasible'])}/{setup['n_grid']}")
+    report_reachable_target(spec, limits, args)
     print(f"  시작 자세 제시 위치 {np.round(setup['presentation'], 3)} m")
     # 각도 측정 자세는 카메라가 어디서 보느냐로 정해진다. 어느 값을 쓰고
     # 있는지 반드시 사람이 보게 한다 — 명목값으로 실물을 돌리면 애써 고른
