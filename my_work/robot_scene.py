@@ -950,10 +950,20 @@ class PoseChecker:
     def __init__(self, spec, densities=None, joint_limits_rad=None,
                  min_distance_m=MIN_DISTANCE_M, seed_q=None, ik_restarts=4,
                  gripper="robotiq2f85", angle_margin_rad=ANGLE_MARGIN_RAD,
-                 payload_pose_tcp=None):
+                 payload_pose_tcp=None, include_aft_cable=True):
+        # 케이블을 **여기에도** 넣는다.
+        #
+        # 예전에는 경로 계획 장면에만 넣었다. 그러면 목적지는 케이블이 없는
+        # 세계에서 고르고, 거기까지 가는 길은 케이블이 있는 세계에서 찾게
+        # 된다. 목적지에서 케이블이 걸리면 길찾기는 영원히 실패하는데,
+        # 돌려주는 말은 "경로 실패" 뿐이라 원인을 알 수 없다.
+        #
+        # 케이블 막대는 센서 축에서 옆으로 65 mm 나와 있어 손목의 유효 반경을
+        # 40 mm 에서 90 mm 로 두 배 넘게 키운다. 작은 차이가 아니다.
         scene = build_scene(spec, densities, joint_limits_rad,
                             include_visuals=False, gripper=gripper,
-                            payload_pose_tcp=payload_pose_tcp)
+                            payload_pose_tcp=payload_pose_tcp,
+                            include_aft_cable=include_aft_cable)
         self.spec = spec
         self.plant = scene["plant"]
         self.arm = scene["arm"]

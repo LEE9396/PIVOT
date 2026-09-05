@@ -20,7 +20,34 @@ RRT-Connect: 시작과 목표에서 트리를 하나씩 키우고 서로를 향�
 import numpy as np
 
 DEFAULT_STEP_RAD = 0.20          # 트리를 한 번에 뻗는 거리
-DEFAULT_EDGE_RES_RAD = 0.05      # 간선 검사 해상도
+DEFAULT_EDGE_RES_RAD = 0.05      # 간선 검사 해상도 (아래 resolution_for 가 이긴다)
+
+# 팔이 1 rad 돌 때 로봇·물체의 어떤 점도 이보다 멀리 못 움직인다.
+#   RB5-850E 도달 0.85 m + AFT200·그리퍼 0.2 m + 물체 0.35 m
+MAX_REACH_M = 1.4
+
+
+def resolution_for(min_distance_m, max_reach_m=MAX_REACH_M):
+    """검사 간격을 안전 여유에서 유도한다.
+
+    왜 상수로 두면 안 되나
+    ----------------------
+    경로는 직선 구간을 잘라 그 점들에서만 충돌을 본다. 사이는 안 본다.
+    간격이 0.05 rad 이면 팔 끝이 **4.5 cm 씩 건너뛴다.** 그런데 지키겠다는
+    간격은 1~2 cm 다. 눈을 감았다 떴다 하며 걷는 것과 같아서, 카메라 지지봉
+    (지름 3.2 cm) 이 눈 감은 구간에 통째로 들어가면 한 번도 안 보인다.
+
+    표본 사이에 점이 최대 s 만큼 움직이고 표본에서 여유가 d 이상이면,
+    사이에서 여유는 d - s/2 이상이다. 그러므로
+
+        s <= 2d  이어야 관통이 없음을 보장
+        s <=  d  이어야 여유의 절반이라도 지켜짐
+
+    여기서는 뒤쪽을 쓴다. 여유 20 mm 기준 0.014 rad 이고, 예전 0.05 보다
+    3.5 배 촘촘하다. 계산이 그만큼 늘지만 **보장하지 못하는 값을 보장한다고
+    말하는 것보다 낫다.**
+    """
+    return max(float(min_distance_m) / float(max_reach_m), 1e-3)
 DEFAULT_MAX_ITERS = 4000
 DEFAULT_GOAL_BIAS = 0.10
 
@@ -63,7 +90,7 @@ class ArmPathPlanner:
     """물체 관절각을 고정한 채 팔 경로를 계획한다."""
 
     def __init__(self, plant, context, arm_joints, min_distance_m,
-                 fixed_positions, edge_resolution_rad=DEFAULT_EDGE_RES_RAD,
+                 fixed_positions, edge_resolution_rad=None,
                  step_rad=DEFAULT_STEP_RAD, seed=0, pose_is_valid=None):
         self.plant = plant
         self.context = context
@@ -71,7 +98,9 @@ class ArmPathPlanner:
         self.indices = [joint.position_start() for joint in arm_joints]
         self.min_distance_m = min_distance_m
         self.fixed = np.asarray(fixed_positions, dtype=float).copy()
-        self.edge_resolution = edge_resolution_rad
+        self.edge_resolution = (resolution_for(min_distance_m)
+                                if edge_resolution_rad is None
+                                else edge_resolution_rad)
         self.step = step_rad
         self.rng = np.random.default_rng(seed)
         self.query_port = plant.get_geometry_query_input_port()
