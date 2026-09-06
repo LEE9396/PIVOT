@@ -263,9 +263,18 @@ fi
 # --- 창 3: 그리퍼 + F/T ---
 echo
 echo "[창 3] 그리퍼 + F/T 를 띄웁니다"
+# 창 3 은 그리퍼와 F/T 만 보여주면 된다. 예전에는 걸쇠 실험 표(Latch
+# Measurement.csv)를 늘 같이 띄웠는데, 이 실험과 상관이 없어 화면만 어지럽다.
+# conf 의 WIN3_CSV 에 경로를 적었을 때만 띄운다. 비워 두면 안 띄운다.
+WIN3_CSV="$(expand "${WIN3_CSV:-}")"
+WIN3_ARGS=()
+if [[ -n "${WIN3_CSV}" && -f "${WIN3_CSV}" ]]; then
+  WIN3_ARGS=(--csv "${WIN3_CSV}")
+  echo "         표 같이 띄움: $(basename "${WIN3_CSV}")"
+fi
 ( cd "${MESHPCA_ROOT}" && "${MESHPCA_PYTHON}" pivot/rb5_ui.py \
     --host "${AFT_HOST}" --port "${GRIPPER_PORT}" --tare "${TARE_FILE}" \
-    --csv "${PIVOT_ROOT}/experiments/Latch Measurement.csv" \
+    ${WIN3_ARGS[@]+"${WIN3_ARGS[@]}"} \
     --status-file "${FP_OUTPUT}/hardware.json" --headless \
     >/tmp/pivot_win3.log 2>&1 & )
 

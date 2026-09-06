@@ -58,6 +58,10 @@ FP_MESH_DIR=~/Desktop/PIVOT/assets/final_objects/lamp/visual_meshes
 # 읽어 준 물체 자세가 다른 좌표계의 값이 되어 파지점이 통째로 어긋나는데,
 # 화면에는 아무 표시도 안 난다. 런처가 둘을 비교해서 다르면 알려 준다.
 FP_GRASP_MESH_OVERRIDE=
+
+# 창 3 (그리퍼 + F/T) 에 같이 띄울 표. 비워 두면 안 띄운다.
+# 걸쇠 실험 표(Latch Measurement.csv)는 이 실험과 상관이 없어 기본은 꺼 둔다.
+WIN3_CSV=
 GAUSSIAN_DIR=~/Desktop/Lab/issacimport/issac_sim_urdf/desk_lamp_refined_v1_rgb/gaussian
 GAUSSIAN_FILES=base=gaussian_1.ply,support=gaussian_3.ply,head=gaussian_2.ply
 FP_LIVE_SCRIPT=foundationpose/run_desk_lamp_live.py
