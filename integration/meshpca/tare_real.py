@@ -864,8 +864,14 @@ def main():
     import json
     import tempfile
 
-    tare.save(args.output)
-    payload = json.loads(args.output.read_text())
+    # 검산을 통과하기 전에는 args.output 을 건드리지 않는다. 예전에는 여기서
+    # 바로 덮어써 놓고 아래에서 "쓰지 않았습니다" 라고 찍었다 — 불합격한
+    # 원시값이 그대로 영점 파일이 되어 있었고, 로그는 아니라고 말했다.
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as raw:
+        raw_path = Path(raw.name)
+    tare.save(raw_path)
+    payload = json.loads(raw_path.read_text())
+    raw_path.unlink(missing_ok=True)
     for entry, (q, error_deg) in zip(payload["entries"], records):
         entry["joint_deg"] = np.degrees(q).tolist()
         entry["direction_error_deg"] = error_deg

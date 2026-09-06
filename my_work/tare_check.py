@@ -168,6 +168,65 @@ def load(path):
     return data, g, w
 
 
+AXIS_GAIN_RATIO_MAX = 1.10        # 축별 이득이 이보다 더 벌어지면 축척 문제다
+
+
+def solve_sensor_map(g_dirs, forces):
+    """제약 없이 f = b + M g 를 맞추고, M 이 무엇인지 진단한다.
+
+    왜 회전부터 맞추면 안 되나
+    -------------------------
+    solve_sensor_axes 는 M 이 "무게 * 회전" 이라고 **가정하고** 가장 가까운
+    회전을 찾는다. 그 가정이 깨진 자료를 넣으면 깨졌다고 말하지 않고, 설명이
+    안 되는 어긋남을 회전각으로 둔갑시킨다.
+
+    실제로 그랬다. 축 이득이 6.5 배 어긋난 자료에 "179.4 deg 회전" 이라는
+    답이 나왔고, 그대로 믿고 좌표계를 돌렸으면 더 나빠졌을 것이다.
+
+    그래서 아무 제약 없이 먼저 맞춘다. M 은 9 개 수이고 방향이 4 개 이상이면
+    풀린다. 그러고 나서 M 을 뜯어본다.
+
+        축별 이득    M 의 각 행 크기. 셋이 같아야 한다 (회전은 크기를 보존).
+        행렬식       +1 이면 회전, -1 이면 거울상 = 어느 한 축의 부호가 뒤집혔다.
+        자유 잔차    이것이 작으면 **측정 자체는 깨끗하다.** 크면 케이블 등
+                     자세에 따라 변하는 외력이 있는 것이다. 둘은 전혀 다른
+                     문제인데 회전만 맞춰서는 구별이 안 된다.
+    """
+    g_dirs = np.asarray(g_dirs, dtype=float)
+    forces = np.asarray(forces, dtype=float)
+    design = np.hstack([np.ones((len(g_dirs), 1)), g_dirs])
+    solution, *_ = np.linalg.lstsq(design, forces, rcond=None)
+    bias, matrix = solution[0], solution[1:].T
+    residual = forces - design @ solution
+    free_res = float(np.sqrt((residual ** 2).sum() / residual.size))
+
+    gains = np.linalg.norm(matrix, axis=1)          # 센서 축별 이득 [N]
+    ratio = float(gains.max() / max(gains.min(), 1e-12))
+    unit = matrix / np.maximum(gains, 1e-12)[:, None]
+    det = float(np.linalg.det(unit))
+
+    # 거울상이면 어느 한 축의 부호만 뒤집어도 회전이 된다. 다만 **세 축
+    # 중 어느 것인지는 힘 자료만으로 못 가린다** — 셋 다 똑같이 잘 맞는다.
+    # 하나를 골라 주면 고른 티가 안 나므로, 셋을 다 적고 사람이 정하게 한다.
+    # 나오는 회전각이 모형이 이미 쓰는 값(예: 90 deg)에 가까운 쪽이 유력하다.
+    flips = []
+    if det < 0:
+        for axis in range(3):
+            signs = np.ones(3)
+            signs[axis] = -1.0
+            candidate = signs[:, None] * unit
+            u, _, vt = np.linalg.svd(candidate)
+            proper = u @ np.diag([1.0, 1.0,
+                                  float(np.sign(np.linalg.det(u @ vt)))]) @ vt
+            flips.append(dict(axis="xyz"[axis],
+                              angle_deg=rotation_angle_deg(proper),
+                              gap=float(np.linalg.norm(candidate - proper))))
+
+    return dict(bias=bias, matrix=matrix, free_residual_n=free_res,
+                gains_n=gains, gain_ratio=ratio, det=det, flips=flips,
+                is_rotation=(det > 0 and ratio <= AXIS_GAIN_RATIO_MAX))
+
+
 def check(path, tool_kg=DEFAULT_TOOL_KG, log=print):
     """영점 파일 하나를 검산한다. (합격여부, 항목별 결과) 를 돌려준다."""
     data, g_dirs, wrench = load(path)
@@ -207,18 +266,44 @@ def check(path, tool_kg=DEFAULT_TOOL_KG, log=print):
     ]
 
     # 방향이 4개 이상이면 센서 축까지 풀어 본다.
-    axes = None
+    axes, mapping = None, None
     if len(g_dirs) >= 4:
-        R, signed, res_axis = solve_sensor_axes(g_dirs, forces)
-        axes = dict(R=R, force_n=signed, residual_n=res_axis,
-                    angle_deg=rotation_angle_deg(R))
+        mapping = solve_sensor_map(g_dirs, forces)
         rows.append((
-            "센서 축 정렬",
-            axes["angle_deg"] <= AXIS_ANGLE_MAX_DEG,
-            f"모형 대비 {axes['angle_deg']:.1f} deg 회전"
-            f"  (잔차 {res_axis:.3f} N)",
-            "robot_scene 의 GRIPPER_MOUNT_YAW_RAD / MakeXRotation 이 실물과 "
-            "다릅니다. 여기서 나온 회전으로 바꾸세요"))
+            "축별 이득",
+            mapping["gain_ratio"] <= AXIS_GAIN_RATIO_MAX,
+            f"x {mapping['gains_n'][0]:.2f}  y {mapping['gains_n'][1]:.2f}"
+            f"  z {mapping['gains_n'][2]:.2f} N"
+            f"  (최대/최소 {mapping['gain_ratio']:.2f})",
+            "회전은 크기를 보존하므로 셋이 같아야 한다. 벌어졌으면 좌표계가 "
+            "아니라 **센서 값을 N 으로 바꾸는 축척**이 틀린 것이다. "
+            "센서 드라이버의 축별 배율을 확인하세요"))
+        rows.append((
+            "좌표계 방향",
+            mapping["det"] > 0,
+            f"행렬식 {mapping['det']:+.3f}"
+            + ("" if mapping["det"] > 0 else
+               "  (한 축 부호를 뒤집으면 회전이 됩니다: "
+               + ", ".join(f"{f['axis']} -> {f['angle_deg']:.1f} deg"
+                           for f in mapping["flips"]) + ")"),
+            "음수면 거울상이다. 회전으로는 절대 못 만든다 — 어느 한 축의 "
+            "부호가 뒤집혀 있다는 뜻이다. 세 축 중 어느 것인지는 힘 자료만으로 "
+            "못 가리니, 나온 회전각이 모형이 쓰는 값에 가까운 쪽을 택하고 "
+            "실물 배선으로 확인하세요"))
+
+        # 회전 가정이 성립할 때만 회전각을 말한다. 안 그러면 설명 안 되는
+        # 어긋남이 회전각으로 둔갑해 엉뚱한 곳을 고치게 된다.
+        if mapping["is_rotation"]:
+            R, signed, res_axis = solve_sensor_axes(g_dirs, forces)
+            axes = dict(R=R, force_n=signed, residual_n=res_axis,
+                        angle_deg=rotation_angle_deg(R))
+            rows.append((
+                "센서 축 정렬",
+                axes["angle_deg"] <= AXIS_ANGLE_MAX_DEG,
+                f"모형 대비 {axes['angle_deg']:.1f} deg 회전"
+                f"  (잔차 {res_axis:.3f} N)",
+                "robot_scene 의 GRIPPER_MOUNT_YAW_RAD / MakeXRotation 이 실물과 "
+                "다릅니다. 여기서 나온 회전으로 바꾸세요"))
 
     log(f"[영점 검산] {path}")
     if len(g_dirs) < 4:
@@ -228,6 +313,14 @@ def check(path, tool_kg=DEFAULT_TOOL_KG, log=print):
             " 돌리세요.")
     log(f"  고정 바이어스  힘 {np.round(bias_f, 2)} N"
         f"   토크 {np.round(bias_t, 3)} N·m")
+    if mapping is not None:
+        # 이 숫자가 작으면 '측정은 깨끗한데 해석이 틀린 것'이고, 크면
+        # '재는 동안 무언가가 건드린 것'이다. 완전히 다른 문제다.
+        log(f"  제약 없이 f = b + M g 를 맞춘 잔차"
+            f" {mapping['free_residual_n']:.3f} N"
+            + ("   -> 측정 자체는 깨끗합니다. 해석(축척·부호·좌표계)이 문제입니다."
+               if mapping["free_residual_n"] <= FORCE_RESIDUAL_MAX_N else
+               "   -> 재는 동안 자세에 따라 변하는 외력이 있습니다 (케이블 등)."))
     for name, ok, value, hint in rows:
         mark = "통과" if ok else "실패"
         log(f"  [{mark}] {name:<12} {value}")
