@@ -482,9 +482,17 @@ class TimedTare(hw.TareTable):
         self.clock = clock
         self.stamped = {}
 
-    def record(self, g_hat, wrench):
+    def record(self, g_hat, wrench, stamp=None):
+        """stamp 는 **잰 시각**이다. 안 주면 지금으로 친다.
+
+        예전에는 항상 지금으로 쳤다. 그런데 세션은 이 값을 파일에서 읽어
+        오므로, 3일 전에 잰 파일도 읽는 순간 나이가 0 이 됐다. 나이 제한이
+        사실상 "UI 를 켠 지 얼마나 됐나" 를 재고 있었던 것이다. 파일의
+        created_at_s 를 넘겨 받아 진짜 나이를 재게 한다.
+        """
         super().record(g_hat, wrench)
-        self.stamped[self.key(g_hat)] = self.clock()
+        self.stamped[self.key(g_hat)] = (self.clock() if stamp is None
+                                         else float(stamp))
 
     def apply(self, g_hat, wrench):
         t = self.stamped.get(self.key(g_hat))
@@ -495,6 +503,10 @@ class TimedTare(hw.TareTable):
             raise SafetyViolation(
                 f"영점 조정값이 {age/60:.0f}분 전 값이다 (허용 {self.max_age_s/60:.0f}분). "
                 "온도 드리프트로 그리퍼 몫이 달라졌을 수 있으니 다시 재세요.")
+        # max_age_s = 0 은 '시간으로는 안 막는다' 는 뜻이다. 영점을 못 쓰게
+        # 만드는 것은 시간이 아니라 **그리퍼나 센서를 다시 다는 일**인데,
+        # 그건 프로그램이 알아챌 수 없다. 사람이 판단하도록 나이를 읽을 수
+        # 있게만 해 둔다 (age_s / describe).
         return super().apply(g_hat, wrench)
 
 

@@ -271,15 +271,35 @@ class ArmPathPlanner:
 
     def path_clearance(self, path, samples_per_edge=20):
         """계획한 경로 위의 최소거리. 검증용."""
-        worst = np.inf
+        return self.path_closest_pair(path, samples_per_edge)[0]
+
+    def path_closest_pair(self, path, samples_per_edge=20):
+        """경로 위 최소거리와 **그때 맞닿은 두 물체 이름**.
+
+        숫자만 돌려주면 "여유 13.29 mm" 를 보고도 그것이 진짜 위험인지
+        모형의 허상인지 알 수가 없다. 실제로 그 13.29 mm 는 볼트로 붙어
+        있어 절대 안 변하는 두 물건 사이 거리였고, 안전 여유를 올리면
+        영원히 통과 못 하는 상태였다. 이름을 같이 찍으면 바로 보인다.
+        """
+        worst, who = np.inf, ("", "")
+        inspector = None
         for a, b in zip(path[:-1], path[1:]):
             for s in np.linspace(0.0, 1.0, samples_per_edge):
                 self.plant.SetPositions(self.context, self.full_q(a + (b - a) * s))
                 query = self.query_port.Eval(self.context)
                 pairs = query.ComputeSignedDistancePairwiseClosestPoints(0.05)
-                if pairs:
-                    worst = min(worst, min(p.distance for p in pairs))
-        return worst
+                if not pairs:
+                    continue
+                near = min(pairs, key=lambda p: p.distance)
+                if near.distance < worst:
+                    worst = near.distance
+                    if inspector is None:
+                        inspector = query.inspector()
+                    who = tuple(
+                        self.plant.GetBodyFromFrameId(
+                            inspector.GetFrameId(gid)).name()
+                        for gid in (near.id_A, near.id_B))
+        return worst, who[0], who[1]
 
 
 if __name__ == "__main__":

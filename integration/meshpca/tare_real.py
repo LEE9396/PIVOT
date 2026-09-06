@@ -495,11 +495,14 @@ def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
             "\n    - 손목 전용을 포기하고 사람이 맞춘다: --manual")
 
     if approach is not None:
-        measured = planner.path_clearance(approach, samples_per_edge=60)
+        measured, near_a, near_b = planner.path_closest_pair(
+            approach, samples_per_edge=60)
         if measured < clearance_m * 0.9 - 1e-6:
             raise RuntimeError(f"접근 경로 여유가 너무 작습니다:"
-                               f" {measured*1000:.2f} mm")
-        log(f"  접근: {len(approach)} waypoints, 여유 {measured*1000:.2f} mm,"
+                               f" {measured*1000:.2f} mm"
+                               f" ({near_a} <-> {near_b})")
+        log(f"  접근: {len(approach)} waypoints,"
+            f" 여유 {measured*1000:.2f} mm ({near_a} <-> {near_b}),"
             f" J1--J3 {np.degrees(np.abs(base[:3] - start[:3])).max():.1f} deg 이동")
 
     paths, clearances, reached, state = [], [], [], base
@@ -528,7 +531,7 @@ def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
         if approach is not None and not paths:
             path = list(approach) + [target]
         paths.append(path)
-        clearances.append(planner.path_clearance(path, samples_per_edge=60))
+        clearances.append(planner.path_closest_pair(path, samples_per_edge=60))
         reached.append(g_hat)
         state = target
 
@@ -805,7 +808,12 @@ def main():
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--aft-hz", type=float, default=50.0)
     parser.add_argument("--speed-deg-s", type=float, default=3.0)
-    parser.add_argument("--clearance-mm", type=float, default=10.0)
+    parser.add_argument("--clearance-mm", type=float,
+                        default=1000.0 * scene.MIN_DISTANCE_M,
+                        help="안전 여유 [mm]. 기본은 robot_scene 과 같은 값이다."
+                             " 10 mm 는 로봇이 움직일 때 육안으로 확인하기"
+                             " 어려워 20 mm 로 올렸다. 여기서만 낮추려면"
+                             " 직접 주되, 그만큼 눈으로 더 봐야 한다.")
     parser.add_argument("--max-iters", type=int, default=10000)
     parser.add_argument("--payload-mm", type=float, nargs=3,
                         metavar=("X", "Y", "Z"),
@@ -873,8 +881,11 @@ def main():
         max_iters=args.max_iters)
     print("start joints [deg]:", np.round(np.degrees(start), 2).tolist())
     for g_hat, path, clearance in zip(reached, paths, clearances):
+        # 어느 두 물체가 가장 가까웠는지 같이 찍는다. 이름을 봐야 그 여유가
+        # 진짜 위험인지, 붙어 있는 것끼리의 고정 간격인지 구별된다.
+        gap, a, b = clearance
         print(f"g={np.round(g_hat, 2).tolist()}: {len(path)} waypoints,"
-              f" clearance {clearance*1000:.2f} mm,"
+              f" clearance {gap*1000:.2f} mm ({a} <-> {b}),"
               f" goal {np.round(np.degrees(path[-1]), 1).tolist()} deg")
     if len(reached) < MIN_DIRECTIONS_FOR_AXES:
         print(f"  [주의] 갈 수 있는 방향이 {len(reached)}개뿐입니다."

@@ -2357,15 +2357,35 @@ def _load_tare(args):
               " 못 빼고 멈춥니다 (MeshPCA pivot/tare_real.py 로 먼저 재세요).")
         return tare
     path = Path(path).expanduser()
-    entries = json.loads(path.read_text())["entries"]
+    payload = json.loads(path.read_text())
+    entries = payload["entries"]
+    # 잰 시각을 그대로 넘긴다. 안 넘기면 '읽은 시각' 이 기준이 되어,
+    # 3 일 전 파일도 읽는 순간 나이가 0 이 된다.
+    measured_at = payload.get("created_at_s")
     for entry in entries:
-        tare.record(entry["g_hat"], np.asarray(entry["wrench"], dtype=float))
+        tare.record(entry["g_hat"], np.asarray(entry["wrench"], dtype=float),
+                    stamp=measured_at)
     missing = [g for g in alg.G_DIRS if tare.key(g) not in tare.table]
     if missing:
         raise RuntimeError(
             f"{path} 에 중력 방향 {[np.round(g, 3).tolist() for g in missing]}"
             f" 의 영점 조정값이 없습니다. 3자세를 모두 재야 합니다.")
+    # 영점을 못 쓰게 만드는 것은 시간이 아니라 **그리퍼나 센서를 다시 다는
+    # 일**이다. 그건 프로그램이 알아챌 수 없으므로, 언제 잰 값인지 찍어 주고
+    # 사람이 판단하게 한다.
+    when = "시각 미상"
+    if measured_at:
+        import datetime
+        age_h = (time.time() - float(measured_at)) / 3600.0
+        when = (datetime.datetime.fromtimestamp(float(measured_at))
+                .strftime("%m-%d %H:%M") + f" ({age_h:.1f} 시간 전)")
     print(f"  영점 조정 {len(entries)} 방향을 읽었습니다: {path.name}")
+    print(f"    잰 시각: {when}")
+    print( "    그 뒤로 그리퍼나 F/T 센서를 다시 달았으면 다시 재세요"
+           " (setup/wrist_tare.sh).")
+    if payload.get("measured", {}).get("passed") is False:
+        print( "    [주의] 이 영점은 물리 검산에 **불합격**한 값입니다."
+               " 나온 밀도를 믿으면 안 됩니다.")
     return tare
 
 

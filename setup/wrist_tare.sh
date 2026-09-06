@@ -10,6 +10,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF="${HERE}/experiment.conf"
 MODE="${1:---plan}"
+shift || true
+EXTRA=("$@")          # 뒤에 붙인 것은 tare_real.py 로 그대로 넘긴다
+                      #   예) setup/wrist_tare.sh --plan --clearance-mm 15
 
 if [[ ! -f "${CONF}" ]]; then
   echo "설정 파일이 없습니다: ${CONF}"
@@ -72,4 +75,5 @@ esac
 
 export PIVOT_WORKDIR="${PIVOT_ROOT}/my_work"
 exec "${R}" env PYTHONPATH="${MESHPCA_ROOT}/pivot" python -u "${SCRIPT}" \
-  --robot-ip "${ROBOT_HOST}" --output "${TARE_FILE}" "${ACTION[@]}"
+  --robot-ip "${ROBOT_HOST}" --output "${TARE_FILE}" "${ACTION[@]}" \
+  ${EXTRA[@]+"${EXTRA[@]}"}

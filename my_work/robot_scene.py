@@ -893,8 +893,22 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
     manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
         ids(end_effector), ids(wrist)))
     if cable is not None:
+        # 케이블은 mount 에 용접돼 있고, mount 는 link6 에, 그리퍼는 mount 에,
+        # 잡힌 부위는 그리퍼에 용접돼 있다. 즉 이들 사이에는 **상대 운동이
+        # 없다.** 볼트로 붙어 있는 두 물건의 거리를 충돌 검사하는 것은 아무
+        # 의미가 없다 — 팔을 어떻게 움직여도 그 거리는 안 변한다.
+        #
+        # 그런데 mount 하나만 빼고 있었다. 그래서 케이블과 그리퍼 사이의
+        # **고정된** 간격이 매번 최소 여유로 보고됐다. 실측에서 여러 경로가
+        # 똑같이 13.29 mm 로 나온 것이 그것이다. 안전 여유를 20 mm 로 올리면
+        # 팔을 어디로 보내든 절대 통과할 수 없다 — 고칠 수 없는 실패다.
+        #
+        # 진짜로 봐야 하는 것은 케이블이 **움직일 수 있는 것**에 닿는가이다:
+        # link0~link4, 테이블, 받침대, 카메라. 그쪽은 그대로 검사한다.
         manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
-            ids([cable]), ids([mount])))
+            ids([cable]), ids(end_effector)))
+        manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
+            ids([cable]), ids(wrist)))
     manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
         ids([base_floor]), ids([plant.GetBodyByName("link0", arm)])))
     # link0..link4 와 물체의 나머지 부위, 테이블은 그대로 검사한다.

@@ -50,16 +50,29 @@ ls my_work/tare_check.py tools/check_grasp_frames.py tools/check_tare_poses.py
 측정 오차의 원인을 찾을 수 있게 고치고 안전 여유를 20 mm 로 올린다
 ```
 
-### 설정 파일 두 줄
+### 설정 파일
 
 `setup/experiment.conf` 는 PC 마다 다르므로 저장소에 없다. 직접 고친다.
 
 ```diff
-- TARE_MAX_AGE_S=0        # 무제한. 3 일 전 영점을 그대로 쓰게 된다
-+ TARE_MAX_AGE_S=1800     # 30 분
+  TARE_MAX_AGE_S=0        # 시간으로는 안 막는다 (아래 설명)
 
 - ANGLE_MARGIN_DEG=0.0
 + ANGLE_MARGIN_DEG=5.0    # 사람이 각도를 돌리는 범위까지 충돌 검사
+```
+
+**영점의 유효기간을 왜 시간으로 안 재나.** 영점을 못 쓰게 만드는 것은 시간이
+아니라 **그리퍼나 F/T 센서를 다시 다는 일**이다. 다시 달면 그리퍼가 만드는
+렌치가 통째로 달라지므로 그 즉시 다시 재야 하고, 안 건드렸으면 며칠이 지나도
+그대로 쓸 수 있다. 온도 드리프트가 있긴 하지만 그건 `--verify` 로 10 초 만에
+확인하는 편이 낫다.
+
+그래서 `TARE_MAX_AGE_S=0` (시간 제한 없음) 으로 두고, 대신 세션을 켤 때
+**언제 잰 값인지**를 찍는다. 그리퍼나 센서를 다시 달았으면 그때 다시 재면 된다.
+
+```bash
+setup/wrist_tare.sh --run          # 다시 달았을 때
+setup/wrist_tare.sh --verify       # 그대로 써도 되나 10 초 확인
 ```
 
 ---
