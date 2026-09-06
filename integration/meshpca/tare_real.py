@@ -104,10 +104,35 @@ def direction_label(g_hat):
           f"중력이 센서 좌표계에서 {np.round(g_hat, 2).tolist()}")
 
 
-def empty_tool_spec():
-    part = obj.Part("tool", (2.0, 78.0, 2.0), 0.01, 1000.0,
-                    (1.0, 0.0, 0.0), (1.0, 0.0, 0.0),
-                    (0.3, 0.3, 0.3, 1.0), grasp_width_mm=78.0)
+# 손에 무엇을 들고 영점을 잴 때의 그 물건 크기 [mm].
+# None 이면 빈 그리퍼. --payload-mm 으로 설정한다.
+#
+# 왜 필요한가 — 아는 무게로 센서 배율을 검증하려면 물건을 들고 재야 한다.
+# 그런데 충돌 검사는 여기서 만드는 형상만 본다. 빈 그리퍼로 두면 **손에
+# 든 물건이 검사에 아예 안 보인다.** 손목이 크게 도는 동안 물병이 팔이나
+# 책상에 닿아도 프로그램은 "여유 23 mm" 라고 말한다.
+PAYLOAD_BOX_MM = None
+
+
+def empty_tool_spec(payload_mm=None):
+    """영점 조정 때 그리퍼 안에 있는 것의 형상.
+
+    payload_mm 이 없으면 2 mm 짜리 얇은 판 = 사실상 빈 손이다.
+    있으면 그 크기의 직육면체를 손에 쥔 것으로 본다.
+
+    크기는 **물건을 감싸는 직육면체**로 준다. 물건이 어느 방향으로 놓이는지
+    확신이 없으면 가장 긴 치수로 정육면체를 주는 것이 안전하다 — 검사가
+    실제보다 빡빡해질 뿐, 놓치지는 않는다.
+    """
+    box = PAYLOAD_BOX_MM if payload_mm is None else payload_mm
+    if box is None:
+        bbox, width = (2.0, 78.0, 2.0), 78.0
+    else:
+        bbox = tuple(float(v) for v in box)
+        width = min(bbox)              # 죠가 무는 쪽은 가장 좁은 단면
+    part = obj.Part("tool", bbox, 0.01, 1000.0,
+                    (bbox[0] / 2.0, 0.0, 0.0), (bbox[0] / 2.0, 0.0, 0.0),
+                    (0.3, 0.3, 0.3, 1.0), grasp_width_mm=width)
     return obj.ObjectSpec("tare_tool", "empty Robotiq", [part], [],
                           (0.0, 0.0, 0.0))
 
@@ -767,6 +792,13 @@ def main():
     parser.add_argument("--speed-deg-s", type=float, default=3.0)
     parser.add_argument("--clearance-mm", type=float, default=10.0)
     parser.add_argument("--max-iters", type=int, default=10000)
+    parser.add_argument("--payload-mm", type=float, nargs=3,
+                        metavar=("X", "Y", "Z"),
+                        help="손에 든 물건을 감싸는 직육면체 크기 [mm]."
+                             " 아는 무게로 배율을 검증할 때 **반드시** 준다."
+                             " 안 주면 충돌 검사가 그 물건을 못 본다."
+                             " 방향이 헷갈리면 가장 긴 치수로 정육면체를"
+                             " 주는 것이 안전하다.")
     parser.add_argument("--max-wrist-deg", type=float, default=120.0,
                         help="손목 J4-J6 를 한 자리에서 몇 도까지 돌릴지."
                              " 넓힐수록 도달할 수 있는 방향은 늘지만"
@@ -802,6 +834,13 @@ def main():
     if (args.output.exists() and not args.overwrite and not args.plan_only
             and not args.verify):
         parser.error(f"refusing to overwrite {args.output}")
+
+    global PAYLOAD_BOX_MM
+    if args.payload_mm is not None:
+        PAYLOAD_BOX_MM = tuple(args.payload_mm)
+        print(f"  손에 든 물건: {PAYLOAD_BOX_MM} mm 직육면체로 충돌 검사합니다")
+    else:
+        print("  손에 든 물건: 없음 (빈 그리퍼로 충돌 검사합니다)")
 
     rbpodo = __import__("rbpodo")
     data = rbpodo.CobotData(args.robot_ip)
