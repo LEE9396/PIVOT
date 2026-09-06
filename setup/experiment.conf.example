@@ -53,6 +53,11 @@ GRASP_FRAME=legacy
 # FoundationPose 가 추적하는 부위 이름 (파지점을 계산할 메시)
 FP_GRASP_PART=support
 FP_MESH_DIR=~/Desktop/PIVOT/assets/final_objects/lamp/visual_meshes
+# FoundationPose 가 추적할 메시를 **직접** 지정한다 (비워 두면 위 둘로 만든다).
+# FoundationPose 메시와 밀도 모델 메시는 반드시 같아야 한다. 다르면 카메라가
+# 읽어 준 물체 자세가 다른 좌표계의 값이 되어 파지점이 통째로 어긋나는데,
+# 화면에는 아무 표시도 안 난다. 런처가 둘을 비교해서 다르면 알려 준다.
+FP_GRASP_MESH_OVERRIDE=
 GAUSSIAN_DIR=~/Desktop/Lab/issacimport/issac_sim_urdf/desk_lamp_refined_v1_rgb/gaussian
 GAUSSIAN_FILES=base=gaussian_1.ply,support=gaussian_3.ply,head=gaussian_2.ply
 FP_LIVE_SCRIPT=foundationpose/run_desk_lamp_live.py

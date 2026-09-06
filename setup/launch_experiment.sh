@@ -57,21 +57,42 @@ sys.path.insert(0, '${WORK}')
 import desk_lamp
 print(desk_lamp.visual_mesh_path('${GRASP_PART}'))
 " 2>/dev/null | tail -1)"
-if [[ -n "${PIVOT_MESH}" && -f "${PIVOT_MESH}" ]]; then
-  if [[ "${FP_GRASP_MESH}" != "${PIVOT_MESH}" ]]; then
-    echo "[알림] FoundationPose 메시를 밀도 모델과 같은 것으로 맞춥니다."
-    echo "         설정값  ${FP_GRASP_MESH}"
-    echo "         실제    ${PIVOT_MESH}"
-  fi
-  FP_GRASP_MESH="${PIVOT_MESH}"
-  FP_MESH_DIR="$(dirname "${PIVOT_MESH}")"
-  FP_GRASP_PART="$(basename "${PIVOT_MESH}")"
-  FP_GRASP_PART="${FP_GRASP_PART%.*}"
-else
-  echo "[주의] 밀도 모델이 쓰는 메시를 못 물어봤습니다."
-  echo "       설정값을 그대로 씁니다: ${FP_GRASP_MESH}"
-  echo "       둘이 다르면 파지점이 통째로 어긋납니다."
+# 고르는 순서. **사람이 명시한 것이 언제나 이긴다.**
+#   1) conf 의 FP_GRASP_MESH        직접 적어 준 경로
+#   2) FP_MESH_DIR/FP_GRASP_PART    그 파일이 실제로 있으면
+#   3) 밀도 모델이 쓰는 메시         위 둘이 다 없을 때만
+#
+# 앞서 3) 을 무조건 강제했더니 엉뚱한 메시가 올라왔다. 자동으로 고르는 쪽이
+# 맞다는 보장이 없다 — 배달물이 덜 풀려 있으면 밀도 모델도 옛 자산으로
+# 내려간다. 그래서 고르지 않고, **다르면 크게 알리고 사람이 정하게 한다.**
+if [[ -n "${FP_GRASP_MESH_OVERRIDE:-}" ]]; then
+  FP_GRASP_MESH="$(expand "${FP_GRASP_MESH_OVERRIDE}")"
+  echo "[알림] FoundationPose 메시를 conf 의 FP_GRASP_MESH 로 씁니다:"
+  echo "         ${FP_GRASP_MESH}"
 fi
+if [[ -n "${PIVOT_MESH}" && "${FP_GRASP_MESH}" != "${PIVOT_MESH}" ]]; then
+  echo "[주의] FoundationPose 메시와 밀도 모델 메시가 다릅니다."
+  echo "         FoundationPose  ${FP_GRASP_MESH}"
+  echo "         밀도 모델        ${PIVOT_MESH}"
+  echo "       두 메시는 원점과 축이 다르므로, 카메라가 읽어 준 물체 자세가"
+  echo "       다른 좌표계의 값이 되어 파지점이 통째로 어긋납니다."
+  echo "       (화면에는 아무 표시도 안 납니다)"
+  echo "       고치는 법 — 둘 중 하나:"
+  echo "         conf 의 LAMP_ASSET_DIR 를 쓰려는 배달물로 맞춘다"
+  echo "         conf 에 FP_GRASP_MESH_OVERRIDE=<경로> 로 직접 지정한다"
+fi
+if [[ ! -f "${FP_GRASP_MESH}" ]]; then
+  if [[ -n "${PIVOT_MESH}" && -f "${PIVOT_MESH}" ]]; then
+    echo "[알림] 설정한 메시가 없어 밀도 모델의 것을 씁니다: ${PIVOT_MESH}"
+    FP_GRASP_MESH="${PIVOT_MESH}"
+  fi
+fi
+if [[ -f "${FP_GRASP_MESH}" ]]; then
+  FP_MESH_DIR="$(dirname "${FP_GRASP_MESH}")"
+  FP_GRASP_PART="$(basename "${FP_GRASP_MESH}")"
+  FP_GRASP_PART="${FP_GRASP_PART%.*}"
+fi
+echo "[메시] FoundationPose: ${FP_GRASP_MESH}"
 FOUNDATIONPOSE_PYTHON="${FOUNDATIONPOSE_PYTHON:-${SAM3_PYTHON%%/envs/*}/envs/${FOUNDATIONPOSE_CONDA_ENV}/bin/python}"
 
 start_foundationpose() {
