@@ -33,6 +33,23 @@ LAPTOP_ASSET_DIR=~/Desktop/PIVOT/assets/final_objects/laptop
 OBJECT=desklamp
 # PIVOT 이 잡는 부위 (desklamp 전용). link_3 = 연결부/팔
 GRASP_PART=link_3
+
+# 밀도 계산의 모멘트팔을 무엇으로 세울 것인가.
+#
+#   legacy    자산에 적어둔 **짐작** 파지점 (위치만, 회전 없음). 지금까지의 동작.
+#             컴퓨터가 정한 자리에 사람이 맞춰 잡아야 하고, 지난 세션에서
+#             그 어긋남이 43 mm 였다.
+#   measured  사람이 원하는 곳에 잡히면 카메라(FoundationPose)가 그 자리를
+#             읽어 와서 그대로 쓴다. **이 연구의 설계가 이쪽이다.**
+#
+# 로봇 장면(충돌·도달 검사)은 이미 실측값을 쓰고 있다. 밀도 계산만 짐작값을
+# 쓰고 있었다.
+#
+# 켜기 전에 반드시 tools/check_grasp_frames.py 를 돌려라. 회전 차이가 수십
+# 도로 나오면 그건 사람의 파지 오차가 아니라 **메시 좌표계 규약이 서로 다른
+# 것**이고, 그 상태로 켜면 지금보다 나빠진다. 이 컴퓨터에서 계산했을 때는
+# 137.9 도였다 — 아직 실물로 재본 적이 없다.
+GRASP_FRAME=legacy
 # FoundationPose 가 추적하는 부위 이름 (파지점을 계산할 메시)
 FP_GRASP_PART=support
 FP_MESH_DIR=~/Desktop/PIVOT/assets/final_objects/lamp/visual_meshes

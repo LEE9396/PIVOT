@@ -393,6 +393,14 @@ class Conductor:
                           ("--tare-max-age-s", "TARE_MAX_AGE_S"),
                           ("--meshpca-root", "MESHPCA_ROOT"),
                           ("--aft-host", "AFT_HOST"),
+                          # 밀도 계산의 모멘트팔을 무엇으로 세울지.
+                          #   legacy    자산에 적어둔 짐작 파지 (지금까지)
+                          #   measured  사람이 실제로 잡힌 자리를 카메라가
+                          #             읽어 온 값. 이 연구의 설계다.
+                          # 로봇 장면(충돌·도달)은 이미 실측값을 쓰는데
+                          # 밀도 계산만 짐작값을 쓰고 있었다. 설정으로 켤
+                          # 방법조차 없어서 코드를 고쳐야 했다.
+                          ("--grasp-frame", "GRASP_FRAME"),
                           ("--robot-host", "ROBOT_HOST")):
             if conf.get(key):
                 command += [flag, conf[key]]
