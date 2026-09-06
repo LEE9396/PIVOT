@@ -42,6 +42,36 @@ R="${PIVOT_ROOT}/robot_learning/scripts/run_drake_env.sh"
 GRASP_JSON="${WORK}/outputs/grasp_target_${OBJECT}.json"
 FP_GRASP_MESH="${FP_MESH_DIR}/${FP_GRASP_PART}.obj"
 [[ -f "${FP_GRASP_MESH}" ]] || FP_GRASP_MESH="${FP_MESH_DIR}/${FP_GRASP_PART}.ply"
+
+# FoundationPose 가 추적하는 메시는 **밀도 모델이 쓰는 바로 그 메시**여야 한다.
+# 다르면 카메라가 읽어 준 물체 자세가 다른 좌표계의 값이 되고, 파지점이
+# 통째로 어긋난다. 사람이 두 설정을 손으로 맞춰 두기를 바라면 언젠가 어긋나고,
+# 어긋나도 화면에는 아무 표시가 안 난다.
+#
+# 그래서 설정을 믿지 않고 밀도 모델에게 직접 물어본다. 실제로 어긋나 있었다 —
+# FP_MESH_DIR 은 assets/final_objects/lamp/visual_meshes 를 가리키는데 그
+# 폴더는 비어 있고, 밀도 모델은 assets/desk_lamp_minimal_sim 을 쓰고 있었다.
+PIVOT_MESH="$(DESK_LAMP_DELIVERY="${LAMP_ASSET_DIR}" "${R}" python -c "
+import sys
+sys.path.insert(0, '${WORK}')
+import desk_lamp
+print(desk_lamp.visual_mesh_path('${GRASP_PART}'))
+" 2>/dev/null | tail -1)"
+if [[ -n "${PIVOT_MESH}" && -f "${PIVOT_MESH}" ]]; then
+  if [[ "${FP_GRASP_MESH}" != "${PIVOT_MESH}" ]]; then
+    echo "[알림] FoundationPose 메시를 밀도 모델과 같은 것으로 맞춥니다."
+    echo "         설정값  ${FP_GRASP_MESH}"
+    echo "         실제    ${PIVOT_MESH}"
+  fi
+  FP_GRASP_MESH="${PIVOT_MESH}"
+  FP_MESH_DIR="$(dirname "${PIVOT_MESH}")"
+  FP_GRASP_PART="$(basename "${PIVOT_MESH}")"
+  FP_GRASP_PART="${FP_GRASP_PART%.*}"
+else
+  echo "[주의] 밀도 모델이 쓰는 메시를 못 물어봤습니다."
+  echo "       설정값을 그대로 씁니다: ${FP_GRASP_MESH}"
+  echo "       둘이 다르면 파지점이 통째로 어긋납니다."
+fi
 FOUNDATIONPOSE_PYTHON="${FOUNDATIONPOSE_PYTHON:-${SAM3_PYTHON%%/envs/*}/envs/${FOUNDATIONPOSE_CONDA_ENV}/bin/python}"
 
 start_foundationpose() {
