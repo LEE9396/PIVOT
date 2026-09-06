@@ -184,74 +184,242 @@ def plan_paths(current, clearance_m, max_iters):
     return start, paths, clearances
 
 
+def wrist_window(joint, reference, limit_rad):
+    """손목 관절 하나가 돌 수 있는 구간. 관절 한계와 +-limit 중 좁은 쪽.
+
+    구간이 비면 (lower > upper) 그 관절은 한 발짝도 못 움직인다는 뜻이다.
+    로봇이 손목 한계 근처(예: J4 = 333 deg)에 서 있으면 실제로 일어난다.
+    """
+    lower = max(joint.position_lower_limits()[0], reference - limit_rad)
+    upper = min(joint.position_upper_limits()[0], reference + limit_rad)
+    return lower, upper
+
+
+def solve_wrist(checker, indices, fixed, base, reference, g_hat,
+                max_wrist_deg, avoid_collision=True):
+    """J1--J3 를 base 로 못박고 손목 J4--J6 만으로 g_hat 을 만든다.
+
+    풀리면 팔 관절각 6개, 안 풀리면 None.
+    """
+    for joint, value in zip(checker.arm_joints[3:], reference[3:]):
+        lower, upper = wrist_window(joint, value, np.deg2rad(max_wrist_deg))
+        if lower > upper:
+            return None                     # 창이 비었다 — 풀 것도 없다
+    ik = InverseKinematics(checker.plant, checker.context,
+                           with_joint_limits=True)
+    prog, q = ik.prog(), ik.q()
+    for joint, value in zip(checker.arm_joints[:3], base[:3]):
+        index = joint.position_start()
+        prog.AddBoundingBoxConstraint(value, value, q[index])
+    for joint, value in zip(checker.arm_joints[3:], reference[3:]):
+        index = joint.position_start()
+        lower, upper = wrist_window(joint, value, np.deg2rad(max_wrist_deg))
+        prog.AddBoundingBoxConstraint(lower, upper, q[index])
+    for joint in checker.finger_joints:
+        index = joint.position_start()
+        prog.AddBoundingBoxConstraint(checker.finger_value,
+                                      checker.finger_value, q[index])
+    ik.AddAngleBetweenVectorsConstraint(
+        checker.plant.world_frame(), np.array([0.0, 0.0, -1.0]),
+        checker.sensor_frame, np.asarray(g_hat, dtype=float),
+        0.0, scene.ANGLE_TOL_RAD)
+    if avoid_collision:
+        ik.AddMinimumDistanceLowerBoundConstraint(checker.ik_distance_m, 0.01)
+    prog.AddQuadraticErrorCost(np.eye(3), reference[3:], q[indices[3:]])
+    guess = fixed.copy()
+    for index, value in zip(indices[:3], base[:3]):
+        guess[index] = value
+    for index, value in zip(indices[3:], reference[3:]):
+        guess[index] = value
+    prog.SetInitialGuess(q, guess)
+    result = Solve(prog)
+    if not result.is_success():
+        return None
+    solution = result.GetSolution(q)[indices]
+    if np.max(np.abs(solution[:3] - np.asarray(base)[:3])) > 1e-9:
+        return None                         # J1--J3 가 움직였으면 손목 전용이 아니다
+    return solution
+
+
+def explain_wrist_failure(checker, indices, fixed, base, reference, g_hat,
+                          max_wrist_deg):
+    """왜 손목만으로 안 되는지 좁힌다.
+
+    제한을 하나씩 풀어 보고 **어느 것을 풀었을 때 풀리는지** 로 범인을
+    가린다. 창을 넓히면 되면 손목 한계 문제이고, 충돌 검사를 꺼야 되면
+    팔이 무언가에 닿는 것이고, 그래도 안 되면 이 J1--J3 배치 자체가
+    그 방향을 만들 수 없는 것이다.
+    """
+    ladder = [
+        (180.0, True, f"손목 창을 {max_wrist_deg:.0f} -> 180 deg 로 넓히면"),
+        (360.0, True, "손목을 관절 한계까지 열면"),
+        (360.0, False, "손목을 다 열고 충돌 검사까지 끄면"),
+    ]
+    for limit, avoid, label in ladder:
+        if solve_wrist(checker, indices, fixed, base, reference, g_hat,
+                       limit, avoid_collision=avoid) is not None:
+            return label
+    return "손목을 다 열고 충돌 검사를 꺼도 안 됩니다 — 이 J1--J3 배치로는 못 만드는 방향입니다"
+
+
+def wrist_headroom_text(checker, reference, max_wrist_deg):
+    """손목 세 관절이 지금 자리에서 좌우로 몇 도씩 남았는지."""
+    parts = []
+    for number, (joint, value) in enumerate(
+            zip(checker.arm_joints[3:], reference[3:]), start=4):
+        lower, upper = wrist_window(joint, value, np.deg2rad(max_wrist_deg))
+        parts.append(f"J{number} {np.degrees(value):+7.1f} deg"
+                     f" (-{np.degrees(max(value - lower, 0.0)):.0f}"
+                     f" / +{np.degrees(max(upper - value, 0.0)):.0f})")
+    return "   ".join(parts)
+
+
+def find_wrist_base(checker, indices, fixed, current, max_wrist_deg,
+                    required, normalize=None, log=print):
+    """필수 방향을 **전부** 손목만으로 만들 수 있는 J1--J3 배치를 찾는다.
+
+    왜 찾아야 하나 — 영점 세 자세가 J1--J3 를 공유해야 손목만 돌려서 잴 수
+    있고, 그래야 세 값이 같은 팔 배치에서 나온다. 그런데 그런 배치는 아무
+    데나 있는 것이 아니다. 로봇이 서 있던 자리가 그런 자리일 이유도 없다.
+
+    후보 순서
+        1) 지금 자세          — 되면 팔을 아예 안 움직인다
+        2) 필수 방향을 팔 전체로 푼 자세들 — 되면 거기까지 한 번만 옮긴다
+
+    돌려주는 것: (base, 후보설명) 또는 (None, 실패이유들)
+    """
+    # normalize 는 후보를 "실제로 갈 좌표" 로 옮긴다 (2*pi 등가 중 지금
+    # 자세에 가까운 것). 검사와 실행이 같은 좌표를 봐야 하므로 **검사하기
+    # 전에** 옮긴다. 나중에 옮기면 통과한 자세와 갈 자세가 달라진다.
+    normalize = normalize or (lambda q: np.asarray(q, dtype=float))
+    tried = [("지금 자세", normalize(current))]
+    for g_hat in required:
+        checker._last_solution = None
+        full = checker.solve_robust(np.array([]), np.asarray(g_hat, dtype=float))
+        if full is None:
+            continue
+        tried.append((f"g={np.round(g_hat, 2).tolist()} 를 팔 전체로 푼 자세",
+                      normalize(np.asarray(full)[indices])))
+
+    reasons = []
+    for label, candidate in tried:
+        blocked = None
+        state = candidate
+        for g_hat in required:
+            target = solve_wrist(checker, indices, fixed, candidate, state,
+                                 g_hat, max_wrist_deg)
+            if target is None:
+                blocked = (g_hat, explain_wrist_failure(
+                    checker, indices, fixed, candidate, state, g_hat,
+                    max_wrist_deg))
+                break
+            state = target
+        if blocked is None:
+            log(f"  손목 전용 배치: {label}")
+            return candidate, label
+        g_hat, why = blocked
+        move = np.degrees(np.abs(np.asarray(candidate)[:3]
+                                 - np.asarray(current)[:3])).max()
+        reasons.append(f"  {label} (J1--J3 {move:.0f} deg 이동):"
+                       f" {direction_label(g_hat)} 실패 — {why}")
+    return None, reasons
+
+
 def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
-                     directions=None, log=print):
-    """J1--J3를 고정하고 손목 J4--J6만으로 세 중력방향을 만든다."""
+                     directions=None, max_iters=10000, log=print):
+    """세 중력방향을 J1--J3 한 배치에서 손목 J4--J6 만으로 만든다.
+
+    왜 손목만인가 — 영점 조정은 "그 자세에서 빈 그리퍼가 만드는 렌치" 를
+    통째로 빼는 방식이라, 영점을 잰 자세와 실제로 재는 자세가 가까울수록
+    잘 상쇄된다. 지난 세션은 이 둘이 587--681 deg 나 떨어져 있었다.
+
+    예전 코드의 구멍 — 로봇이 서 있던 자세의 J1--J3 를 그대로 쓰고, 그
+    자세로 안 되면 그냥 멈췄다. 그 자세가 좋은 자리일 이유가 없는데도.
+    이제는 되는 자리를 **찾아서**, 거기까지 한 번만 팔 전체로 (충돌 검사를
+    거쳐) 옮기고, 그 다음부터 손목만 쓴다.
+    """
     checker = scene.PoseChecker(
         empty_tool_spec(), densities=[1000.0], joint_limits_rad=[],
         min_distance_m=clearance_m, gripper="robotiq2f85",
-        ik_restarts=0, seed_q=current)
+        ik_restarts=30, seed_q=current)
     indices = [joint.position_start() for joint in checker.arm_joints]
     fixed = checker.plant.GetPositions(checker.context).copy()
-    start = np.asarray(current, dtype=float).copy()
-    for joint, value in zip(checker.arm_joints, start):
-        fixed[joint.position_start()] = value
     planner = ArmPathPlanner(checker.plant, checker.context,
                              checker.arm_joints, clearance_m, fixed, seed=11)
-
-    def solve_wrist(reference, g_hat):
-        ik = InverseKinematics(checker.plant, checker.context,
-                               with_joint_limits=True)
-        prog, q = ik.prog(), ik.q()
-        for joint, value in zip(checker.arm_joints[:3], start[:3]):
-            index = joint.position_start()
-            prog.AddBoundingBoxConstraint(value, value, q[index])
-        limit = np.deg2rad(max_wrist_deg)
-        for joint, value in zip(checker.arm_joints[3:], reference[3:]):
-            index = joint.position_start()
-            lower = max(joint.position_lower_limits()[0], value - limit)
-            upper = min(joint.position_upper_limits()[0], value + limit)
-            prog.AddBoundingBoxConstraint(lower, upper, q[index])
-        for joint in checker.finger_joints:
-            index = joint.position_start()
-            prog.AddBoundingBoxConstraint(checker.finger_value,
-                                          checker.finger_value, q[index])
-        ik.AddAngleBetweenVectorsConstraint(
-            checker.plant.world_frame(), np.array([0.0, 0.0, -1.0]),
-            checker.sensor_frame, np.asarray(g_hat, dtype=float),
-            0.0, scene.ANGLE_TOL_RAD)
-        ik.AddMinimumDistanceLowerBoundConstraint(checker.ik_distance_m, 0.01)
-        prog.AddQuadraticErrorCost(np.eye(3), reference[3:], q[indices[3:]])
-        guess = fixed.copy()
-        for index, value in zip(indices, reference):
-            guess[index] = value
-        prog.SetInitialGuess(q, guess)
-        result = Solve(prog)
-        return None if not result.is_success() else result.GetSolution(q)[indices]
+    # 로봇이 읽어 준 각도가 모형의 관절 한계 밖일 수 있다 (예: J4 = 333 deg).
+    # 그대로 쓰면 IK 의 구간이 비어 무조건 실패한다. plan_paths 가 이미
+    # 하던 정규화를 여기서도 한다.
+    start = nearest_equivalent(current,
+                               np.clip(current, planner.lower, planner.upper),
+                               planner.lower, planner.upper)
+    for joint, value in zip(checker.arm_joints, start):
+        fixed[joint.position_start()] = value
+    planner.set_fixed(fixed)
 
     wanted = [np.asarray(g, dtype=float)
               for g in (directions if directions is not None else alg.G_DIRS)]
-    paths, clearances, reached, state = [], [], [], start
+    required = [np.asarray(g, dtype=float) for g in REQUIRED_DIRECTIONS]
+
+    log(f"  손목 여유 (창 {max_wrist_deg:.0f} deg):"
+        f" {wrist_headroom_text(checker, start, max_wrist_deg)}")
+    base, note = find_wrist_base(
+        checker, indices, fixed, start, max_wrist_deg, required,
+        normalize=lambda q: nearest_equivalent(q, start, planner.lower,
+                                               planner.upper),
+        log=log)
+    if base is None:
+        raise RuntimeError(
+            "필수 중력 방향 셋을 손목만으로 만들 수 있는 J1--J3 배치를 못 찾았습니다.\n"
+            + "\n".join(note)
+            + "\n  손 쓸 수 있는 것:"
+            "\n    - 팔을 다른 자세로 옮기고 --plan 을 다시 (직접교시로 충분합니다)"
+            f"\n    - 손목 창을 넓힌다: --max-wrist-deg {max_wrist_deg + 60:.0f}"
+            "\n      (케이블이 그만큼 꼬여도 되는지 눈으로 먼저 확인하세요)"
+            "\n    - 손목 전용을 포기하고 사람이 맞춘다: --manual")
+
+    approach = None
+    if np.max(np.abs(np.asarray(base)[:3] - start[:3])) > 1e-9:
+        approach = planner.plan(start, base, max_iters=max_iters)
+        if approach is None:
+            raise RuntimeError(
+                "손목 전용 배치까지 갈 충돌 없는 경로가 없습니다:"
+                f" {np.round(np.degrees(base), 1).tolist()} deg")
+        if (not np.allclose(approach[0], start)
+                or not np.allclose(approach[-1], base)):
+            raise RuntimeError("접근 경로의 끝점이 어긋났습니다")
+        measured = planner.path_clearance(approach, samples_per_edge=60)
+        if measured < clearance_m * 0.9 - 1e-6:
+            raise RuntimeError(f"접근 경로 여유가 너무 작습니다:"
+                               f" {measured*1000:.2f} mm")
+        log(f"  접근: {len(approach)} waypoints,"
+            f" 여유 {measured*1000:.2f} mm,"
+            f" J1--J3 {np.degrees(np.abs(base[:3] - start[:3])).max():.1f} deg 이동")
+
+    paths, clearances, reached, state = [], [], [], base
     for g_hat in wanted:
-        required = any(np.allclose(g_hat, r) for r in REQUIRED_DIRECTIONS)
-        target = solve_wrist(state, g_hat)
+        is_required = any(np.allclose(g_hat, r) for r in required)
+        target = solve_wrist(checker, indices, fixed, base, state, g_hat,
+                             max_wrist_deg)
         why = None
         if target is None:
-            why = "손목만으로 그 방향을 못 만듭니다"
-        elif np.max(np.abs(target[:3] - start[:3])) > 1e-9:
-            why = "손목 전용 계획이 J1--J3 를 움직였습니다"
+            why = explain_wrist_failure(checker, indices, fixed, base, state,
+                                        g_hat, max_wrist_deg)
         elif not planner.edge_valid(state, target):
             why = "손목 직선 경로가 충돌합니다"
         if why is not None:
-            # 필수 셋은 없으면 영점 표 자체가 못 만들어지므로 멈춘다.
-            # 검산용 방향은 못 가도 그냥 건너뛴다 — 몇 개는 손목 한계(120 deg)
-            # 밖일 수 있고, 그것 때문에 준비가 막히면 안 된다.
-            if required:
+            # 필수 셋은 위에서 이미 되는 것을 확인하고 고른 배치다. 여기서
+            # 걸리면 경로(edge) 쪽 문제이므로 멈춘다. 검산용 방향은 못 가도
+            # 그냥 건너뛴다 — 손목 창 밖일 수 있고, 그것 때문에 준비가
+            # 막히면 안 된다.
+            if is_required:
                 raise RuntimeError(
-                    f"필수 중력 방향 {g_hat.tolist()}: {why}")
+                    f"필수 중력 방향 {g_hat.tolist()}"
+                    f" ({direction_label(g_hat)}): {why}")
             log(f"  건너뜀 {np.round(g_hat, 2).tolist()}: {why}")
             continue
         path = [state, target]
+        if approach is not None and not paths:
+            path = list(approach) + [target]
         paths.append(path)
         clearances.append(planner.path_clearance(path, samples_per_edge=60))
         reached.append(g_hat)
@@ -532,6 +700,10 @@ def main():
     parser.add_argument("--speed-deg-s", type=float, default=3.0)
     parser.add_argument("--clearance-mm", type=float, default=10.0)
     parser.add_argument("--max-iters", type=int, default=10000)
+    parser.add_argument("--max-wrist-deg", type=float, default=120.0,
+                        help="손목 J4-J6 를 한 자리에서 몇 도까지 돌릴지."
+                             " 넓힐수록 도달할 수 있는 방향은 늘지만"
+                             " 센서 케이블이 그만큼 꼬인다.")
     parser.add_argument("--dirs", type=int, default=len(TARE_DIRECTIONS),
                         help="밟을 중력 방향 개수 (앞의 3개는 필수). 5개 이상이면"
                              " 센서 축까지 풀리고 잔차로 검산할 여유가 생긴다")
@@ -575,7 +747,9 @@ def main():
 
     directions = TARE_DIRECTIONS[:max(3, args.dirs)]
     start, paths, clearances, reached = plan_wrist_paths(
-        current, args.clearance_mm / 1000.0, directions=directions)
+        current, args.clearance_mm / 1000.0,
+        max_wrist_deg=args.max_wrist_deg, directions=directions,
+        max_iters=args.max_iters)
     print("start joints [deg]:", np.round(np.degrees(start), 2).tolist())
     for g_hat, path, clearance in zip(reached, paths, clearances):
         print(f"g={np.round(g_hat, 2).tolist()}: {len(path)} waypoints,"
