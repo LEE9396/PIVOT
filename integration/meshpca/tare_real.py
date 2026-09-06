@@ -274,55 +274,121 @@ def wrist_headroom_text(checker, reference, max_wrist_deg):
     return "   ".join(parts)
 
 
-def find_wrist_base(checker, indices, fixed, current, max_wrist_deg,
-                    required, normalize=None, log=print):
-    """필수 방향을 **전부** 손목만으로 만들 수 있는 J1--J3 배치를 찾는다.
+def pose_note(planner, checker, q):
+    """자세 하나가 왜 못 쓰는지. 쓸 수 있으면 None."""
+    q = np.asarray(q, dtype=float)
+    outside = [f"J{i+1} {np.degrees(v):.1f} deg"
+               for i, v in enumerate(q)
+               if v < planner.lower[i] - 1e-9 or v > planner.upper[i] + 1e-9]
+    if outside:
+        return f"관절 한계 밖 ({', '.join(outside)})"
+    if not planner.valid(q):
+        planner.plant.SetPositions(planner.context, planner.full_q(q))
+        query = planner.query_port.Eval(planner.context)
+        return f"충돌 ({checker.closest_pair_text(query)})"
+    return None
 
-    왜 찾아야 하나 — 영점 세 자세가 J1--J3 를 공유해야 손목만 돌려서 잴 수
-    있고, 그래야 세 값이 같은 팔 배치에서 나온다. 그런데 그런 배치는 아무
-    데나 있는 것이 아니다. 로봇이 서 있던 자리가 그런 자리일 이유도 없다.
 
-    후보 순서
-        1) 지금 자세          — 되면 팔을 아예 안 움직인다
-        2) 필수 방향을 팔 전체로 푼 자세들 — 되면 거기까지 한 번만 옮긴다
+def wrist_base_candidates(checker, indices, start, required, tries=6, seed=17):
+    """손목 전용 배치가 될 만한 팔 자세 후보들.
 
-    돌려주는 것: (base, 후보설명) 또는 (None, 실패이유들)
+    첫째는 지금 자세다 — 되면 팔을 아예 안 움직인다. 그 다음은 필수 방향을
+    팔 전체로 푼 자세들인데, IK 는 출발점에 따라 다른 답을 내므로 초기추측을
+    흔들어 여러 개를 받는다. 하나만 받아 두면 그것이 못 가는 자리일 때
+    시도할 것이 남지 않는다.
     """
-    # normalize 는 후보를 "실제로 갈 좌표" 로 옮긴다 (2*pi 등가 중 지금
-    # 자세에 가까운 것). 검사와 실행이 같은 좌표를 봐야 하므로 **검사하기
-    # 전에** 옮긴다. 나중에 옮기면 통과한 자세와 갈 자세가 달라진다.
-    normalize = normalize or (lambda q: np.asarray(q, dtype=float))
-    tried = [("지금 자세", normalize(current))]
-    for g_hat in required:
-        checker._last_solution = None
-        full = checker.solve_robust(np.array([]), np.asarray(g_hat, dtype=float))
-        if full is None:
-            continue
-        tried.append((f"g={np.round(g_hat, 2).tolist()} 를 팔 전체로 푼 자세",
-                      normalize(np.asarray(full)[indices])))
+    found = [("지금 자세", np.asarray(start, dtype=float))]
+    rng = np.random.default_rng(seed)
+    saved = np.array(checker.seed_q, dtype=float).copy()
+    seen = []
+    try:
+        for g_hat in required:
+            for attempt in range(tries):
+                checker._last_solution = None
+                checker.seed_q = (saved if attempt == 0 else
+                                  saved + rng.uniform(-0.8, 0.8, size=saved.shape))
+                solution = checker.solve(np.array([]),
+                                         np.asarray(g_hat, dtype=float),
+                                         warm_start=False)
+                if solution is None:
+                    continue
+                q = np.asarray(solution)[indices]
+                if any(np.max(np.abs(q - other)) < np.deg2rad(2.0)
+                       for other in seen):
+                    continue                    # 사실상 같은 자세는 한 번만
+                seen.append(q)
+                found.append((f"{direction_label(g_hat)} 를 팔 전체로 푼 자세",
+                              q))
+    finally:
+        checker.seed_q = saved
+    return found
 
+
+def find_wrist_base(checker, planner, indices, fixed, start, max_wrist_deg,
+                    required, max_iters, path_tries=8, log=print):
+    """필수 방향을 **전부** 손목만으로 만들 수 있고, **거기까지 갈 수 있는**
+    J1--J3 배치를 찾는다.
+
+    두 조건을 따로 보면 안 된다. 손목만으로 세 방향이 되는 자리를 찾아 놓고
+    거기까지 가는 길이 없으면 아무 쓸모가 없다. 그래서 후보마다 손목 검사와
+    경로 검사를 **둘 다** 하고, 하나라도 걸리면 다음 후보로 넘어간다.
+
+    돌려주는 것: (base, approach, note)
+        approach 가 None 이면 지금 자리가 그대로 그 자리라 팔을 안 움직인다.
+        base 가 None 이면 note 는 후보별 실패 이유 목록이다.
+    """
     reasons = []
-    for label, candidate in tried:
+    candidates = wrist_base_candidates(checker, indices, start, required)
+    # 팔을 적게 움직이는 후보부터 본다. 지금 자세는 이동 0 이라 자연히 맨 앞.
+    candidates.sort(key=lambda item: np.degrees(
+        np.abs(np.asarray(item[1])[:3] - np.asarray(start)[:3])).max())
+    planned = 0
+    for label, raw in candidates:
+        candidate = nearest_equivalent(raw, start, planner.lower, planner.upper)
+        move = np.degrees(np.abs(candidate[:3] - np.asarray(start)[:3])).max()
+        head = f"  {label} (J1--J3 {move:.0f} deg)"
+
         blocked = None
         state = candidate
         for g_hat in required:
             target = solve_wrist(checker, indices, fixed, candidate, state,
                                  g_hat, max_wrist_deg)
             if target is None:
-                blocked = (g_hat, explain_wrist_failure(
-                    checker, indices, fixed, candidate, state, g_hat,
-                    max_wrist_deg))
+                blocked = (f"{direction_label(g_hat)} 를 손목만으로 못 만듭니다"
+                           f" — {explain_wrist_failure(checker, indices, fixed, candidate, state, g_hat, max_wrist_deg)}")
                 break
             state = target
-        if blocked is None:
-            log(f"  손목 전용 배치: {label}")
-            return candidate, label
-        g_hat, why = blocked
-        move = np.degrees(np.abs(np.asarray(candidate)[:3]
-                                 - np.asarray(current)[:3])).max()
-        reasons.append(f"  {label} (J1--J3 {move:.0f} deg 이동):"
-                       f" {direction_label(g_hat)} 실패 — {why}")
-    return None, reasons
+        if blocked is not None:
+            reasons.append(f"{head}: {blocked}")
+            continue
+
+        if move <= 1e-9:
+            log(f"{head}: 손목만으로 세 방향 다 됩니다. 팔은 안 움직입니다.")
+            return candidate, None, label
+
+        why = pose_note(planner, checker, candidate)
+        if why is not None:
+            reasons.append(f"{head}: 손목은 되는데 그 자세 자체가 못 씁니다 — {why}")
+            continue
+        if planned >= path_tries:
+            reasons.append(f"{head}: 손목은 되지만 경로를 안 찾아봤습니다"
+                           f" (경로 탐색 {path_tries} 번을 다 썼습니다)")
+            continue
+
+        planned += 1
+        approach = planner.plan(start, candidate, max_iters=max_iters)
+        if approach is None:
+            reasons.append(f"{head}: 손목은 되는데 거기까지 갈 충돌 없는 경로를"
+                           f" {max_iters} 번 안에 못 찾았습니다")
+            continue
+        if (not np.allclose(approach[0], start)
+                or not np.allclose(approach[-1], candidate)):
+            reasons.append(f"{head}: 계획된 경로의 끝점이 어긋났습니다")
+            continue
+        log(f"{head}: 손목만으로 세 방향 다 되고, 경로도 있습니다.")
+        return candidate, approach, label
+
+    return None, None, reasons
 
 
 def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
@@ -360,39 +426,40 @@ def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
               for g in (directions if directions is not None else alg.G_DIRS)]
     required = [np.asarray(g, dtype=float) for g in REQUIRED_DIRECTIONS]
 
+    log(f"  지금 자세: {np.round(np.degrees(start), 1).tolist()} deg")
+    # 지금 서 있는 자세부터 본다. 여기가 이미 안 되면 어느 후보를 골라도
+    # 출발을 못 하므로, 다른 것을 다 해 보기 전에 먼저 말해 준다.
+    why = pose_note(planner, checker, start)
+    if why is not None:
+        raise RuntimeError(
+            f"지금 로봇이 서 있는 자세를 쓸 수 없습니다 — {why}\n"
+            f"  안전 여유 {clearance_m*1000:.0f} mm 기준입니다."
+            " 작업영역을 치우거나, 직접교시로 팔을 빼낸 뒤 --plan 을 다시 하세요.")
     log(f"  손목 여유 (창 {max_wrist_deg:.0f} deg):"
         f" {wrist_headroom_text(checker, start, max_wrist_deg)}")
-    base, note = find_wrist_base(
-        checker, indices, fixed, start, max_wrist_deg, required,
-        normalize=lambda q: nearest_equivalent(q, start, planner.lower,
-                                               planner.upper),
-        log=log)
+
+    base, approach, note = find_wrist_base(
+        checker, planner, indices, fixed, start, max_wrist_deg, required,
+        max_iters, log=log)
     if base is None:
         raise RuntimeError(
-            "필수 중력 방향 셋을 손목만으로 만들 수 있는 J1--J3 배치를 못 찾았습니다.\n"
+            "필수 중력 방향 셋을 손목만으로 만들 수 있고 거기까지 갈 수도 있는"
+            " J1--J3 배치를 못 찾았습니다. 후보별로:\n"
             + "\n".join(note)
             + "\n  손 쓸 수 있는 것:"
             "\n    - 팔을 다른 자세로 옮기고 --plan 을 다시 (직접교시로 충분합니다)"
+            "\n    - 작업영역을 치운다 (위에 '충돌' 이 많으면 이것부터)"
             f"\n    - 손목 창을 넓힌다: --max-wrist-deg {max_wrist_deg + 60:.0f}"
             "\n      (케이블이 그만큼 꼬여도 되는지 눈으로 먼저 확인하세요)"
+            "\n    - 경로를 더 오래 찾는다: --max-iters 40000"
             "\n    - 손목 전용을 포기하고 사람이 맞춘다: --manual")
 
-    approach = None
-    if np.max(np.abs(np.asarray(base)[:3] - start[:3])) > 1e-9:
-        approach = planner.plan(start, base, max_iters=max_iters)
-        if approach is None:
-            raise RuntimeError(
-                "손목 전용 배치까지 갈 충돌 없는 경로가 없습니다:"
-                f" {np.round(np.degrees(base), 1).tolist()} deg")
-        if (not np.allclose(approach[0], start)
-                or not np.allclose(approach[-1], base)):
-            raise RuntimeError("접근 경로의 끝점이 어긋났습니다")
+    if approach is not None:
         measured = planner.path_clearance(approach, samples_per_edge=60)
         if measured < clearance_m * 0.9 - 1e-6:
             raise RuntimeError(f"접근 경로 여유가 너무 작습니다:"
                                f" {measured*1000:.2f} mm")
-        log(f"  접근: {len(approach)} waypoints,"
-            f" 여유 {measured*1000:.2f} mm,"
+        log(f"  접근: {len(approach)} waypoints, 여유 {measured*1000:.2f} mm,"
             f" J1--J3 {np.degrees(np.abs(base[:3] - start[:3])).max():.1f} deg 이동")
 
     paths, clearances, reached, state = [], [], [], base
