@@ -350,7 +350,7 @@ def wrist_base_candidates(checker, indices, start, required, tries=6, seed=17):
 
 
 def find_wrist_base(checker, planner, indices, fixed, start, max_wrist_deg,
-                    required, max_iters, path_tries=8, log=print):
+                    required, max_iters, wanted=None, path_tries=8, log=print):
     """필수 방향을 **전부** 손목만으로 만들 수 있고, **거기까지 갈 수 있는**
     J1--J3 배치를 찾는다.
 
@@ -362,13 +362,9 @@ def find_wrist_base(checker, planner, indices, fixed, start, max_wrist_deg,
         approach 가 None 이면 지금 자리가 그대로 그 자리라 팔을 안 움직인다.
         base 가 None 이면 note 는 후보별 실패 이유 목록이다.
     """
-    reasons = []
-    candidates = wrist_base_candidates(checker, indices, start, required)
-    # 팔을 적게 움직이는 후보부터 본다. 지금 자세는 이동 0 이라 자연히 맨 앞.
-    candidates.sort(key=lambda item: np.degrees(
-        np.abs(np.asarray(item[1])[:3] - np.asarray(start)[:3])).max())
-    planned = 0
-    for label, raw in candidates:
+    wanted = list(required if wanted is None else wanted)
+    reasons, survivors = [], []
+    for label, raw in wrist_base_candidates(checker, indices, start, required):
         candidate = nearest_equivalent(raw, start, planner.lower, planner.upper)
         move = np.degrees(np.abs(candidate[:3] - np.asarray(start)[:3])).max()
         head = f"  {label} (J1--J3 {move:.0f} deg)"
@@ -387,8 +383,27 @@ def find_wrist_base(checker, planner, indices, fixed, start, max_wrist_deg,
             reasons.append(f"{head}: {blocked}")
             continue
 
+        # 필수 셋만 보고 고르면 안 된다. 검산용 방향까지 몇 개나 닿는지가
+        # **결과의 질을 좌우한다.** 지난 실측에서 g=(0,-1,0) 이 빠지는 바람에
+        # 모형 y 방향이 한쪽으로만 측정됐고, 그 방향에 반응하는 센서 z 축의
+        # 이득 추정이 12 % 나 흔들렸다. 축이 고장인지 아닌지를 가리는 바로
+        # 그 숫자였다. 그래서 많이 닿는 후보를 먼저 본다.
+        state, reach = candidate, 0
+        for g_hat in wanted:
+            target = solve_wrist(checker, indices, fixed, candidate, state,
+                                 g_hat, max_wrist_deg)
+            if target is not None:
+                reach += 1
+                state = target
+        survivors.append((reach, move, label, candidate, head))
+
+    # 많이 닿는 것 우선, 같으면 팔을 적게 움직이는 것 우선.
+    survivors.sort(key=lambda item: (-item[0], item[1]))
+    planned = 0
+    for reach, move, label, candidate, head in survivors:
+        head = f"{head[:-1]}, {reach}/{len(wanted)} 방향)"
         if move <= 1e-9:
-            log(f"{head}: 손목만으로 세 방향 다 됩니다. 팔은 안 움직입니다.")
+            log(f"{head}: 손목만으로 됩니다. 팔은 안 움직입니다.")
             return candidate, None, label
 
         why = pose_note(planner, checker, candidate)
@@ -465,7 +480,7 @@ def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
 
     base, approach, note = find_wrist_base(
         checker, planner, indices, fixed, start, max_wrist_deg, required,
-        max_iters, log=log)
+        max_iters, wanted=wanted, log=log)
     if base is None:
         raise RuntimeError(
             "필수 중력 방향 셋을 손목만으로 만들 수 있고 거기까지 갈 수도 있는"
