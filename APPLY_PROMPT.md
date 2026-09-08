@@ -21,12 +21,12 @@ Claude Code 에 그대로 붙여넣습니다. 개발 PC 에서 미리 해 봐도
 ```
 LEE9396/PIVOT 의 torque-only-given-mass 브랜치를 이 저장소에 가져와줘.
 session_20260904_1736 의 실패(총질량 -27 %, 파지 오프셋 상자 railing, 힘 채널
-58.7 N 오프셋)를 고치는 변경이고, 부모가 지금 HEAD(2dd7611)라 충돌이 없어야 해.
+58.7 N 오프셋)를 고치는 변경이고, 브랜치가 이 저장소의 최신(real-experiment-ready) 위로 rebase 돼 있어 충돌이 없어야 해.
 
   git remote add lee https://github.com/LEE9396/PIVOT.git 2>/dev/null || true
   git fetch lee torque-only-given-mass
   git diff --stat HEAD lee/torque-only-given-mass     # my_work 5개 + tools/preflight.py + setup/experiment.conf.example + 문서
-  git cherry-pick 2dd7611..lee/torque-only-given-mass
+  git cherry-pick $(git merge-base HEAD lee/torque-only-given-mass)..lee/torque-only-given-mass
 
 충돌이 나면 멈추고 어떤 파일인지 알려줘 — 이 저장소가 그 뒤로 더 나갔다는 뜻이니까.
 

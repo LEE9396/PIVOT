@@ -4,7 +4,7 @@
 Claude Code 를 열고 아래를 붙여넣는다. **첫 줄의 무게만 바꾼다.**
 
 ```
-램프 총질량(저울, 힌지 포함) = 0.571 kg
+램프 총질량(저울, 힌지 포함) = 0.569 kg   # 팀 실측 569 g (tools/LOCAL_FT_VALIDATION.md). 오늘 저울 값으로 바꿔도 됨
 
 이 저장소(PIVOT, 로봇 PC)에서 데스크 램프 부위 밀도 실험을 통합 UI 로 바로 시작할 수
 있게 환경을 만들고 UI 를 띄워줘. 순서대로 하고, 각 단계의 출력을 짧게 보여준 뒤 다음으로.
@@ -15,7 +15,7 @@ Claude Code 를 열고 아래를 붙여넣는다. **첫 줄의 무게만 바꾼�
    가져와 cherry-pick 해 (작업 트리가 더러우면 먼저 알려줘):
      git remote add lee https://github.com/LEE9396/PIVOT.git 2>/dev/null || true
      git fetch lee torque-only-given-mass
-     git cherry-pick 2dd7611..lee/torque-only-given-mass
+     git cherry-pick $(git merge-base HEAD lee/torque-only-given-mass)..lee/torque-only-given-mass
    충돌이 나면 멈추고 파일명을 알려줘. 끝나면 grep -n '"--prior", "weight"' my_work/pivot_ui.py 가
    잡히는지 확인해.
 
@@ -36,14 +36,14 @@ Claude Code 를 열고 아래를 붙여넣는다. **첫 줄의 무게만 바꾼�
    만들어. 내가 "없다"고 하면 boxes 를 [] 로, status 를 validated 로 써.
 
 5) 준비 점검 (로봇은 아직 안 움직임)
-     ./setup/quickstart_real.sh --mass 0.571 --check
+     ./setup/quickstart_real.sh --mass 0.569 --check
    preflight 표에서 실패 행이 있으면 그 행의 "->" 처방을 그대로 보여주고 멈춰.
    타어가 없거나 0.5 N 게이트에 떨어지면 --check 에서는 아직 안 재니, 그 사실만 알려줘.
 
 6) 실행 (여기서 손목이 움직일 수 있다 — 타어가 필요하면 5초 카운트다운 뒤 자동으로 잰다)
    내가 "그리퍼 비었고 케이블 고정했다, 시작해" 라고 말하기 전에는 이 명령을 실행하지 마.
    말하면:
-     ./setup/quickstart_real.sh --mass 0.571
+     ./setup/quickstart_real.sh --mass 0.569
    를 백그라운드로 실행하고 로그 경로와 대시보드 주소(http://localhost:8080)를 알려줘.
    타어 결과(tare_check 힘/토크 잔차, 센서 축)와 런처 점검 결과를 로그에서 뽑아 보여줘.
 
