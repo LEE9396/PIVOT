@@ -2,7 +2,7 @@
 # 로봇 PC 에서: 램프 무게 한 줄로 실물 실험 준비를 끝내고 통합 UI 를 띄운다.
 #
 #   ./setup/quickstart_real.sh --mass 0.571          # 저울 kg, 힌지 포함
-#   ./setup/quickstart_real.sh --mass 0.571 --check  # 띄우지 않고 준비만 점검
+#   ./setup/quickstart_real.sh --mass 0.571 --check  # 준비만 점검. 로봇을 절대 움직이지 않는다
 #
 # 순서 (런북 §1~§8 중 사람 손이 안 가는 것 전부)
 #   1) 코드   — torque-only-given-mass 브랜치가 없으면 가져온다 (cherry-pick)
@@ -10,11 +10,12 @@
 #               TOTAL_MASS_KG=<mass> GRASP_FRAME=measured TARE_MODE=gravity
 #               GRASP_SIGMA_MM>=15 GRASP_MU_MM=(비움)
 #   3) 자산   — desk_lamp.py 파지점 정의를 세션 노트에 남긴다
-#   4) 타어   — 파일이 없거나 tare_check 에 떨어지면 setup/wrist_tare.sh --run 이
+#   4) 장애물 — workspace_obstacles_current.json 이 validated 인지 (타어 장면에도 필요)
+#   5) 타어   — 파일이 없거나 tare_check 에 떨어지면 setup/wrist_tare.sh --run 이
 #               장면(책상·장애물·케이블 원통)으로 경로를 계획해 8방향을 자동으로 잰다
 #               (5초 카운트다운 뒤 손목이 움직인다)
-#   5) 점검   — launch_experiment.sh --check + preflight
-#   6) 실행   — launch_experiment.sh (창 4개 + 대시보드 :8080)
+#   6) 점검   — launch_experiment.sh --check + preflight
+#   7) 실행   — launch_experiment.sh (창 4개 + 대시보드 :8080)
 #
 # 탐색 1라운드가 끝나면 통합 UI 가 tools/round_check.py 로 검산 3개를 찍는다.
 set -euo pipefail
@@ -78,7 +79,21 @@ N="$(grep -c 'geometry\[root\]\["centroid"\]' my_work/desk_lamp.py || true)"
 echo "  desk_lamp.py centroid 줄 = ${N}  ($( [[ "${N}" == "0" ]] && echo '핀치 점' || echo '부피 도심' ) 정의 — measured 모드라 일관되면 됩니다)"
 sha256sum -c setup/lamp-assets.sha256 --quiet 2>/dev/null && echo "  자산 sha256 OK" || echo "  [주의] 자산 sha256 불일치 — 메시가 다른 빌드일 수 있습니다 (TEAMMATE_CHECKLIST §2)"
 
-say "[4/6] 타어 — 빈 그리퍼 영점 (이 PC·이 배선)"
+say "[4/6] 장애물 파일 — 타어와 실험의 충돌 장면에 둘 다 필요"
+OBST="${ROOT}/calibration/workspace_obstacles_current.json"
+if [[ ! -f "${OBST}" ]]; then
+  echo "  [필요] ${OBST} 가 없습니다 — 받침대·단차 같은 추가 장애물을 한 번 재서 적어야 합니다."
+  echo "         예시: calibration/workspace_obstacles_example.json 을 복사해 center_m/size_m 를"
+  echo "         로봇 베이스 기준 m 단위로 채우고 status 를 validated 로 바꾸세요 (없으면 [] 로 두고 validated)."
+  fail "장애물 파일 없이는 충돌 장면이 완성되지 않습니다"
+fi
+OBST_STATUS="$("${R}" python -c "
+import sys; sys.path.insert(0,'my_work'); import workspace_obstacles as w
+d=w.load('${OBST}'); print(d['status'], len(d['boxes']), '|', ', '.join(d['unresolved']))" 2>&1 | tail -1)"
+echo "  ${OBST_STATUS}"
+[[ "${OBST_STATUS}" == validated* ]] || fail "장애물 파일이 validated 가 아닙니다 (${OBST_STATUS}). 실측을 채우고 status 를 validated 로, unresolved 를 [] 로 바꾸세요. 장애물이 없으면 boxes 도 []"
+
+say "[5/6] 타어 — 빈 그리퍼 영점 (이 PC·이 배선)"
 tare_ok=0
 if [[ -n "${TARE_FILE}" && -f "${TARE_FILE}" ]]; then
   if "${R}" python my_work/tare_check.py "${TARE_FILE}" >/tmp/pivot_tare_check.log 2>&1; then
@@ -90,7 +105,11 @@ if [[ -n "${TARE_FILE}" && -f "${TARE_FILE}" ]]; then
 else
   echo "  타어 파일이 없습니다."
 fi
-if [[ ${tare_ok} -eq 0 ]]; then
+if [[ ${tare_ok} -eq 0 && "${MODE}" == "check" ]]; then
+  echo "  [--check] 타어가 필요합니다. --check 에서는 손목을 움직이지 않습니다."
+  echo "           --check 없이 실행하면 이 자리에서 자동 영점 조정(5초 카운트다운 뒤 손목 이동)을 합니다."
+  TARE_PENDING=1
+elif [[ ${tare_ok} -eq 0 ]]; then
   echo
   echo "  자동 영점 조정을 시작합니다. 장면(책상·장애물·케이블 원통)으로 충돌 없는"
   echo "  경로를 계획해 8방향을 스스로 돕니다. 그리퍼는 비어 있어야 하고, 케이블은"
@@ -100,15 +119,8 @@ if [[ ${tare_ok} -eq 0 ]]; then
   "${R}" python my_work/tare_check.py "${TARE_FILE}" || fail "tare_check 불합격 — 케이블 고정 후 다시"
 fi
 
-say "[5/6] 점검"
-OBST="${ROOT}/calibration/workspace_obstacles_current.json"
-if [[ ! -f "${OBST}" ]]; then
-  echo "  [필요] ${OBST} 가 없습니다 — 받침대·단차 같은 추가 장애물을 한 번 재서 적어야 합니다."
-  echo "         예시: calibration/workspace_obstacles_example.json 을 복사해 center_m/size_m 를"
-  echo "         로봇 베이스 기준 m 단위로 채우고 status 를 validated 로 바꾸세요 (없으면 [] 로 두고 validated)."
-  fail "장애물 파일 없이는 충돌 장면이 완성되지 않습니다"
-fi
-"${HERE}/launch_experiment.sh" --check || fail "런처 점검 실패 — 위 항목을 고치고 다시"
+say "[6/7] 점검"
+"${HERE}/launch_experiment.sh" --check || { [[ "${MODE}" == "check" && "${TARE_PENDING:-0}" == 1 ]] && echo "  (타어가 없어 실패한 항목은 실행 때 자동으로 채워집니다)" || fail "런처 점검 실패 — 위 항목을 고치고 다시"; }
 "${R}" python tools/preflight.py --conf "${CONF}" | grep -E "실패|주의|토크 기준점|저울 총질량|파지 사전평균|파지 불확실성" | sed 's/^/  /' || true
 echo
 echo "  사람이 확인할 것 1개 (한 번만):"
@@ -116,11 +128,15 @@ echo "    - AFT200 렌치 기준면이 ft_mount 원통 중심과 같은가 (데�
 echo "  파지 좌표계 검사(check_grasp_frames)는 통합 UI 가 파지 직후 자동으로 합니다."
 
 if [[ "${MODE}" == "check" ]]; then
-  say "준비 끝. 띄우려면:  ./setup/quickstart_real.sh --mass ${MASS}"
+  if [[ "${TARE_PENDING:-0}" == 1 ]]; then
+    say "준비 점검 끝 — 타어만 남았습니다. 실행하면 먼저 손목을 움직여 8방향을 잽니다:  ./setup/quickstart_real.sh --mass ${MASS}"
+  else
+    say "준비 끝. 띄우려면:  ./setup/quickstart_real.sh --mass ${MASS}"
+  fi
   exit 0
 fi
 
-say "[6/6] 통합 UI — 실물"
+say "[7/7] 통합 UI — 실물"
 echo "  대시보드 http://localhost:8080 · 단계 0 준비 -> 1 파지 -> 2 각도 -> 3 경로 -> 4 탐색 -> 5 내보내기"
 echo "  탐색 1라운드가 끝나면 검산 3개(힘 크기 / 잔차팽창 / 파지 오프셋)가 자동으로 찍힙니다."
 exec "${HERE}/launch_experiment.sh"
