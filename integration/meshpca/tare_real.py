@@ -708,16 +708,24 @@ def run_manual(args, data, current):
           f"  (영점 조정 오차 {tare_error_n(args.angle_tol_deg):.2f} N,"
           f" 램프 5.60 N 의 {100*tare_error_n(args.angle_tol_deg)/5.60:.1f} %)")
 
+    # 수동 모드도 --dirs 개수만큼 잰다 (기본 8). 예전에는 필수 3방향만 재서
+    # GravityTare(4방향 이상, 조건수 검사)가 그 파일을 거부했다.
+    manual_dirs = [np.asarray(g, dtype=float)
+                   for g in TARE_DIRECTIONS[:max(3, args.dirs)]]
+    manual_labels = [direction_label(g) if i < 3 else f"g-{i+1}"
+                     for i, g in enumerate(manual_dirs)]
+    print(f"  방향 {len(manual_dirs)}개 (필수 3 + 추가 {len(manual_dirs)-3})")
+
     # 참고용 목표 자세. 못 풀어도 진행한다 — 사람은 손목만 맞추면 된다.
     hints = []
-    for g_hat in alg.G_DIRS:
+    for g_hat in manual_dirs:
         checker._last_solution = None
         try:
             full = checker.solve_robust(np.array([]), g_hat)
         except Exception:                                       # noqa: BLE001
             full = None
         hints.append(None if full is None else np.asarray(full)[indices])
-    for g_hat, hint in zip(alg.G_DIRS, hints):
+    for g_hat, hint in zip(manual_dirs, hints):
         if hint is None:
             print(f"  g={g_hat.tolist()}: 참고 자세를 못 풀었습니다"
                   f" (손목 방향만 맞추면 됩니다)")
@@ -732,7 +740,7 @@ def run_manual(args, data, current):
     sensor = Aft200Sensor(args.robot_ip, args.aft_hz)
     tare = TareTable()
     records = []
-    for g_hat, label in zip(alg.G_DIRS, ("g-down", "g-x", "g-y")):
+    for g_hat, label in zip(manual_dirs, manual_labels):
         raw, q, error_deg, achieved = hold_and_read(
             data, checker, sensor, g_hat, label,
             args.angle_tol_deg, args.samples)
