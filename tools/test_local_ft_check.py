@@ -106,6 +106,7 @@ class LocalFTChecks(unittest.TestCase):
         planner.__dict__.update(spec=spec, blocks=[], rounds=[], g_history=[],
             rho_hat=alg.MU0.copy(), Sigma=alg.SIGMA0.copy(), rho_gt=truth,
             grasp_sigma_m=.010, grasp_hat=np.zeros(3), angle_rel_error=0.,
+            grasp_mu_m=np.zeros(3), fixed_mass_kg=None,
             angle_floor_deg=3., total_mass_kg=float(alg.VOLUMES @ alg.MU0),
             estimator='tls', stop_rule='residual', bias_cov=None, target=.05,
             show=lambda *args: None)
