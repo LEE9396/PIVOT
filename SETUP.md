@@ -30,10 +30,69 @@
 
 ---
 
+## 완전 재현 체크리스트 (빠뜨리지 말 것)
+
+다른 컴퓨터에서 "통합 UI로 실험"을 완전히 재현하려면 아래 항목을 순서대로 따라하세요.
+
+- 저장소 복제
+
+```bash
+git clone https://github.com/Yuseong-Cheon/PIVOT.git ~/Desktop/PIVOT
+cd ~/Desktop/PIVOT
+```
+
+- 외부 체크아웃 (설정 파일 `setup/experiment.conf` 에 경로를 설정)
+
+    - MeshPCA (권장 경로: `~/MeshPCA`)
+        예: `git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/MeshPCA`
+    - FoundationPose, SAM3 등: 각자 저장소를 체크아웃하고 `setup/experiment.conf` 에 경로를 지정하세요.
+
+- 시스템 패키지 예시 (Ubuntu 기반)
+
+```bash
+sudo apt update
+sudo apt install -y build-essential git curl python3.12-venv ca-certificates
+# RealSense 예시 (배포판별로 설치법이 다릅니다)
+sudo apt install -y librealsense2-utils librealsense2-dev
+```
+
+- 그리퍼·USB 권한 설정
+
+```bash
+sudo ./setup/install_gripper_permissions.sh
+```
+
+- PIVOT 파이썬 환경·의존성 설치
+
+```bash
+./setup/bootstrap.sh         # 설치 + 진단 (5~10분)
+./setup/bootstrap.sh --check # 진단만
+```
+
+- 설정 복사 및 편집
+
+```bash
+cp setup/experiment.conf.example setup/experiment.conf
+# setup/experiment.conf 를 열어 PIVOT_ROOT, MESHPCA_ROOT, FOUNDATIONPOSE_ROOT, SAM3_ROOT 등을 본인 환경에 맞게 설정
+```
+
+- 통합 런처 점검/리허설/실행
+
+```bash
+./setup/launch_experiment.sh --check    # 전부 점검
+./setup/launch_experiment.sh --rehearse # 장비 없이 리허설 (창 1·4)
+./setup/launch_experiment.sh           # 실물 실험 (장비 준비 후)
+```
+
+참고: MeshPCA 쪽에 적용해야 하는 `integration/` 패치(예: `integration/foundationpose/make_desk_lamp_masks.py`)는
+`EXPERIMENT_READY.md` 와 `TEAMMATE_CHECKLIST.md` 를 반드시 확인하세요.
+
+---
+
 ## 1. 받기
 
 ```bash
-git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT
+git clone https://github.com/Yuseong-Cheon/PIVOT.git ~/Desktop/PIVOT
 cd ~/Desktop/PIVOT
 ```
 

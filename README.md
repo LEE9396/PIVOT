@@ -30,13 +30,13 @@ URDF 를 내놓는 연구 코드입니다.
 ## 빨리 시작하기
 
 ```bash
-git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT
+git clone https://github.com/Yuseong-Cheon/PIVOT.git ~/Desktop/PIVOT
 cd ~/Desktop/PIVOT
 ./setup/bootstrap.sh                    # 파이썬 3.12 + Drake 1.54 + 자가 진단
 
 cd my_work
 ../robot_learning/scripts/run_drake_env.sh python dual_view.py \
-    --mode sim --object desklamp        # 브라우저로 localhost:7000, 7001
+   --mode sim --object desklamp        # 브라우저로 localhost:7000, 7001
 ```
 
 자세한 설치·문제 해결은 [SETUP.md](SETUP.md).
