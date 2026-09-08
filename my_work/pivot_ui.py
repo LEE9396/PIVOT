@@ -211,6 +211,45 @@ class Conductor:
             print("  실측 파지 없이는 자세·충돌 계산이 실제 물체 배치와 다르므로"
                   " 진행하지 않습니다.")
             return False
+        return self.grasp_frame_check()
+
+    GRASP_ROTATION_MAX_DEG = 30.0
+
+    def grasp_frame_check(self):
+        """잰 파지로 두 가상환경의 좌표계 규약이 같은지 바로 검사한다.
+
+        회전 차이가 수십 도면 사람의 파지 오차가 아니라 카메라 메시와 밀도
+        모델 메시의 좌표계가 다른 것이다. 그 상태로 measured 프레임을 켜면
+        173.9 mm 가 다른 숫자로 돌아온다. 예전에는 사람이 파지 뒤에
+        tools/check_grasp_frames.py 를 손으로 돌려야 했다.
+        """
+        grasp = self.session.path("grasp.json")
+        if not grasp.is_file():
+            return True
+        print("\n  파지 좌표계 검사 (tools/check_grasp_frames.py)")
+        result = subprocess.run(
+            self.python() + [str(TOOLS / "check_grasp_frames.py"),
+                             "--object", self.conf.get("OBJECT", "desklamp"),
+                             "--grasp", str(grasp)],
+            capture_output=True, text=True)
+        text = (result.stdout or "") + (result.stderr or "")
+        for line in text.splitlines():
+            if "회전 차이" in line or "두 점 사이 거리" in line or "위치 차이" in line:
+                print("  " + line.strip())
+        import re
+        m = re.search(r"회전 차이\s+([0-9.]+)\s*deg", text)
+        if m is None:
+            print("  [주의] 회전 차이를 못 읽었습니다 — 검사 출력을 확인하세요")
+            return self.ask("좌표계 검사를 못 했지만 계속한다")
+        rot = float(m.group(1))
+        if rot > self.GRASP_ROTATION_MAX_DEG:
+            print(f"  [중단] 회전 차이 {rot:.1f}° > {self.GRASP_ROTATION_MAX_DEG:.0f}° —"
+                  " 카메라 메시와 밀도 모델 메시의 좌표계가 다릅니다."
+                  " conf 의 LAMP_ASSET_DIR / FP_MESH_DIR 가 같은 트리인지 보세요.")
+            if self.dashboard is not None:
+                self.dashboard.set_status(f"[1 파지점] 좌표계 불일치 {rot:.0f}° — 메시 설정을 확인하세요")
+            return False
+        print(f"  OK  회전 차이 {rot:.2f}° (허용 {self.GRASP_ROTATION_MAX_DEG:.0f}°)")
         return True
 
     def show_object_only(self):
@@ -456,7 +495,28 @@ class Conductor:
         posterior = self.session.read(f"posterior_round_{self.round}.json")
         if posterior:
             self.show_density_meshes(posterior)
+        self.round_check()
         return ok
+
+    def round_check(self):
+        """탐색 뒤 숫자 세 개로 '센서가 모형이 말하는 것을 재고 있나'를 판정한다.
+
+        session_20260904_1736 은 이 셋(힘 크기 58.7 N 오프셋, 잔차팽창 5 527,
+        파지 오프셋 상자에 붙음)이 전부 틀렸는데 사람이 파일을 열어야 알 수
+        있었다. 여기서 바로 찍고 대시보드에도 올린다. 판정은 tools/round_check.py.
+        """
+        if not self.session.path("exploration_round_1.json").is_file():
+            return
+        print("\n  --- 라운드 검산 (tools/round_check.py) ---")
+        result = subprocess.run(
+            self.python() + [str(TOOLS / "round_check.py"), str(self.session.root),
+                             "--conf", str(self.conf_path)],
+            capture_output=True, text=True)
+        text = (result.stdout or "") + (result.stderr or "")
+        print("\n".join("  " + line for line in text.rstrip().splitlines()))
+        if self.dashboard is not None:
+            verdict = "통과" if result.returncode == 0 else "실패 — 터미널의 검산을 보세요"
+            self.dashboard.set_status(f"[4 탐색] 라운드 검산 {verdict}")
 
     def phase_export(self):
         self.session.set_phase("export", self.round)

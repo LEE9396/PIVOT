@@ -167,7 +167,23 @@ Claude Code 에 시킬 때:
 
 ---
 
-## 적용 후 실물 실행
+## 적용 후 실물 실행 — 로봇 PC 에서 한 줄
+
+```bash
+./setup/quickstart_real.sh --mass 0.571     # 저울 kg, 힌지 포함
+```
+
+브랜치가 없으면 가져오고, 기존 `experiment.conf` 의 키(`TOTAL_MASS_KG`,
+`GRASP_FRAME=measured`, `TARE_MODE=gravity`, `GRASP_SIGMA_MM≥15`, `GRASP_MU_MM` 비움)만
+고치고, 타어가 없거나 게이트(0.5 N)에 떨어지면 **물어보고** `wrist_tare.sh --run` 을
+돌린 뒤, 런처 점검을 거쳐 통합 UI 를 띄웁니다. 탐색 1라운드가 끝나면 UI 가
+`tools/round_check.py` 로 검산 3개(힘 크기 / 잔차팽창 / 파지 오프셋)를 찍습니다.
+`--check` 를 붙이면 띄우지 않고 준비만 점검합니다.
+
+사람이 남는 일: 저울, 파지(손), 각도 맞추기(손), 경로 승인, 그리고 파지 직후
+`tools/check_grasp_frames.py` 회전 차이 확인.
+
+수동으로 할 때:
 
 ```bash
 ./setup/launch_experiment.sh --check
