@@ -93,6 +93,15 @@ d=w.load('${OBST}'); print(d['status'], len(d['boxes']), '|', ', '.join(d['unres
 echo "  ${OBST_STATUS}"
 [[ "${OBST_STATUS}" == validated* ]] || fail "장애물 파일이 validated 가 아닙니다 (${OBST_STATUS}). 실측을 채우고 status 를 validated 로, unresolved 를 [] 로 바꾸세요. 장애물이 없으면 boxes 도 []"
 
+# 타어 게이트 override (conf 의 TARE_TORQUE_MAX_NM / TARE_FORCE_MAX_N). 값을 두면 세션에 기록된다.
+for key in TARE_TORQUE_MAX_NM TARE_FORCE_MAX_N; do
+  v="$("${R}" python tools/conf_set.py "${CONF}" --show "${key}")"
+  [[ -z "${v}" ]] || { export "PIVOT_${key}=${v}"; echo "  [override] ${key}=${v} (세션에 기록됨)"; }
+done
+[[ -f "${ROOT}/calibration/ft_correction.json" ]] \
+  && "${R}" python -c "import sys; sys.path.insert(0,'my_work'); import ft_correction as fc; C,i=fc.load(); print('  '+fc.describe(C,i))" \
+  || echo "  [주의] calibration/ft_correction.json 없음 — 원시 판독 그대로 (배율 1.48x 미보정)"
+
 say "[5/7] 타어 — 빈 그리퍼 영점 (이 PC·이 배선)"
 tare_ok=0
 if [[ -n "${TARE_FILE}" && -f "${TARE_FILE}" ]]; then

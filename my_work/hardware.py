@@ -164,9 +164,16 @@ class GravityTare:
             raise ValueError("유효한 영점 측정 시각과 유효기간이 필요합니다")
         residual = values - np.asarray([self.predict(g) for g in directions])
         self.residual_rms = np.sqrt(np.mean(residual**2, axis=0))
-        if (force_residual > tc.FORCE_RESIDUAL_MAX_N
-                or torque_residual > tc.TORQUE_RESIDUAL_MAX_NM):
-            raise ValueError("빈 공구 중력 모델의 맞춤 잔차가 허용치를 넘습니다")
+        # 허용치는 방향 수에 비례하고(3방향 기준 성분당 RMS 유지), 환경변수 override 가
+        # 있으면 그것을 쓴다 — tare_check 와 같은 규칙, 같은 기록.
+        limits = tc.residual_limits(len(directions))
+        self.residual_limits = limits
+        if (force_residual > limits["force_n"]
+                or torque_residual > limits["torque_nm"]):
+            raise ValueError(
+                f"빈 공구 중력 모델의 맞춤 잔차가 허용치를 넘습니다 "
+                f"(힘 {force_residual:.3f}/{limits['force_n']:.3f} N, "
+                f"토크 {torque_residual:.4f}/{limits['torque_nm']:.4f} N·m, {len(directions)}방향)")
 
     def predict(self, g_hat):
         g = np.asarray(g_hat, dtype=float)

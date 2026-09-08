@@ -2565,8 +2565,13 @@ def _ft_sample_fn(args):
     from aft_tare import Aft200Sensor
 
     sensor = Aft200Sensor(args.aft_host, hz=args.aft_hz)
+    # 센서·컨트롤러 축 정렬과 배율 보정 (calibration/ft_correction.json). 없으면 단위행렬.
+    # 타어 파일도 같은 보정 단위로 만들어져 있어야 한다 (tools/ft_correction_apply.py).
+    import ft_correction as fc
+    C, info = fc.load()
+    print("  " + fc.describe(C, info))
     stream = sensor.stream()
-    return lambda: next(stream)
+    return lambda: fc.apply(C, next(stream))
 
 
 def _pose_fn(args):

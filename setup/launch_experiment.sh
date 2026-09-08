@@ -24,6 +24,9 @@ if [[ ! -f "${CONF}" ]]; then
 fi
 # shellcheck disable=SC1090
 source "${CONF}"
+# 타어 검산 override (있을 때만). dual_view/preflight 의 tare_check 가 읽고 세션에 기록한다.
+[[ -z "${TARE_TORQUE_MAX_NM:-}" ]] || export PIVOT_TARE_TORQUE_MAX_NM="${TARE_TORQUE_MAX_NM}"
+[[ -z "${TARE_FORCE_MAX_N:-}" ]]   || export PIVOT_TARE_FORCE_MAX_N="${TARE_FORCE_MAX_N}"
 GAUSSIAN_DIR="${GAUSSIAN_DIR:-}"
 GAUSSIAN_FILES="${GAUSSIAN_FILES:-}"
 

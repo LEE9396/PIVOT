@@ -114,6 +114,20 @@ def direction_label(g_hat):
 PAYLOAD_BOX_MM = None
 
 
+def _corrected_sensor(sensor):
+    """calibration/ft_correction.json 이 있으면 모든 판독에 6x6 보정을 건다.
+
+    타어는 보정된 단위로 저장돼야 dual_view 의 판독(같은 보정)과 맞는다.
+    """
+    try:
+        import ft_correction as fc
+    except ImportError:
+        return sensor
+    C, info = fc.load()
+    print("  " + fc.describe(C, info))
+    return fc.CorrectedSensor(sensor, C) if info.get("source") else sensor
+
+
 def empty_tool_spec(payload_mm=None):
     """영점 조정 때 그리퍼 안에 있는 것의 형상.
 
@@ -661,7 +675,7 @@ def run_verify(args, data, current):
                                "local_ft_check.py --record로 현재 자리에서 기록하세요")
 
     time.sleep(1.0)
-    sensor = Aft200Sensor(args.robot_ip, args.aft_hz)
+    sensor = _corrected_sensor(Aft200Sensor(args.robot_ip, args.aft_hz))
     raw = stable_wrench(sensor, args.samples)
     recorded = np.asarray(entry["wrench"], dtype=float)
     drift = raw - recorded
@@ -737,7 +751,7 @@ def run_manual(args, data, current):
         print("\nPLAN ONLY: 로봇 명령 없음 (직접교시 모드는 원래 명령이 없습니다)")
         return
 
-    sensor = Aft200Sensor(args.robot_ip, args.aft_hz)
+    sensor = _corrected_sensor(Aft200Sensor(args.robot_ip, args.aft_hz))
     tare = TareTable()
     records = []
     for g_hat, label in zip(manual_dirs, manual_labels):
@@ -903,7 +917,7 @@ def main():
                 max_speed=np.deg2rad(args.speed_deg_s))
     robot.limit_to_start(start, np.deg2rad([0.1] * 3 + [args.max_wrist_deg + 0.1] * 3))
     robot.set_collision_planner(planner)
-    sensor = Aft200Sensor(args.robot_ip, args.aft_hz)
+    sensor = _corrected_sensor(Aft200Sensor(args.robot_ip, args.aft_hz))
     tare = TareTable()
     records = []
     try:

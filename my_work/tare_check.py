@@ -64,8 +64,32 @@ G_ACC = 9.81
 # 힘 0.5 N 은 "재려는 물체(램프 571 g = 5.6 N)의 10 % 이하" 에서 왔다. 이보다
 # 크면 영점 오차가 신호를 가린다. 같은 자세 반복측정 편차가 0.034 N 이므로
 # 0.5 N 은 센서 성능이 아니라 배선·마운트 상태를 보는 값이다.
-FORCE_RESIDUAL_MAX_N = 0.5
+FORCE_RESIDUAL_MAX_N = 0.5          # 3방향(9성분) 기준 잔차 노름. 방향이 늘면 sqrt(n/3) 배로 늘린다
 TORQUE_RESIDUAL_MAX_NM = 0.02
+import os as _os
+
+
+def residual_limits(n_directions):
+    """방향 수에 맞춘 허용 잔차 노름과 override 여부.
+
+    잔차는 모든 성분의 노름이라 방향이 8개면 3개일 때보다 sqrt(8/3) 배 커진다.
+    3방향 기준값의 **성분당 RMS** (0.167 N / 0.0067 N·m) 를 유지하도록 늘린다.
+    PIVOT_TARE_FORCE_MAX_N / PIVOT_TARE_TORQUE_MAX_NM 환경변수는 노름 자체를 덮어쓰며,
+    쓰였다는 사실이 결과에 기록된다 (검산을 조용히 느슨하게 만들지 않는다).
+    """
+    scale = float(np.sqrt(max(n_directions, 3) / 3.0))
+    limits = dict(force_n=FORCE_RESIDUAL_MAX_N * scale,
+                  torque_nm=TORQUE_RESIDUAL_MAX_NM * scale, override={})
+    for key, env in (("force_n", "PIVOT_TARE_FORCE_MAX_N"),
+                     ("torque_nm", "PIVOT_TARE_TORQUE_MAX_NM")):
+        raw = _os.environ.get(env)
+        if raw:
+            limits[key] = float(raw); limits["override"][env] = float(raw)
+    return limits
+
+
+def current_overrides():
+    return residual_limits(3)["override"]
 LEVER_MIN_M, LEVER_MAX_M = 0.02, 0.10
 # 센서 축이 모형과 이보다 더 돌아가 있으면 장착 변환이 틀린 것이다.
 AXIS_ANGLE_MAX_DEG = 5.0
@@ -236,6 +260,9 @@ def check(path, tool_kg=DEFAULT_TOOL_KG, log=print):
     bias_f, w_signed, res_f = fit_force(g_dirs, forces)
     bias_t, m_r, res_t = fit_torque(g_dirs, torques)
 
+    limits = residual_limits(len(g_dirs))
+    if limits["override"]:
+        log(f"  [override] 잔차 허용치를 환경변수로 덮어씀: {limits['override']} — 결과에 기록됨")
     mass = abs(w_signed) / G_ACC
     sign = "-g (떠받치는 힘)" if w_signed < 0 else "+g (중력 방향)"
     model_sign = model_force_sign()
@@ -257,12 +284,14 @@ def check(path, tool_kg=DEFAULT_TOOL_KG, log=print):
          f"{1000*lever:.1f} mm  (기대 {1000*LEVER_MIN_M:.0f}~{1000*LEVER_MAX_M:.0f})",
          "미터 단위로 나오면 토크가 파지점이 아닌 원점 기준이다"),
         ("힘 맞춤 잔차",
-         res_f <= FORCE_RESIDUAL_MAX_N,
-         f"{res_f:.3f} N  (허용 {FORCE_RESIDUAL_MAX_N})",
+         res_f <= limits["force_n"],
+         f"{res_f:.3f} N  (허용 {limits['force_n']:.3f}, {len(g_dirs)}방향"
+         + (", override" if "PIVOT_TARE_FORCE_MAX_N" in limits["override"] else "") + ")",
          "케이블 장력·마운트 응력·온도 드리프트. 케이블을 팔에 고정하고 다시 재라"),
         ("토크 맞춤 잔차",
-         res_t <= TORQUE_RESIDUAL_MAX_NM,
-         f"{res_t:.4f} N·m  (허용 {TORQUE_RESIDUAL_MAX_NM})",
+         res_t <= limits["torque_nm"],
+         f"{res_t:.4f} N·m  (허용 {limits['torque_nm']:.4f}, {len(g_dirs)}방향"
+         + (", override" if "PIVOT_TARE_TORQUE_MAX_NM" in limits["override"] else "") + ")",
          "위와 같음"),
     ]
 
@@ -336,7 +365,7 @@ def check(path, tool_kg=DEFAULT_TOOL_KG, log=print):
                 " 않습니다. 저장된 wrench 가 이미 회전된 값인지 확인하세요.")
 
     if axes is not None and axes["angle_deg"] > AXIS_ANGLE_MAX_DEG \
-            and res_f > FORCE_RESIDUAL_MAX_N:
+            and res_f > limits["force_n"]:
         log(f"  [참고] 위의 '힘 맞춤 잔차' {res_f:.2f} N 은 축이 맞다고 보고 잰"
             " 값이라 축 회전 몫이 섞여 있습니다.\n"
             f"         축까지 풀고 남은 잔차는 {axes['residual_n']:.3f} N"
@@ -348,7 +377,7 @@ def check(path, tool_kg=DEFAULT_TOOL_KG, log=print):
                         tool_mass_kg=mass, force_sign=np.sign(w_signed),
                         lever_m=lever, residual_force_n=res_f,
                         residual_torque_nm=res_t, axes=axes, rows=rows,
-                        n_directions=len(g_dirs))
+                        n_directions=len(g_dirs), limits=limits)
 
 
 def main(argv):
