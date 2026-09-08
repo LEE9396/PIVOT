@@ -171,6 +171,47 @@
       새로 `--setup` 하면 `direction_error_deg` 가 기록되므로 그때 판별된다.
       값이 1° 안이면 정상, 90° 근처면 프레임 규약이 어긋난 것이다
 
+## 6-0. session_20260904_1736 재발 방지 — 실험 전에 순서대로
+
+원인과 숫자는 `SESSION_20260904_ROOT_CAUSE.md`, 코드 변경은 `TORQUE_ONLY.md`.
+
+- [ ] **코드**: `torque-only-given-mass` 브랜치가 들어가 있나
+      (`grep -n '"--prior", "weight"' my_work/pivot_ui.py` 가 잡혀야 한다.
+      `"water"` 면 총질량 −27 % 가 그대로 재발한다)
+- [ ] **어느 `desk_lamp.py` 인가** — 파지점을 핀치 점으로 잡는지 부피 도심으로
+      잡는지에 따라 기준점 거리가 173.9 / 187.7 mm 로 달라진다. 지금 트리의
+      정의를 그대로 쓰기로 정하면 된다 (measured 모드는 실측 파지를 쓴다).
+      ```bash
+      grep -c 'geometry\[root\]\["centroid"\]' my_work/desk_lamp.py
+      ```
+- [ ] **타어를 이 PC·이 배선으로 새로 잰다** (옛 파일·다른 PC 파일 재사용 금지)
+      ```bash
+      PIVOT_WORKDIR=$PWD $R python integration/meshpca/tare_real.py --setup --dirs 8 \
+          --tool-kg 0.65 --output calibration/aft_tare_current.json --overwrite
+      $R python my_work/tare_check.py calibration/aft_tare_current.json
+      ```
+      합격: 힘 잔차 **≤ 0.5 N**, 토크 ≤ 0.02 N·m, 센서 축 ≤ 5°.
+      지난 세션 수준(4.35 N)이면 거부된다 — 센서가 아니라 **케이블을 팔에
+      고정**하고 다시 잰다 (tare_check 가 그 처방을 찍어 준다)
+- [ ] **AFT200 렌치 기준점**: 코드는 `ft_mount` 원통(52.3 mm) 중심을 쓴다.
+      데이터시트의 기준 평면이 다르면 그 상수(최대 ~26 mm)를
+      `robot_scene.sensor_object_transform` 에 넣는다
+- [ ] **conf**: `GRASP_FRAME=measured`, `TOTAL_MASS_KG=<저울 kg>`,
+      `GRASP_SIGMA_MM=15`, `GRASP_MU_MM` 비움, `TARE_MODE=gravity`.
+      preflight 가 이 넷을 검사한다 (`토크 기준점 / 저울 총질량 / 파지 사전평균 / 파지 불확실성`)
+- [ ] **파지 단계 직후** 좌표계 규약 검사 — 회전 차이가 **수십 도**면 중단
+      ```bash
+      $R python tools/check_grasp_frames.py --object desklamp --grasp sessions/<세션>/grasp.json
+      ```
+      (09-04 세션 파지로는 10.07° = 정상)
+- [ ] **탐색 1라운드 뒤** `sessions/<세션>/exploration_round_1.json` 에
+      `wrench_raw` 18개가 있는지, 영점 뺀 힘의 크기가 **≈ 5.6 N**(571 g)인지.
+      크게 다르면 파지/타어/부호 중 하나가 틀린 것이다.
+      토크는 추정에, 힘은 **검산에** 쓴다
+- [ ] **실패 판독**: `estimated_grasp_offset_mm` 이 ±50 에 붙어 있으면 기준점,
+      `prior_densities` 가 `[1000,1000,1000]` 이면 prior, 총질량이 저울과
+      다르면 `TOTAL_MASS_KG` 배선을 의심한다
+
 ## 6. 실험
 
 - [ ] 리허설: `./setup/launch_experiment.sh --rehearse`

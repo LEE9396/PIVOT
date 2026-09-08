@@ -422,6 +422,12 @@ class PlannerScreen:
     실제로 달라진다. base 를 띄워 중력 방향 변화도 재생한다.
     """
 
+    # update() 가 참조하는 선택 속성의 기본값. 테스트가 __new__ 로 객체를 만들고
+    # __dict__ 만 채우는 경로에서도 AttributeError 없이 예전 동작(사전평균 0,
+    # 총질량 재유도)으로 떨어진다.
+    grasp_mu_m = None
+    fixed_mass_kg = None
+
     def __init__(self, spec, setup, meshcat, pace, target,
                  angle_rel_error=aa.DEFAULT_ANGLE_REL_ERROR,
                  angle_floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG,

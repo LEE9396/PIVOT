@@ -1,202 +1,132 @@
-# Yuseong-Cheon/PIVOT 에 적용할 프롬프트
+# Yuseong-Cheon/PIVOT 에 반영하는 프롬프트
 
-아래 내용을 Yuseong-Cheon/PIVOT 체크아웃에서 Claude Code 에 그대로 붙여넣으세요.
+Yuseong-Cheon/PIVOT 은 LEE9396/PIVOT 의 **fork** 라 같은 네트워크입니다.
+아래 프롬프트를 Yuseong-Cheon/PIVOT 체크아웃(`~/Desktop/PIVOT`)에서 Claude Code 에
+그대로 붙여넣으면 됩니다.
 
 ---
 
 ## 방법 A — 브랜치를 그대로 가져오기 (권장, 5분)
 
-같은 커밋(`2dd7611`) 위에서 만든 변경이라 충돌 없이 붙습니다.
-
 ```
-LEE9396/PIVOT 의 torque-only-given-mass 브랜치에 있는 커밋 하나를 이 저장소에
-가져와줘.
+LEE9396/PIVOT 의 torque-only-given-mass 브랜치를 이 저장소에 가져와줘.
+session_20260904_1736 의 실패(총질량 -27 %, 파지 오프셋 상자 railing, 힘 채널
+58.7 N 오프셋)를 고치는 변경이고, 부모가 지금 HEAD(2dd7611)라 충돌이 없어야 해.
 
-  git remote add lee https://github.com/LEE9396/PIVOT.git
+  git remote add lee https://github.com/LEE9396/PIVOT.git 2>/dev/null || true
   git fetch lee torque-only-given-mass
-  git log --oneline lee/torque-only-given-mass -1     # 171bdb2 인지 확인
-  git diff --stat HEAD lee/torque-only-given-mass     # 6개 파일만 바뀌어야 함
-  git cherry-pick 171bdb2
+  git diff --stat HEAD lee/torque-only-given-mass     # my_work 5개 + tools/preflight.py + setup/experiment.conf.example + 문서
+  git cherry-pick 2dd7611..lee/torque-only-given-mass
 
-부모가 2dd7611 (지금 HEAD) 이라 충돌이 없어야 해. 충돌이 나면 멈추고 어떤
-파일에서 났는지 알려줘 — 그건 이 저장소가 그 뒤로 더 나갔다는 뜻이니까.
+충돌이 나면 멈추고 어떤 파일인지 알려줘 — 이 저장소가 그 뒤로 더 나갔다는 뜻이니까.
 
-가져온 뒤 TORQUE_ONLY.md 를 읽고, 아래 두 가지를 확인해줘.
+가져온 뒤 다음을 순서대로 돌리고 결과를 보여줘.
 
-  1) 힘 블록의 계수가 정말 1인지 (문서에 있는 검증 코드)
-  2) my_work 에서 hardware_real.self_check() 가 13/13 통과하는지
+  1) 코드 검증
+     robot_learning/scripts/run_drake_env.sh python -m unittest discover -s tools -p 'test_*.py'
+     robot_learning/scripts/run_drake_env.sh python -c "import sys; sys.path.insert(0,'my_work'); import hardware_real as h; h.self_check()"
+     robot_learning/scripts/run_drake_env.sh python my_work/pivot_ui.py --dry-run --sessions /tmp/pivot-dry
+     -> 32 tests OK, 13/13, 단계 기계 OK 여야 함
+
+  2) 설정
+     setup/experiment.conf 에 추가/변경:
+       TOTAL_MASS_KG=<저울 kg, 힌지 포함>     # 램프 0.571
+       GRASP_SIGMA_MM=15
+       GRASP_MU_MM=                          # 반드시 비움 (measured 에서 이중 계산 금지)
+       GRASP_FRAME=measured                  # 유지 확인
+       TARE_MODE=gravity                     # 유지 확인
+     그리고 robot_learning/scripts/run_drake_env.sh python tools/preflight.py --conf setup/experiment.conf 를
+     돌려서 새 행 4개(토크 기준점 / 저울 총질량 / 파지 사전평균 / 파지 불확실성)가 OK 인지 보여줘.
+
+  3) 문서 읽기
+     SESSION_20260904_ROOT_CAUSE.md  (왜 실패했나 — 숫자)
+     TORQUE_ONLY.md                  (무엇을 바꿨나, 남은 문제)
+     TEAMMATE_CHECKLIST.md §6-0      (실험 전 순서)
+```
+
+PR 로 받고 싶으면 (fork 네트워크라 upstream → fork 방향 PR 이 됩니다):
+
+```bash
+gh pr create --repo Yuseong-Cheon/PIVOT --base real-experiment-ready \
+  --head LEE9396:torque-only-given-mass \
+  --title "session_20260904_1736 재발 방지: 저울 총질량 + 토크 전용 + preflight 검사" \
+  --body-file APPLY_PROMPT.md
 ```
 
 ---
 
-## 방법 B — 변경 내용을 직접 적용 (브랜치를 못 가져올 때)
+## 방법 B — 직접 적용 (브랜치를 못 가져올 때)
 
 ```
-이 저장소(PIVOT)의 밀도 추정 파이프라인을 "저울 총질량을 받고 토크 3축만
-쓰는" 방식으로 바꿔줘. 파일은 my_work 아래 5개만 건드리면 돼.
+이 저장소(PIVOT)의 밀도 추정 파이프라인을 "저울 총질량을 받고 토크 3축만 쓰는"
+방식으로 바꾸고, session_20260904_1736 을 재발시키는 설정을 preflight 에서 막아줘.
 
 ## 왜
 
-density_id_drake.regressor 의 힘 행은
+density_id_drake.regressor 의 힘 행 force_rows = FORCE_SIGN * G_ACC * np.outer(g_hat, VOLUMES)
+는 세 행이 전부 VOLUMES 의 상수배라 rank 1 이고, 중력 방향을 늘려도 1 이야. 힘 채널이
+밀도에 대해 아는 건 총질량 Σ V_i ρ_i 하나뿐이고, 그건 저울이 훨씬 정확히 줘. 반면
+실물 힘 채널에는 세션에서 58.7 N 오프셋(램프 5.60 N 의 10 배)이 실렸는데
+SIGMA_F = 0.10 N 로 백색화해서 500 배 과신하고 있었어.
 
-    force_rows = FORCE_SIGN * G_ACC * np.outer(g_hat, VOLUMES)
-
-인데, np.outer(g_hat, VOLUMES) 의 세 행이 전부 VOLUMES 의 상수배야. 그래서
-힘 블록의 계수(rank)가 1이고, 중력 방향을 늘려도 1 그대로야. 즉 힘 채널이
-밀도에 대해 알려주는 건 정확히 한 개, 총질량 Σ V_i ρ_i 뿐이야.
-
-그 하나를 저울에서 받으면 힘 행은 더 줄 게 없어. 반면 실물 힘 채널에는
-session_20260904_1736 에서 자세의존 오프셋 58.7 N 이 실렸어 — 램프 전체
-무게 5.60 N 의 10 배야. 그런데 SIGMA_F = 0.10 N 로 백색화하니까 그 채널을
-실제보다 500 배 믿고 있었어.
-
-## 바꿀 것 — my_work/density_id_drake.py
-
-1. R_EPS_DIAG 정의 바로 뒤에 토크 전용 스위치를 추가해줘.
-
-   - 전역 USE_FORCE_ROWS = True, ROWS_PER_DIR = 6
-   - 전역 TOTAL_MASS_KG = None  (저울 값 기록용)
-   - noise_diag(sigma_f=None, sigma_t=None, use_force=None)
-       USE_FORCE_ROWS 면 [f²]*3 + [t²]*3, 아니면 [t²]*3 을 반환
-   - rebuild_noise(sigma_f=None, sigma_t=None)
-       SIGMA_F/SIGMA_T 를 갱신하고 R_EPS_DIAG / R_STACK_DIAG / W_HALF 를
-       **셋 다** 다시 만든다
-   - set_torque_only(enabled=True)
-       USE_FORCE_ROWS / ROWS_PER_DIR 을 정하고 rebuild_noise() 를 부른다
-
-   ★ 중요: R_EPS_DIAG / R_STACK_DIAG / W_HALF 는 반드시 **함께** 만들어야 해.
-   하나만 갱신하면 백색화 가중치와 회귀행렬의 행 수가 어긋나서 조용히
-   틀린 답이 나와.
-
-2. regressor() 에서 USE_FORCE_ROWS 가 False 면 torque_rows 만 쌓게.
-3. measure() 도 같게 (np.concatenate([f, tau]) 대신 tau 만).
-4. constrained_map() 의 `A_all.shape[0] // 6` 을 `// ROWS_PER_DIR` 로.
+## my_work/density_id_drake.py
+- R_EPS_DIAG 뒤에: USE_FORCE_ROWS=True, ROWS_PER_DIR=6, TOTAL_MASS_KG=None,
+  noise_diag(sigma_f, sigma_t, use_force), rebuild_noise(sigma_f, sigma_t)
+  [R_EPS_DIAG / R_STACK_DIAG / W_HALF 를 반드시 함께 재생성], set_torque_only(enabled).
+- regressor()/measure(): USE_FORCE_ROWS False 면 토크 행만.
+- constrained_map(): `// 6` -> `// ROWS_PER_DIR`.
 
 ## my_work/density_id_objects.py
-
-set_sensor_averaging 안에서 alg.R_EPS_DIAG / R_STACK_DIAG / W_HALF 를 직접
-만드는 세 줄을 alg.rebuild_noise(_BASE_SIGMA_F * scale, _BASE_SIGMA_T * scale)
-한 줄로 바꿔줘. 여기서 [f]*3+[t]*3 을 다시 쓰면 토크 전용이 6축으로
-되돌아가서 sensor_cov 가 (18,18), 야코비안이 (9,9) 로 어긋나 터져.
+- set_measurement_averaging 의 alg.R_EPS_DIAG/R_STACK_DIAG/W_HALF 직접 생성 3줄을
+  alg.rebuild_noise(_BASE_SIGMA_F*scale, _BASE_SIGMA_T*scale) 한 줄로.
 
 ## my_work/design_core.py
-
-1. torque_rows_only(value, n_dir) 헬퍼를 추가하고 measurement_equation 의
-   vector() 안에서 써줘. 6*n_dir 로 들어온 렌치를 3*n_dir 로 자르는 거야.
-   ★ 측정·전송·기록은 6축 그대로 두고 **여기서만** 자를 것. 그래야 원시
-   렌치가 보존되고 |F| ~ M g 검산도 계속 돼.
-
-2. grasp_columns 에서 alg.USE_FORCE_ROWS 가 False 면 np.zeros((3,3)) 힘
-   블록을 빼줘.
-
-3. grasp_map 에 grasp_mu_m=None 인자를 추가해줘.
-   - 사전분포 목표를 np.zeros(3) 대신 grasp_mu / grasp_sigma_m 으로
-   - 상자도 grasp_mu ± grasp_bound_m 으로 (지금은 0 둘레)
-
-4. tls_map 에도 같은 grasp_mu_m 인자를 추가해줘.
-   - grasp0 기본값을 grasp_mu 로
-   - 상자를 (grasp_mu ± 0.05) 로
-   - 잔차 항을 (grasp - grasp_mu[:n_grasp]) / grasp_sigma_m 로
-
-   ★ 왜: GRASP_SIGMA_M 이 5 mm 인데 실제 파지점 어긋남이 173.9 mm 였어.
-   35 시그마라서 MAP 이 정답을 강하게 벌주고, 상자 한계 ±50 mm 에
-   [50, -50, 50] 으로 세 축 전부 붙었어 (세션 기록의 부호까지 일치).
-   grasp_columns 자체는 처음부터 옳았고 중심과 폭만 틀렸던 거야.
+- torque_rows_only(value, n_dir) 추가, measurement_equation 의 vector() 에서 사용
+  (6축 -> 3축 슬라이싱은 여기 한 곳에서만; 측정·전송·기록은 6축 유지).
+- grasp_columns: USE_FORCE_ROWS False 면 np.zeros((3,3)) 블록 제거.
+- grasp_map / tls_map 에 grasp_mu_m=None 인자: 사전평균·상자 중심·잔차를 그 둘레로.
 
 ## my_work/dual_view.py
-
-1. 인자 3개 추가:
-   --total-mass-kg FLOAT     저울로 잰 총질량 [kg], 힌지 포함
-   --torque-only / --use-force   (dest=torque_only, 기본 None)
-   --grasp-mu-mm X Y Z       FoundationPose 가 잰 파지점 어긋남 [mm]
-
-2. parse_args() 직후, 다른 어떤 코드보다 먼저:
-   - torque_only 가 None 이면 (args.hardware == "real") 로 정한다
-   - alg.set_torque_only(args.torque_only) 를 부른다
-   - --hardware real 인데 --total-mass-kg 가 없으면 parser.error 로 막는다
-     (없으면 자산 GT 로 총질량을 만들게 되어 "정답 넣고 정답 맞히기"가 됨)
-   - grasp_mu_m = args.grasp_mu_mm * 1e-3
-
-   ★ 반드시 파싱 직후여야 해. 아래서 regressor() 가 한 번이라도 불리면
-   행 수가 굳어지고 그 뒤에 바꾸면 백색화와 어긋나.
-
-3. prepare() 에 total_mass_kg=None 인자를 추가하고, prior == "weight" 갈래에서
-   그 값이 있으면 obj.assembled_mass_kg(spec, rho_gt) 대신 그것을 쓰게.
-   alg.TOTAL_MASS_KG 에도 넣어줘. 어느 쪽을 썼는지 화면에 찍고.
-
-4. PlannerScreen.__init__ 에 total_mass_kg=None, grasp_mu_m=None 추가:
-   - self.grasp_mu_m 을 두고 self.grasp_hat 의 초기값으로
-   - self.fixed_mass_kg 를 두고, self.total_mass_kg 를 그 값으로 고정
-
-5. 라운드 갱신부에서 self.total_mass_kg = float(alg.VOLUMES @ self.rho_hat)
-   를 fixed_mass_kg 가 None 일 때만 하게.
-
-   ★ 왜: 라운드마다 다시 계산하면 (V @ rho_hat) 의 추정 오차가 파지점 열의
-   계수로 되먹임돼서 두 미지수가 서로를 흉내내. 토크만 쓰면 총질량이 유일한
-   규모 기준이라 특히 그래.
-
-6. grasp_map / tls_map 호출에 grasp_mu_m=self.grasp_mu_m 을 넘겨줘.
-
-7. read_one() 의 시뮬레이션 파지점 오차 주입에서 wrench[3:6] 을
-   alg.USE_FORCE_ROWS 에 따라 [3:6] 또는 [0:3] 이 되게 해줘.
-
-8. 예보 루프에서 alg.R_EPS_DIAG 를 직접 만드는 자리를 alg.noise_diag(...) 로,
-   finally 의 복원 뒤에 alg.rebuild_noise() 를 한 번 불러줘.
+- 인자: --total-mass-kg, --torque-only/--use-force(dest torque_only, 기본 None), --grasp-mu-mm X Y Z.
+- parse_args 직후(다른 어떤 regressor 호출보다 먼저): torque_only None 이면 hardware=="real",
+  alg.set_torque_only(...), real 인데 total_mass_kg 없으면 parser.error.
+- prepare(total_mass_kg=None): prior=="weight" 에서 값이 있으면 assembled_mass_kg(spec, rho_gt)
+  대신 사용, alg.TOTAL_MASS_KG 에 기록, 출처를 화면에 표시.
+- PlannerScreen: 클래스 기본값 grasp_mu_m=None, fixed_mass_kg=None; __init__ 에
+  total_mass_kg, grasp_mu_m; fixed_mass_kg 가 있으면 라운드마다 총질량 재유도 금지;
+  grasp_map/tls_map 호출에 grasp_mu_m 전달; read_one 의 시뮬 오차 주입 인덱스를
+  USE_FORCE_ROWS 에 따라 [3:6]/[0:3].
+- 예보 루프의 alg.R_EPS_DIAG 직접 생성 -> alg.noise_diag(...), finally 뒤 alg.rebuild_noise().
 
 ## my_work/pivot_ui.py
+- "--prior", "water" -> "weight".
+- 옵션 루프에 ("--total-mass-kg","TOTAL_MASS_KG"); GRASP_MU_MM 있으면 --grasp-mu-mm;
+  USE_FORCE 참이면 --use-force.
 
-1. "--prior", "water" 하드코딩을 "weight" 로 바꿔줘.
-   water 는 등방 사전분포라 총질량을 전혀 안 묶어. 그래서 부위 밀도가
-   하한 50 에 붙어도 못 막았고, 총질량이 416.9 g vs 저울 571.0 g 로 27%
-   부족하게 나왔어.
+## tools/preflight.py
+- check_estimator_conf(report, conf) 추가하고 main 에서 check_calibration 다음에 호출:
+  GRASP_FRAME!=measured -> FAIL, TOTAL_MASS_KG 없음/비양수 -> FAIL,
+  measured 인데 GRASP_MU_MM 있음 -> FAIL, GRASP_SIGMA_MM<15 -> WARN.
 
-2. 설정 파일에서 넘길 수 있게:
-   ("--total-mass-kg", "TOTAL_MASS_KG") 를 옵션 루프에 추가
-   GRASP_MU_MM 이 있으면 --grasp-mu-mm 으로 (공백 구분 3개)
-   USE_FORCE 가 참이면 --use-force
+## setup/experiment.conf.example
+- TOTAL_MASS_KG=0.571, GRASP_MU_MM= (비움), # USE_FORCE=1, GRASP_SIGMA_MM=15.0 로.
 
-## 검증 (반드시 다 돌리고 결과를 보여줘)
-
-1. 힘 블록의 계수가 1인지:
-
-   import numpy as np, density_id_drake as alg
-   A6 = alg.regressor(np.array([0.4, -0.7]))
-   F = np.vstack([A6[6*i:6*i+3] for i in range(3)])
-   sv = np.linalg.svd(F, compute_uv=False)
-   print("rank", int(np.sum(sv > 1e-9*sv[0])))          # 1 이어야 함
-   _,_,Vt = np.linalg.svd(F)
-   u = alg.VOLUMES/np.linalg.norm(alg.VOLUMES)
-   print("|cos|", abs(Vt[0] @ u))                        # 1.0 이어야 함
-
-2. 토크 전용 전환 후 모양 일관성:
-
-   alg.set_torque_only(True)
-   A3, y3 = alg.regressor(th), alg.measure(th)
-   assert A3.shape[0] == y3.size == alg.W_HALF.size == 3*len(alg.G_DIRS)
-   # 그리고 A3 이 A6 의 토크 부분과 정확히 같아야 함
-
-3. hardware_real.self_check() 가 13/13 통과
-
-4. CLI 가드: --hardware real 인데 --total-mass-kg 없으면 거부되는지
-
-5. 복원 성능 — 파지점을 173.9 mm 어긋뜨리고 grasp_map 으로 되찾기.
-   기대값 (5부위 시뮬 물체, 재분배 사전분포 = 평균밀도):
-
-     6축,   명목 0     최대오차 205%   총질량오차 18.8%   railing [-11, 50, -50]
-     토크만, 명목 0     최대오차 343%   총질량오차 26.1%   railing
-     6축   + 명목값     최대오차  56%   총질량오차 0.03%   [-54.1, 82.0, -147.2]
-     토크만 + 명목값     최대오차  57%   총질량오차 0.00%   [-53.8, 82.1, -146.7]
-
-   ★ 남은 56% 는 사전분포 수축이야 (재분배 폭을 x10 하면 양쪽 다 4~6% 로
-   떨어져). 추정기 결함이 아니니 여기서 더 파지 마.
+## 검증 (반드시 다 돌리고 보여줘)
+1) 힘 블록 rank 확인:
+   A6 = alg.regressor(np.array([0.4,-0.7])); F = np.vstack([A6[6*i:6*i+3] for i in range(3)])
+   sv = np.linalg.svd(F, compute_uv=False); rank 1, 행공간 기저와 VOLUMES 방향 |cos| = 1.0
+2) alg.set_torque_only(True) 후 regressor/measure/W_HALF 길이가 3*len(G_DIRS) 로 일치
+3) unittest 32개 OK, hardware_real.self_check 13/13, pivot_ui --dry-run OK
+4) preflight 새 행 4개 렌더링
+5) 복원(5부위 시뮬, 파지점 173.9 mm 어긋뜨림, grasp_map):
+     6축/토크만 + 명목 0 -> railing [-11,50,-50], 총질량오차 19~26 %
+     6축/토크만 + 명목값 -> 파지점 5 mm 안, 총질량오차 0.03 % / 0.00 %
+   남은 ~56 % 는 사전분포 수축(재분배 폭 x10 이면 4~6 %) — 추정기 결함 아님
 
 ## 하지 말 것
-
-- 하드웨어·타어·전송 경로에서 렌치를 6축에서 3축으로 줄이지 마. 원시 렌치가
-  보존돼야 오프라인 재검증이 되고 |F| ~ M g 검산도 돼.
+- 하드웨어·타어·전송 경로에서 렌치를 3축으로 줄이지 마 (원시 렌치 보존, |F| ~ M g 검산).
 - SIGMA_F / SIGMA_T 값 자체는 건드리지 마.
-- 아직 안 풀린 문제(각도 3도, 손-눈 오차, 메시 프레임 규약)를 여기서 같이
-  고치려 하지 마. 별도 작업이야.
+- GRASP_FRAME=measured 에서 GRASP_MU_MM 에 173.9 mm 벡터를 넣지 마 (이중 계산).
 ```
 
 ---
@@ -204,23 +134,24 @@ set_sensor_averaging 안에서 alg.R_EPS_DIAG / R_STACK_DIAG / W_HALF 를 직접
 ## 적용 후 실물 실행
 
 ```bash
+./setup/launch_experiment.sh --check
+./setup/launch_experiment.sh
+```
+
+`dual_view` 를 직접 돌릴 때:
+
+```bash
 python dual_view.py --mode deploy --hardware real \
     --object desklamp --grasp pinch --grasp-part link_3 \
     --grasp-frame measured \
     --total-mass-kg <저울값 kg> \
-    --grasp-mu-mm <FoundationPose X Y Z, mm> \
     --grasp-sigma-mm 15 \
     --prior weight
 ```
 
-`pivot_ui` 설정 파일:
+**`--grasp-frame measured` 에서는 `--grasp-mu-mm` 을 주지 않습니다** (실측 파지가
+이미 기하에 들어가므로 이중 계산). legacy 프레임에서만 씁니다.
 
-```
-TOTAL_MASS_KG=0.571
-GRASP_MU_MM=-49.2 82.0 -145.2
-GRASP_SIGMA_MM=15
-```
-
-`--grasp-sigma-mm` 을 10 이 아니라 **15** 로 둔 이유: FoundationPose 위치
-오차 10 mm 에 손-눈 캘리브레이션 오차(위치 2~5 mm, 자세 0.5~1° → 팔 뻗은
-거리 0.5 m 에서 8.7 mm)가 더해집니다. 실제 값은 재보고 정하십시오.
+`GRASP_SIGMA_MM` 을 10 이 아니라 **15** 로 두는 이유: FoundationPose 위치 오차
+10 mm 에 손‑눈 변환 오차(자세 1° → 팔 0.5 m 에서 8.7 mm)가 더해집니다.
+표식으로 실측한 값이 있으면 그 값을 쓰십시오.

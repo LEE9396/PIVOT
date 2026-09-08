@@ -387,6 +387,54 @@ def check_robot(report, conf):
                           "제어기 전원과 192.168.50.x 네트워크를 확인하세요")
 
 
+def check_estimator_conf(report, conf):
+    """session_20260904_1736 을 재발시키는 설정 세 가지를 시작 전에 막는다.
+
+    1) GRASP_FRAME != measured  -> 회귀행렬 토크 기준점이 AFT200 이 아니라
+       파지점(173.9 mm 어긋남)이 되어 파지 오프셋이 +-50 mm 상자에 붙는다.
+    2) TOTAL_MASS_KG 없음      -> 토크만 쓰는 추정에 규모 기준이 없고,
+       자산 GT 로 총질량을 만들게 된다 (정답 넣고 정답 맞히기).
+    3) measured 인데 GRASP_MU_MM 있음 -> 173.9 mm 를 기하와 사전평균에
+       두 번 넣게 된다.
+    """
+    frame = str(conf.get("GRASP_FRAME", "legacy")).strip()
+    if frame == "measured":
+        report.add(OK, "토크 기준점", "GRASP_FRAME=measured (AFT200 몸체 원점)")
+    else:
+        report.add(FAIL, "토크 기준점",
+                   f"GRASP_FRAME={frame or '(없음)'} — 파지점 기준이라 AFT200 과 어긋납니다",
+                   "setup/experiment.conf 에 GRASP_FRAME=measured")
+    mass = str(conf.get("TOTAL_MASS_KG", "")).strip()
+    try:
+        value = float(mass)
+        if value <= 0:
+            raise ValueError
+        report.add(OK, "저울 총질량", f"{1000*value:.1f} g (힌지 포함)")
+    except ValueError:
+        report.add(FAIL, "저울 총질량",
+                   "TOTAL_MASS_KG 가 없거나 양수가 아닙니다",
+                   "물체를 힌지까지 붙은 채로 저울에 올려 kg 으로 적으세요:"
+                   " TOTAL_MASS_KG=0.571")
+    mu = str(conf.get("GRASP_MU_MM", "")).strip()
+    if frame == "measured" and mu:
+        report.add(FAIL, "파지 사전평균",
+                   f"GRASP_MU_MM={mu} — measured 모드에서는 이중 계산입니다",
+                   "GRASP_MU_MM 을 비우세요 (실측 파지가 이미 기하에 들어갑니다)")
+    else:
+        report.add(OK, "파지 사전평균", "비움 (실측 파지 잔차만 미지수)" if not mu
+                   else f"{mu} mm (legacy 프레임)")
+    sigma = str(conf.get("GRASP_SIGMA_MM", "10")).strip()
+    try:
+        if float(sigma) < 15.0:
+            report.add(WARN, "파지 불확실성",
+                       f"GRASP_SIGMA_MM={sigma} — FoundationPose 10 mm 에 손-눈 오차가 더해집니다",
+                       "15~20 을 권합니다. 표식으로 실측한 값이 있으면 그 값")
+        else:
+            report.add(OK, "파지 불확실성", f"GRASP_SIGMA_MM={sigma}")
+    except ValueError:
+        report.add(FAIL, "파지 불확실성", f"GRASP_SIGMA_MM={sigma} 를 숫자로 못 읽습니다")
+
+
 def check_masks(report, conf):
     masks = conf.get("FP_MASKS")
     if not masks:
@@ -424,6 +472,7 @@ def main():
     check_asset(report, conf)
     check_same_build(report, conf)
     check_calibration(report, conf, root)
+    check_estimator_conf(report, conf)
     check_masks(report, conf)
     check_tracker(report, conf)
     report.show()
