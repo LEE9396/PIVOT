@@ -482,6 +482,12 @@ class Conductor:
         # 힘 3축을 추정에 다시 넣고 싶을 때만 켠다. 기본은 토크 전용이다.
         if str(conf.get("USE_FORCE", "")).strip().lower() in ("1", "true", "yes"):
             command += ["--use-force"]
+        if self.rehearse:
+            # 리허설에는 램프를 접어 줄 사람도 추적기도 없다. 탐색기가 추천 각도를
+            # 모의 자세 센서에 직접 넣게 하고(--auto-adjust), 시작 버튼도 건너뛴다.
+            # 실물에서는 절대 넘기지 않는다 — 아무도 안 접었는데 접었다고 치게 된다.
+            # (첫 리허설이 여기서 멈춰 있었다: "목표 [38.9 36.7] 오차 [51.8 55.6] 아직")
+            command += ["--auto-adjust", "--autostart"]
         if conf.get("FP_OUTPUT"):
             command += ["--pose-file", str(Path(conf["FP_OUTPUT"]) / "latest.json")]
             command += ["--gripper-status-file", str(Path(conf["FP_OUTPUT"]) / "hardware.json")]
