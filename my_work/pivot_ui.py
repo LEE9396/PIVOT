@@ -511,7 +511,7 @@ class Conductor:
         파지 오프셋 상자에 붙음)이 전부 틀렸는데 사람이 파일을 열어야 알 수
         있었다. 여기서 바로 찍고 대시보드에도 올린다. 판정은 tools/round_check.py.
         """
-        if not self.session.path("exploration_round_1.json").is_file():
+        if not list(self.session.root.glob("exploration_round_*.json")):
             return
         print("\n  --- 라운드 검산 (tools/round_check.py) ---")
         result = subprocess.run(

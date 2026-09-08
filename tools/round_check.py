@@ -122,7 +122,8 @@ def main(argv):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("session", nargs="?", type=Path)
     ap.add_argument("--conf", type=Path, default=Path("setup/experiment.conf"))
-    ap.add_argument("--round", type=int, default=1)
+    ap.add_argument("--round", type=int, default=None,
+                    help="기본은 세션에 있는 가장 최근 라운드 (1라운드가 건너뛰어질 수 있다)")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv[1:])
     if args.self_test:
@@ -142,6 +143,13 @@ def main(argv):
     except ValueError:
         sigma = 15.0
 
+    if args.round is None:
+        found = sorted(args.session.glob("exploration_round_*.json"),
+                       key=lambda q: int(q.stem.rsplit("_", 1)[1]))
+        if not found:
+            sys.exit(f"{args.session} 에 exploration_round_*.json 이 없습니다 —"
+                     " 탐색이 아직 한 라운드도 안 끝났거나 세션 폴더가 다릅니다")
+        args.round = int(found[-1].stem.rsplit("_", 1)[1])
     path = args.session / f"exploration_round_{args.round}.json"
     if not path.is_file():
         sys.exit(f"{path} 가 없습니다 — 탐색이 아직 한 라운드도 안 끝났거나 세션 폴더가 다릅니다")
