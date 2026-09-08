@@ -45,9 +45,15 @@ cd "${ROOT}"
 say "[1/6] 코드 — torque-only-given-mass 브랜치"
 if ! grep -q '"--prior", "weight"' my_work/pivot_ui.py; then
   echo "  브랜치가 없습니다. LEE9396/PIVOT 에서 가져옵니다."
-  [[ -z "$(git status --porcelain)" ]] || fail "작업 트리에 미커밋 변경이 있습니다. 먼저 커밋/스태시하세요:  git status"
   git remote add lee https://github.com/LEE9396/PIVOT.git 2>/dev/null || true
   git fetch lee torque-only-given-mass
+  # 작업 트리가 더러워도 된다 — 가져올 커밋이 건드리는 파일에 미커밋 수정이 있을 때만
+  # 막는다. 로봇 PC 에는 진행 중인 분석 파일과 미추적 산출물이 늘 있기 마련이다.
+  BASE="$(git merge-base HEAD lee/torque-only-given-mass)"
+  CLASH="$(comm -12 <(git diff --name-only "${BASE}" lee/torque-only-given-mass | sort) \
+                    <(git diff --name-only HEAD | sort))"
+  [[ -z "${CLASH}" ]] || fail "가져올 커밋이 고치는 파일에 미커밋 수정이 있습니다. 먼저 커밋하거나 stash 하세요:
+${CLASH}"
   # 범위를 공통 조상부터 잡는다. 이 체크아웃이 브랜치 부모(2dd7611)보다 더 나가
   # 있어도, 브랜치가 그 위로 rebase 돼 있으면 중복 커밋 없이 붙는다.
   git cherry-pick "$(git merge-base HEAD lee/torque-only-given-mass)..lee/torque-only-given-mass" \
