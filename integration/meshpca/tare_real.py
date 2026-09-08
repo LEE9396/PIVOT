@@ -246,7 +246,7 @@ def solve_wrist(checker, indices, fixed, base, reference, g_hat,
                                       checker.finger_value, q[index])
     ik.AddAngleBetweenVectorsConstraint(
         checker.plant.world_frame(), np.array([0.0, 0.0, -1.0]),
-        checker.sensor_frame, np.asarray(g_hat, dtype=float),
+        checker.wrench_frame, np.asarray(g_hat, dtype=float),
         0.0, scene.ANGLE_TOL_RAD)
     if avoid_collision:
         ik.AddMinimumDistanceLowerBoundConstraint(checker.ik_distance_m, 0.01)
@@ -431,18 +431,12 @@ def find_wrist_base(checker, planner, indices, fixed, start, max_wrist_deg,
     return None, None, reasons
 
 
-def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
+def plan_wrist_paths(current, clearance_m, max_wrist_deg=2.0,
                      directions=None, max_iters=10000, log=print):
-    """세 중력방향을 J1--J3 한 배치에서 손목 J4--J6 만으로 만든다.
+    """J1–J3을 고정하고 최초 자세의 손목 창 안에서만 직선 경로를 찾는다.
 
-    왜 손목만인가 — 영점 조정은 "그 자세에서 빈 그리퍼가 만드는 렌치" 를
-    통째로 빼는 방식이라, 영점을 잰 자세와 실제로 재는 자세가 가까울수록
-    잘 상쇄된다. 지난 세션은 이 둘이 587--681 deg 나 떨어져 있었다.
-
-    예전 코드의 구멍 — 로봇이 서 있던 자세의 J1--J3 를 그대로 쓰고, 그
-    자세로 안 되면 그냥 멈췄다. 그 자세가 좋은 자리일 이유가 없는데도.
-    이제는 되는 자리를 **찾아서**, 거기까지 한 번만 팔 전체로 (충돌 검사를
-    거쳐) 옮기고, 그 다음부터 손목만 쓴다.
+    정규 3방향이 창 안에 없으면 이동하지 않는다. 작은 검증 자료로 전체
+    캘리브레이션을 대체하지 않으며 팔 배치/손목 창을 자동 확장하지 않는다.
     """
     checker = scene.PoseChecker(
         empty_tool_spec(), densities=[1000.0], joint_limits_rad=[],
@@ -478,21 +472,9 @@ def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
     log(f"  손목 여유 (창 {max_wrist_deg:.0f} deg):"
         f" {wrist_headroom_text(checker, start, max_wrist_deg)}")
 
-    base, approach, note = find_wrist_base(
-        checker, planner, indices, fixed, start, max_wrist_deg, required,
-        max_iters, wanted=wanted, log=log)
-    if base is None:
-        raise RuntimeError(
-            "필수 중력 방향 셋을 손목만으로 만들 수 있고 거기까지 갈 수도 있는"
-            " J1--J3 배치를 못 찾았습니다. 후보별로:\n"
-            + "\n".join(note)
-            + "\n  손 쓸 수 있는 것:"
-            "\n    - 팔을 다른 자세로 옮기고 --plan 을 다시 (직접교시로 충분합니다)"
-            "\n    - 작업영역을 치운다 (위에 '충돌' 이 많으면 이것부터)"
-            f"\n    - 손목 창을 넓힌다: --max-wrist-deg {max_wrist_deg + 60:.0f}"
-            "\n      (케이블이 그만큼 꼬여도 되는지 눈으로 먼저 확인하세요)"
-            "\n    - 경로를 더 오래 찾는다: --max-iters 40000"
-            "\n    - 손목 전용을 포기하고 사람이 맞춘다: --manual")
+    # 검증 중 다른 팔 배치를 찾아 크게 이동하지 않는다. 창은 최초 자세에 고정한다.
+    base, approach = start, None
+    planner.limit_to_start(start, np.deg2rad([0, 0, 0] + [max_wrist_deg] * 3))
 
     if approach is not None:
         measured, near_a, near_b = planner.path_closest_pair(
@@ -508,12 +490,12 @@ def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
     paths, clearances, reached, state = [], [], [], base
     for g_hat in wanted:
         is_required = any(np.allclose(g_hat, r) for r in required)
-        target = solve_wrist(checker, indices, fixed, base, state, g_hat,
+        target = solve_wrist(checker, indices, fixed, base, start, g_hat,
                              max_wrist_deg)
         why = None
         if target is None:
-            why = explain_wrist_failure(checker, indices, fixed, base, state,
-                                        g_hat, max_wrist_deg)
+            why = (f"시작 자세 기준 손목 ±{max_wrist_deg:g}° 안에서 도달 불가. "
+                   "범위를 자동으로 넓히지 않습니다. 먼저 local_ft_check.py로 정지 검증하세요")
         elif not planner.edge_valid(state, target):
             why = "손목 직선 경로가 충돌합니다"
         if why is not None:
@@ -535,7 +517,8 @@ def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0,
         reached.append(g_hat)
         state = target
 
-    return start, paths, clearances, reached
+    # 피드백 검사까지 diagram/context 소유자의 수명을 유지한다.
+    return start, paths, clearances, reached, planner, checker
 
 
 def gravity_in_sensor(checker, q):
@@ -547,7 +530,7 @@ def gravity_in_sensor(checker, q):
     """
     for joint, value in zip(checker.arm_joints, q):
         joint.set_angle(checker.context, float(value))
-    R_WS = checker.sensor_frame.CalcPoseInWorld(checker.context).rotation()
+    R_WS = checker.wrench_frame.CalcPoseInWorld(checker.context).rotation()
     return R_WS.matrix().T @ np.array([0.0, 0.0, -1.0])
 
 
@@ -635,8 +618,8 @@ def run_verify(args, data, current):
     """드리프트 확인. 세팅 때 잰 값을 그대로 써도 되는지 10초 만에 본다.
 
     자세를 **다시 만들어** 읽는다. 예측하지 않는다 (위 문서 참고).
-    로봇이 이동하는 것은 기록된 자세 하나까지, 한 번뿐이다.
-    --manual 이면 그것도 사람이 직접교시로 옮긴다.
+    현재 자세가 기록과 다르면 자동 이동하지 않는다.
+    --manual이면 작업자가 직접교시로 맞춘 뒤 읽는다.
     """
     import json
 
@@ -644,6 +627,8 @@ def run_verify(args, data, current):
         raise SystemExit(f"확인할 영점 조정 파일이 없습니다: {args.output}\n"
                          f"  먼저 세팅 때 한 번 재세요 (--setup)")
     payload = json.loads(args.output.read_text())
+    if payload.get("wrench_frame") != "ft_mount":
+        raise RuntimeError("기존 물체 프레임 영점은 F/T 프레임 수정 후 재사용할 수 없습니다")
     entries = [e for e in payload["entries"] if "joint_deg" in e]
     if not entries:
         raise SystemExit("영점 조정 파일에 joint_deg 가 없어 자세를 되짚을 수 없습니다.\n"
@@ -654,6 +639,9 @@ def run_verify(args, data, current):
     target = np.arctan2(np.sin(target), np.cos(target))
     print(f"확인 대상 자세  g={entry['g_hat']}")
     print(f"  지금 자세와의 차이 {gap_deg:.2f} deg")
+    if args.plan_only:
+        print("PLAN ONLY: 상태 비교만 했습니다. 이동/영점 기록 없음")
+        return 0
 
     if gap_deg > args.pose_tol_deg:
         if args.manual:
@@ -669,21 +657,8 @@ def run_verify(args, data, current):
                     break
                 time.sleep(0.5)
         else:
-            print(f"  그 자세로 이동합니다 (한 번, 경로 계획됨)")
-            start, paths, _ = plan_paths(current, args.clearance_mm / 1000.0,
-                                         args.max_iters)
-            checker_planner = None
-            robot = hr.Rb5Driver(
-                hr.RbpodoBackend(host=args.robot_ip),
-                max_speed=np.deg2rad(args.speed_deg_s))
-            try:
-                index = [tuple(np.round(e["g_hat"], 6))
-                         for e in entries].index(tuple(np.round(entry["g_hat"], 6)))
-                robot.follow(paths[index], path_duration(paths[index],
-                                                         args.speed_deg_s))
-                robot.stop()
-            finally:
-                robot.stop()
+            raise RuntimeError("영점 자세가 현재 자세와 다릅니다. 검증을 위해 자동 이동하지 않습니다. "
+                               "local_ft_check.py --record로 현재 자리에서 기록하세요")
 
     time.sleep(1.0)
     sensor = Aft200Sensor(args.robot_ip, args.aft_hz)
@@ -770,18 +745,19 @@ def run_manual(args, data, current):
                             tare_error_n=tare_error_n(error_deg)))
         print(f"  기록 {label}: {np.round(raw, 4).tolist()}")
 
-    tare.save(args.output)
     # 실제로 맞춘 자세와 그 오차를 함께 남긴다. TareTable.load 는 entries 만
     # 읽으므로 다른 키를 더해도 안전하다. 나중에 결과가 이상할 때 여기부터 본다.
     #
     # joint_deg 는 **실물 장비가 내는 파일과 같은 키 이름**이다. --verify 가
     # 이 값으로 자세를 되짚으므로 이름이 갈리면 안 된다.
     import json
-    payload = json.loads(args.output.read_text())
+    payload = {"entries": [{"g_hat": list(g), "wrench": w.tolist()}
+                           for g, w in tare.table.items()], "wrench_frame": "ft_mount"}
     for entry, record in zip(payload["entries"], records):
         entry["joint_deg"] = np.degrees(
             np.asarray(record["joints_rad"], dtype=float)).tolist()
         entry["direction_error_deg"] = record["orientation_error_deg"]
+        entry["achieved_g_hat"] = record["achieved_g_hat"]
     worst = max(r["orientation_error_deg"] for r in records)
     payload["manual"] = dict(
         method="freedrive hold, no robot command",
@@ -791,6 +767,17 @@ def run_manual(args, data, current):
         tool_mass_kg=TOOL_MASS_KG,
         records=records)
     payload["created_at_s"] = time.time()
+    import tempfile
+    import tare_check
+    with tempfile.NamedTemporaryFile("w", suffix=".json") as temporary:
+        json.dump(payload, temporary)
+        temporary.flush()
+        passed, _ = tare_check.check(temporary.name, tool_kg=args.tool_kg)
+    payload["measured"] = {"passed": bool(passed), "forced": bool(args.force)}
+    if not passed and not args.force:
+        failed = args.output.with_suffix(".failed.json")
+        failed.write_text(json.dumps(payload, indent=2) + "\n")
+        raise RuntimeError(f"영점 검산 불합격: 정상 파일을 바꾸지 않고 {failed}에 기록했습니다")
     args.output.write_text(json.dumps(payload, indent=2) + "\n")
     print(f"\nsaved: {args.output.resolve()}")
     print(f"  최악 자세 오차 {worst:.2f} deg"
@@ -822,7 +809,7 @@ def main():
                              " 안 주면 충돌 검사가 그 물건을 못 본다."
                              " 방향이 헷갈리면 가장 긴 치수로 정육면체를"
                              " 주는 것이 안전하다.")
-    parser.add_argument("--max-wrist-deg", type=float, default=120.0,
+    parser.add_argument("--max-wrist-deg", type=float, default=2.0,
                         help="손목 J4-J6 를 한 자리에서 몇 도까지 돌릴지."
                              " 넓힐수록 도달할 수 있는 방향은 늘지만"
                              " 센서 케이블이 그만큼 꼬인다.")
@@ -854,6 +841,8 @@ def main():
                         help="--manual 에서 허용하는 중력방향 오차 [deg]. "
                              "1 deg 가 램프 무게의 2 %% 에 해당한다")
     args = parser.parse_args()
+    if not np.isfinite(args.max_wrist_deg) or args.max_wrist_deg <= 0:
+        parser.error("--max-wrist-deg는 양의 유한수여야 합니다")
     if (args.output.exists() and not args.overwrite and not args.plan_only
             and not args.verify):
         parser.error(f"refusing to overwrite {args.output}")
@@ -875,7 +864,7 @@ def main():
         return run_manual(args, data, current)
 
     directions = TARE_DIRECTIONS[:max(3, args.dirs)]
-    start, paths, clearances, reached = plan_wrist_paths(
+    start, paths, clearances, reached, planner, collision_checker = plan_wrist_paths(
         current, args.clearance_mm / 1000.0,
         max_wrist_deg=args.max_wrist_deg, directions=directions,
         max_iters=args.max_iters)
@@ -904,6 +893,8 @@ def main():
     robot = hr.Rb5Driver(
                 hr.RbpodoBackend(host=args.robot_ip),
                 max_speed=np.deg2rad(args.speed_deg_s))
+    robot.limit_to_start(start, np.deg2rad([0.1] * 3 + [args.max_wrist_deg + 0.1] * 3))
+    robot.set_collision_planner(planner)
     sensor = Aft200Sensor(args.robot_ip, args.aft_hz)
     tare = TareTable()
     records = []
@@ -920,8 +911,10 @@ def main():
                 empty_tool_spec(), densities=[1000.0], joint_limits_rad=[],
                 min_distance_m=args.clearance_mm / 1000.0,
                 gripper="robotiq2f85", seed_q=q)
-            error_deg, _ = orientation_error_deg(checker, q, g_hat)
-            records.append((q, error_deg))
+            error_deg, achieved = orientation_error_deg(checker, q, g_hat)
+            if error_deg > args.angle_tol_deg:
+                raise RuntimeError(f"실제 F/T 중력 방향 오차 {error_deg:.3f}°: 영점 저장 중단")
+            records.append((q, error_deg, achieved))
             print(f"tare g={g_hat.tolist()}: {np.round(raw, 4).tolist()}")
     finally:
         robot.stop()
@@ -937,9 +930,11 @@ def main():
     tare.save(raw_path)
     payload = json.loads(raw_path.read_text())
     raw_path.unlink(missing_ok=True)
-    for entry, (q, error_deg) in zip(payload["entries"], records):
+    for entry, (q, error_deg, achieved) in zip(payload["entries"], records):
         entry["joint_deg"] = np.degrees(q).tolist()
         entry["direction_error_deg"] = error_deg
+        entry["achieved_g_hat"] = achieved.tolist()
+    payload["wrench_frame"] = "ft_mount"
     payload["automatic"] = {"method": "J1-J3 fixed, J4-J6 only",
                             "n_directions": len(reached)}
     payload["created_at_s"] = time.time()
@@ -975,6 +970,7 @@ def main():
         "residual_torque_nm": float(info["residual_torque_nm"]),
         "bias_force_n": [float(v) for v in info["bias_force"]],
         "passed": bool(ok),
+        "forced": bool(args.force),
     }
     if info.get("axes") is not None:
         payload["measured"]["sensor_axis_rotation_deg"] = float(

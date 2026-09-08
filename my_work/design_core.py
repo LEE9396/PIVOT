@@ -32,8 +32,51 @@ def sensor_cov(g_dirs):
     return np.diag(np.tile(alg.R_EPS_DIAG, len(g_dirs)))
 
 
+def round_directions(g_dirs, count):
+    """기존 공통 방향과 라운드별 실측 방향을 같은 형식으로 맞춘다."""
+    g = np.asarray(g_dirs, dtype=float)
+    if g.ndim == 2:
+        g = np.repeat(g[None], count, axis=0)
+    if (g.ndim != 3 or g.shape[0] != count or g.shape[2] != 3 or g.shape[1] == 0
+            or not np.all(np.isfinite(g))
+            or not np.allclose(np.linalg.norm(g, axis=2), 1., atol=1e-5)):
+        raise ValueError("라운드/측정 순서와 일치하는 단위 중력 방향이 필요합니다")
+    return g
+
+
 def regressor(theta, g_dirs):
     return alg.regressor(np.atleast_1d(theta), [np.asarray(g) for g in g_dirs])
+
+
+def measurement_equation(theta, reply, g_dirs):
+    """y_raw = A*rho + b 에서 알려진 6축 영점 b를 한 번만 제거한다.
+
+    원시값/영점은 방향마다 [Fx,Fy,Fz,Tx,Ty,Tz] 순서다. 기존 wrench는
+    이미 차감된 값이므로 다시 빼지 않고 전송 경로의 누락/이중 차감을 검산한다.
+    """
+    A = regressor(theta, g_dirs)
+
+    def vector(value):
+        v = np.asarray(value, dtype=float)
+        if v.shape != (A.shape[0],) or not np.all(np.isfinite(v)):
+            raise ValueError("추정 행렬과 일치하는 유한한 6축 렌치 배열이 필요합니다")
+        return v
+
+    reported = vector(reply["wrench"])
+    raw, offset = reply.get("wrench_raw"), reply.get("tare_applied")
+    if raw is None and offset is None:
+        if reply.get("tare_required", False):
+            raise ValueError("실측 추정에는 원시 렌치와 적용한 영점이 모두 필요합니다")
+        # 순수 시뮬레이션과 기존 물체 렌치 입력은 이미 공구 성분이 없다.
+        return A, reported
+    if raw is None or offset is None:
+        raise ValueError("원시 렌치와 적용한 영점은 함께 전달해야 합니다")
+    corrected = vector(raw) - vector(offset)
+    if not np.all(np.isfinite(corrected)):
+        raise ValueError("영점 차감 결과가 유한하지 않습니다")
+    if not np.allclose(reported, corrected, rtol=1e-9, atol=1e-9):
+        raise ValueError("물체 렌치가 원시값−영점과 다릅니다: 누락/이중 차감을 확인하세요")
+    return A, corrected
 
 
 def angle_jacobian(theta, rho, g_dirs, step_rad=1e-4):
@@ -230,7 +273,8 @@ def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
     n_part = len(mu0)
     R = len(rounds)
 
-    w_sensor = 1.0 / np.sqrt(np.tile(alg.R_EPS_DIAG, len(g_dirs)))
+    directions = round_directions(g_dirs, R)
+    w_sensor = 1.0 / np.sqrt(np.tile(alg.R_EPS_DIAG, len(directions[0])))
     L0 = np.linalg.cholesky(np.linalg.inv(Sigma0)).T
     sig_theta = [np.sqrt(np.diag(aa.angle_covariance(
         np.atleast_1d(th), rel_error, floor_deg))) for th, _ in rounds]
@@ -238,8 +282,9 @@ def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
     # 파지점 어긋남도 같이 풀 것인가. 각도 보정 delta_i 뒤에 3개를 더 붙인다.
     # 둘은 서로 다른 것을 고친다 — 각도는 라운드마다 다르고, 파지점은 모든
     # 라운드에 똑같이 실린다. 한쪽만 고치면 다른 쪽 치우침이 그대로 남는다.
-    n_grasp = 3 if (grasp_sigma_m and total_mass_kg) else 0
-    grasp_cols = (grasp_columns(g_dirs, total_mass_kg) if n_grasp else None)
+    n_grasp = 3 if grasp_sigma_m > 0 else 0
+    # 실물 총질량이 주어지지 않으면 현재 밀도에서 계산한다. 자산 GT를 쓰지 않는다.
+    grasp_cols = ([grasp_columns(g, 1.) for g in directions] if n_grasp else None)
 
     lo, hi = bounds
     n_angle = R * n_joint
@@ -259,10 +304,14 @@ def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
         rho = x[:n_part]
         deltas = x[n_part:n_part + n_angle].reshape(R, n_joint)
         grasp = x[n_part + n_angle:]
-        offset = grasp_cols @ grasp if n_grasp else 0.0
+        mass = 0.
+        if n_grasp:
+            mass = float(alg.VOLUMES @ rho) if total_mass_kg is None else total_mass_kg
         parts = []
-        for (theta, y), delta, sig in zip(rounds, deltas, sig_theta):
-            A = regressor(np.atleast_1d(theta) + delta, g_dirs)
+        for i, ((theta, y), delta, sig, g) in enumerate(
+                zip(rounds, deltas, sig_theta, directions)):
+            offset = mass * (grasp_cols[i] @ grasp) if n_grasp else 0.0
+            A = regressor(np.atleast_1d(theta) + delta, g)
             parts.append((y - A @ rho - offset) * w_sensor)
             parts.append(delta / sig)
         parts.append(L0 @ (rho - mu0))
@@ -295,8 +344,8 @@ def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
 #     tau_true = sum_i m_i (c_i - delta) x g = tau_model - M (delta x g)
 #              = tau_model + M G [g]_x delta
 #
-# 이고 총질량 M 은 저울로 이미 안다. 즉 delta 는 **선형 미지수 3개**로
-# 들어온다. 힘 성분에는 안 나타난다 (F = M g 는 어디서 재든 같다).
+# 이고 총질량 M 을 고정한 초기화에서는 delta 가 선형 미지수 3개다.
+# TLS에서는 M=V@rho로 함께 추정한다. 힘 성분에는 파지점이 안 나타난다.
 #
 # 중력 방향 하나에서 [g]_x 의 계수는 g 에 수직한 평면 2차원만 잡는다.
 # 직교 3방향을 다 쓰면 3차원이 다 잡히므로 delta 는 원리상 식별된다.
@@ -311,7 +360,7 @@ def grasp_columns(g_dirs, total_mass_kg):
                          [g_hat[2], 0.0, -g_hat[0]],
                          [-g_hat[1], g_hat[0], 0.0]])
         blocks.append(np.vstack([np.zeros((3, 3)),
-                                 total_mass_kg * alg.G_ACC * skew]))
+                                 alg.FORCE_SIGN * total_mass_kg * alg.G_ACC * skew]))
     return np.vstack(blocks)
 
 
@@ -335,9 +384,9 @@ def grasp_map(blocks, mu0, Sigma0, bounds, g_dirs, total_mass_kg,
     n_part = len(mu0)
     lo, hi = bounds
     rows, ys, weights = [], [], []
-    for A, y, R in blocks:
+    for (A, y, R), g in zip(blocks, round_directions(g_dirs, len(blocks))):
         L = np.linalg.cholesky(np.linalg.inv(np.atleast_2d(R)))
-        rows.append(L.T @ augmented(A, g_dirs, total_mass_kg))
+        rows.append(L.T @ augmented(A, g, total_mass_kg))
         ys.append(L.T @ np.asarray(y, dtype=float))
     # 사전분포 항 (rho 와 delta 각각)
     L0 = np.linalg.cholesky(np.linalg.inv(Sigma0)).T
@@ -411,7 +460,7 @@ def bias_covariance(blocks, jacobians, Sigma0, systematic_fraction,
 def bias_by_refit(rounds, mu0, Sigma0, bounds, g_dirs, rho_hat,
                   systematic_fraction, estimator="wls",
                   rel_error=aa.DEFAULT_ANGLE_REL_ERROR,
-                  floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG):
+                  floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG, grasp_sigma_m=0.0):
     """계통 각도오차가 '실제로' 추정값을 얼마나 움직이는지 직접 재본다.
 
     위의 bias_covariance 는 1차 민감도인데, 가중치 R_eff 안에 이미 J Sigma J^T
@@ -434,17 +483,20 @@ def bias_by_refit(rounds, mu0, Sigma0, bounds, g_dirs, rho_hat,
 
     def refit(shift):
         blocks, shifted = [], []
-        for theta, y in rounds:
+        for (theta, y), g in zip(rounds, round_directions(g_dirs, len(rounds))):
             th = np.atleast_1d(theta) + shift
-            A = regressor(th, g_dirs)
-            blocks.append((A, y, effective_cov(th, rho_hat, g_dirs,
+            A = regressor(th, g)
+            blocks.append((A, y, effective_cov(th, rho_hat, g,
                                                rel_error, floor_deg)))
             shifted.append((th, y))
         if estimator == "tls":
             out, _ = tls_map(shifted, mu0, Sigma0, bounds, g_dirs,
                              rho_init=rho_hat, rel_error=rel_error,
-                             floor_deg=floor_deg)
+                             floor_deg=floor_deg, grasp_sigma_m=grasp_sigma_m)
             return out
+        if grasp_sigma_m > 0:
+            return grasp_map(blocks, mu0, Sigma0, bounds, g_dirs,
+                             float(alg.VOLUMES @ rho_hat), grasp_sigma_m)[0]
         return wls_map(blocks, mu0, Sigma0, bounds)
 
     columns = []
@@ -472,10 +524,11 @@ def residual_inflation(blocks, rho_hat, dof_floor=1, offset=None,
     n_extra 는 늘어난 미지수 개수로, 자유도에서 빼 준다.
     """
     total, rows = 0.0, 0
-    for A, y, R in blocks:
+    for i, (A, y, R) in enumerate(blocks):
         r = y - A @ rho_hat
         if offset is not None:
-            r = r - offset
+            offsets = np.asarray(offset)
+            r = r - (offsets[i] if offsets.ndim == 2 else offsets)
         total += float(r @ np.linalg.solve(R, r))
         rows += len(y)
     dof = max(rows - len(rho_hat) - n_extra, dof_floor)
@@ -506,18 +559,25 @@ def residual_scale(blocks, rounds, rho_hat, g_dirs, tls_info,
         return residual_inflation(blocks, rho_hat, offset=grasp_offset,
                                   n_extra=n_grasp)
     delta = np.atleast_2d(tls_info["delta"])
-    fitted = [(regressor(np.atleast_1d(theta) + d, g_dirs), y, R_eff)
-              for (theta, y), d, (_, _, R_eff) in zip(rounds, delta, blocks)]
+    fitted = [(regressor(np.atleast_1d(theta) + d, g), y, R_eff)
+              for (theta, y), d, (_, _, R_eff), g in zip(
+                  rounds, delta, blocks, round_directions(g_dirs, len(rounds)))]
     return residual_inflation(fitted, rho_hat, offset=grasp_offset,
                               n_extra=int(delta.size) + n_grasp)
 
 
-def half_width(Sigma, rho_hat, Cov_bias=None, inflate=1.0, z=1.96):
-    """95 % 상대 반폭. 치우침 몫과 잔차 팽창을 선택적으로 더한다."""
+def absolute_half_width(Sigma, Cov_bias=None, inflate=1.0, z=1.96):
+    """표시·기록·정지 판정이 같은 보정된 구간을 사용한다."""
     var = np.diag(Sigma) * inflate ** 2
     if Cov_bias is not None:
         var = var + np.diag(Cov_bias)
-    return z * np.sqrt(var) / np.maximum(np.abs(rho_hat), 1e-9)
+    return z * np.sqrt(var)
+
+
+def half_width(Sigma, rho_hat, Cov_bias=None, inflate=1.0, z=1.96):
+    """95 % 상대 반폭. 치우침 몫과 잔차 팽창을 선택적으로 더한다."""
+    return absolute_half_width(Sigma, Cov_bias, inflate, z) / np.maximum(
+        np.abs(rho_hat), 1e-9)
 
 
 def stopping_width(half, n_wanted=None):

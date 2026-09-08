@@ -1,0 +1,1751 @@
+diff --git a/foundationpose/axis_geometry.py b/foundationpose/axis_geometry.py
+index 9881632..eb9c02f 100644
+--- a/foundationpose/axis_geometry.py
++++ b/foundationpose/axis_geometry.py
+@@ -3,6 +3,16 @@
+ import numpy as np
+ 
+ 
++def part_mesh_path(directory, part):
++    """Final visual mesh 이름을 우선하고 예전 metric 배달물도 읽는다."""
++    for name in (f"{part}.ply", f"{part}_metric_watertight.ply",
++                 f"{part}.obj"):
++        path = directory / name
++        if path.is_file():
++            return path
++    raise FileNotFoundError(f"no mesh for {part} in {directory}")
++
++
+ def pca_axis(mesh, largest):
+     _, vectors = np.linalg.eigh(np.cov(mesh.vertices.T))
+     return vectors[:, -1 if largest else 0]
+@@ -48,8 +58,7 @@ def lamp_joint_angles(poses, axes):
+ 
+ 
+ def laptop_opening_angle(poses, normals):
++    """두 면의 방향으로 잰 열림각. 닫힘 0도, 완전 펼침 180도."""
+     base = poses["base"][:3, :3] @ normals["base"]
+     moving = poses["moving_link"][:3, :3] @ normals["moving_link"]
+-    plane_angle = np.degrees(
+-        np.arccos(np.clip(abs(np.dot(base, moving)), 0.0, 1.0)))
+-    return float(180.0 - plane_angle)
++    return 180.0 - vector_angle(base, moving)
+diff --git a/foundationpose/make_desk_lamp_masks.py b/foundationpose/make_desk_lamp_masks.py
+index 5ac224e..39697cb 100644
+--- a/foundationpose/make_desk_lamp_masks.py
++++ b/foundationpose/make_desk_lamp_masks.py
+@@ -9,27 +9,120 @@ from pathlib import Path
+ import numpy as np
+ 
+ 
+-def select_boxes(image, names):
++# 박스를 그릴 때 쓰는 색. **마스크 미리보기(preview.png)와 같은 값**이어야
++# 한다. 예전에는 base 가 여기서는 주황, 미리보기에서는 파랑이라 사람이 두
++# 화면을 대조할 수 없었다.
++BOX_COLORS = {"base": "#1464ff", "support": "#28d228", "head": "#f0281e",
++              "moving_link": "#f0281e"}
++
++
++def grabcut_box(image, box):
++    """수동 박스 안의 전경을 로컬 OpenCV로 분리한다."""
++    import cv2
++
++    rgb = np.asarray(image)
++    height, width = rgb.shape[:2]
++    x0, y0, x1, y1 = map(int, box)
++    x0, x1 = sorted((max(0, x0), min(width, x1)))
++    y0, y1 = sorted((max(0, y0), min(height, y1)))
++    if x1 - x0 < 3 or y1 - y0 < 3:
++        raise ValueError("선택 박스가 너무 작습니다")
++    mask = np.zeros((height, width), np.uint8)
++    background = np.zeros((1, 65), np.float64)
++    foreground = np.zeros((1, 65), np.float64)
++    cv2.grabCut(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), mask,
++                (x0, y0, x1 - x0, y1 - y0), background, foreground, 5,
++                cv2.GC_INIT_WITH_RECT)
++    result = (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD)
++    result[:y0] = False
++    result[y1:] = False
++    result[:, :x0] = False
++    result[:, x1:] = False
++    # 가느다란 Arm은 GrabCut이 전부 배경으로 지우기도 한다. 사용자가 직접
++    # 지정한 박스가 최후의 안전장치다. 0픽셀로 추적기를 죽이는 것보다 박스
++    # 안의 깊이점을 FoundationPose가 거르게 두는 편이 낫다.
++    if result.sum() < 500:
++        result[y0:y1, x0:x1] = True
++    return result
++
++
++def keep_small_box_parts(masks, boxes):
++    """겹친 픽셀은 더 작고 구체적인 선택 박스 쪽에 남긴다."""
++    claimed = np.zeros_like(next(iter(masks.values())), dtype=bool)
++    output = {}
++    for name in sorted(masks, key=lambda key: ((boxes[key][2] - boxes[key][0])
++                                                * (boxes[key][3] - boxes[key][1]))):
++        output[name] = masks[name] & ~claimed
++        claimed |= output[name]
++    return output
++
++
++def _legend_path(explicit):
++    """부위 이름표 그림을 찾는다. --legend > 환경변수 > 없음."""
++    import os
++
++    for candidate in (explicit, os.environ.get("PIVOT_PART_LEGEND")):
++        if candidate:
++            path = Path(candidate).expanduser()
++            if path.is_file():
++                return path
++            print(f"[마스크] 이름표 그림이 없다: {path}")
++    return None
++
++
++def select_boxes(image, names, legend=None):
++    """사람이 부위마다 박스를 그린다. 옆에 **부위 이름표 그림**을 띄운다.
++
++    이름표가 없으면 화면에 "1/3 base" 라는 글자만 나오고, 어느 덩어리가
++    base 인지 알려 주는 것이 아무것도 없다. 여기서 이름을 틀리면 예외도
++    경고도 없이 FoundationPose 가 엉뚱한 부위를 추적하고, PIVOT 은 그
++    각도를 그대로 믿는다 (my_work/NAMING.md 의 사고와 같은 구조).
++
++    이름표는 tools/make_part_legend.py 가 배달물 메시에서 굽는다.
++    """
+     import tkinter as tk
+-    from PIL import ImageTk
++    from PIL import Image, ImageTk
+ 
+     scale = min(1040 / image.width, 585 / image.height, 1.0)
+     shown = image.resize((round(image.width * scale), round(image.height * scale)))
+     root = tk.Tk()
+-    root.title("SAM 램프 박스 선택")
++    root.title("SAM 램프 박스 선택 — 오른쪽 이름표를 보고 그리세요")
+     photo = ImageTk.PhotoImage(shown)
+-    canvas = tk.Canvas(root, width=shown.width, height=shown.height,
++
++    row = tk.Frame(root)
++    row.pack()
++    canvas = tk.Canvas(row, width=shown.width, height=shown.height,
+                        cursor="cross")
+     canvas.create_image(0, 0, image=photo, anchor="nw")
+-    canvas.pack()
+-    label = tk.Label(root, font=("Sans", 14, "bold"))
++    canvas.pack(side="left")
++    legend_photo = None
++    if legend is not None:
++        legend_image = Image.open(legend).convert("RGB")
++        wide = min(560 / legend_image.width, shown.height / legend_image.height, 1.0)
++        legend_image = legend_image.resize(
++            (round(legend_image.width * wide), round(legend_image.height * wide)))
++        legend_photo = ImageTk.PhotoImage(legend_image)
++        tk.Label(row, image=legend_photo, borderwidth=2,
++                 relief="groove").pack(side="left", padx=(8, 0))
++    else:
++        tk.Label(row, width=40, justify="left", wraplength=300,
++                 fg="#a00000", font=("Sans", 11),
++                 text="부위 이름표 그림이 없습니다.\n"
++                      "tools/make_part_legend.py 로 구운 뒤\n"
++                      "PIVOT_PART_LEGEND 로 알려 주세요.\n\n"
++                      "이름을 틀리면 조용히 틀린 각도가 나옵니다."
++                 ).pack(side="left", padx=(8, 0))
++
++    label = tk.Label(root, font=("Sans", 16, "bold"))
+     label.pack(pady=4)
+     boxes, current, start = [], None, None
+-    colors = ("#ff6414", "#28d228", "#f0281e")
++    colors = tuple(BOX_COLORS.get(n, "#808080") for n in names)
+ 
+     def update_label():
+-        label.config(text=f"{len(boxes) + 1}/3 {names[len(boxes)]}: "
+-                          "왼쪽 드래그 후 확정")
++        name = names[len(boxes)]
++        label.config(text=f"{len(boxes) + 1}/{len(names)}  {name}  "
++                          "— 이 색으로 칠해진 부위를 왼쪽에서 드래그",
++                     fg=colors[len(boxes)])
+ 
+     def press(event):
+         nonlocal start, current
+@@ -82,67 +175,64 @@ def main():
+     parser.add_argument("output", type=Path)
+     parser.add_argument("--sam3-root", type=Path, required=True)
+     parser.add_argument("--manual", action="store_true")
++    parser.add_argument("--legend", default=None,
++                        help="부위 이름표 그림 (tools/make_part_legend.py 산출). "
++                             "생략하면 환경변수 PIVOT_PART_LEGEND 를 본다")
+     args = parser.parse_args()
+     args.output.mkdir(parents=True, exist_ok=True)
+ 
+-    import torch
+     from PIL import Image
+ 
+-    sys.path.insert(0, str(args.sam3_root.resolve()))
+-    from sam3.model.sam3_image_processor import Sam3Processor
+-    from sam3.model_builder import build_sam3_image_model
+-
+     image = Image.open(args.image).convert("RGB")
+-    boxes = (select_boxes(image, ("base", "support", "head"))
++    boxes = (select_boxes(image, ("base", "support", "head"),
++                          _legend_path(args.legend))
+              if args.manual else None)
+-    processor = Sam3Processor(build_sam3_image_model(), confidence_threshold=0.05)
+-
+-    def best(*prompts):
+-        for prompt in prompts:
+-            state = processor.set_text_prompt(prompt, processor.set_image(image))
+-            scores = state["scores"].float().cpu().numpy()
+-            if len(scores):
+-                index = int(np.argmax(scores))
+-                return (state["masks"][index, 0].cpu().numpy().astype(bool),
+-                        float(scores[index]), prompt)
+-        raise RuntimeError(f"SAM3 found no mask for {prompts!r}")
+-
+-    def from_box(name):
+-        x0, y0, x1, y1 = boxes[name]
+-        box = [(x0 + x1) / (2 * image.width),
+-               (y0 + y1) / (2 * image.height),
+-               (x1 - x0) / image.width, (y1 - y0) / image.height]
+-        state = processor.add_geometric_prompt(
+-            box, True, processor.set_image(image))
+-        scores = state["scores"].float().cpu().numpy()
+-        if not len(scores):
+-            raise RuntimeError(f"SAM3 found no mask in the {name} box")
+-        index = int(np.argmax(scores))
+-        mask = state["masks"][index, 0].cpu().numpy().astype(bool)
+-        region = np.zeros(mask.shape, dtype=bool)
+-        region[round(y0):round(y1), round(x0):round(x1)] = True
+-        return mask & region, float(scores[index]), "manual box"
+-
+-    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+-        if boxes is None:
++    if boxes is not None:
++        raw_masks = {name: grabcut_box(image, boxes[name])
++                     for name in ("base", "support", "head")}
++        masks = keep_small_box_parts(raw_masks, boxes)
++        masks = {name: (mask if mask.sum() >= 500 else raw_masks[name])
++                 for name, mask in masks.items()}
++        base, support, head = (masks[name]
++                               for name in ("base", "support", "head"))
++        base_score = head_score = whole_score = 1.0
++        base_prompt = head_prompt = whole_prompt = "manual GrabCut box"
++    else:
++        import torch
++        sys.path.insert(0, str(args.sam3_root.resolve()))
++        from sam3.model.sam3_image_processor import Sam3Processor
++        from sam3.model_builder import build_sam3_image_model
++        processor = Sam3Processor(build_sam3_image_model(), confidence_threshold=0.05)
++
++        def best(*prompts):
++            for prompt in prompts:
++                state = processor.set_text_prompt(prompt, processor.set_image(image))
++                scores = state["scores"].float().cpu().numpy()
++                if len(scores):
++                    index = int(np.argmax(scores))
++                    return (state["masks"][index, 0].cpu().numpy().astype(bool),
++                            float(scores[index]), prompt)
++            raise RuntimeError(f"SAM3 found no mask for {prompts!r}")
++
++        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+             base, base_score, base_prompt = best("lamp base", "desk lamp base")
+             head, head_score, head_prompt = best(
+                 "lamp light bar", "lamp shade", "lamp head")
+-            whole, whole_score, whole_prompt = best("lamp support", "desk lamp")
++            whole, whole_score, whole_prompt = best("desk lamp", "lamp")
+             base &= whole
+             head &= whole & ~base
+             support = whole & ~(base | head)
+-        else:
+-            base, base_score, base_prompt = from_box("base")
+-            support, whole_score, whole_prompt = from_box("support")
+-            head, head_score, head_prompt = from_box("head")
+-            support &= ~base
+-            head &= ~(base | support)
+     masks = {"base": base, "support": support, "head": head}
+     pixels = {name: int(mask.sum()) for name, mask in masks.items()}
+-    if (any(count < 1000 for count in pixels.values())
++    min_pixels = 500 if boxes is not None else 1000
++    if (any(count < min_pixels for count in pixels.values())
+             or (boxes is None and whole.mean() > 0.3)):
+-        raise RuntimeError(f"suspicious lamp masks: {pixels}")
++        raise RuntimeError(
++            f"suspicious lamp masks: {pixels}\n"
++            "  SAM3 의 글자 프롬프트가 부위를 못 갈랐다 (0 픽셀인 부위가 있으면\n"
++            "  그 부위는 아예 안 잡힌 것이다). 사람이 박스를 그리는 쪽으로 가라:\n"
++            "    make_desk_lamp_masks.py ... --manual --legend <이름표.png>\n"
++            "  런처에서는 setup/experiment.conf 의 MANUAL_MASK=1 을 켜면 된다.")
+ 
+     view = np.asarray(image).copy()
+     colors = {"base": (20, 100, 255), "support": (40, 210, 40),
+@@ -153,7 +243,7 @@ def main():
+                       + 0.65 * np.asarray(colors[name])).astype(np.uint8)
+     Image.fromarray(view).save(args.output / "preview.png")
+     summary = {
+-        "method": ("SAM3 manual box masks" if boxes is not None else
++        "method": ("manual OpenCV GrabCut masks" if boxes is not None else
+                    "SAM3 text masks: support = whole lamp - base - head"),
+         "prompts": {"base": base_prompt, "head": head_prompt,
+                     "whole": whole_prompt},
+diff --git a/foundationpose/make_laptop_masks.py b/foundationpose/make_laptop_masks.py
+index 471ade0..c9939c3 100644
+--- a/foundationpose/make_laptop_masks.py
++++ b/foundationpose/make_laptop_masks.py
+@@ -8,12 +8,15 @@ from pathlib import Path
+ 
+ import numpy as np
+ 
++from make_desk_lamp_masks import select_boxes
++
+ 
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("image", type=Path)
+     parser.add_argument("output", type=Path)
+     parser.add_argument("--sam3-root", type=Path, required=True)
++    parser.add_argument("--manual", action="store_true")
+     args = parser.parse_args()
+     args.output.mkdir(parents=True, exist_ok=True)
+ 
+@@ -25,6 +28,8 @@ def main():
+     from sam3.model_builder import build_sam3_image_model
+ 
+     image = Image.open(args.image).convert("RGB")
++    boxes = (select_boxes(image, ("base", "moving_link"))
++             if args.manual else None)
+     processor = Sam3Processor(build_sam3_image_model(), confidence_threshold=0.05)
+ 
+     def best(*prompts):
+@@ -37,15 +42,36 @@ def main():
+                         float(scores[index]), prompt)
+         raise RuntimeError(f"SAM3 found no mask for {prompts!r}")
+ 
++    def from_box(name):
++        x0, y0, x1, y1 = boxes[name]
++        box = [(x0 + x1) / (2 * image.width),
++               (y0 + y1) / (2 * image.height),
++               (x1 - x0) / image.width, (y1 - y0) / image.height]
++        state = processor.add_geometric_prompt(
++            box, True, processor.set_image(image))
++        scores = state["scores"].float().cpu().numpy()
++        if not len(scores):
++            raise RuntimeError(f"SAM3 found no mask in the {name} box")
++        index = int(np.argmax(scores))
++        mask = state["masks"][index, 0].cpu().numpy().astype(bool)
++        region = np.zeros(mask.shape, dtype=bool)
++        region[round(y0):round(y1), round(x0):round(x1)] = True
++        return mask & region, float(scores[index]), "manual box"
++
+     with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+-        base, base_score, base_prompt = best("laptop base", "laptop keyboard")
+-        moving, moving_score, moving_prompt = best("laptop screen", "laptop lid")
++        if boxes is None:
++            base, base_score, base_prompt = best("laptop base", "laptop keyboard")
++            moving, moving_score, moving_prompt = best("laptop screen", "laptop lid")
++        else:
++            base, base_score, base_prompt = from_box("base")
++            moving, moving_score, moving_prompt = from_box("moving_link")
+ 
+     overlap = base & moving
+     base &= ~moving
+     masks = {"base": base, "moving_link": moving}
+     pixels = {name: int(mask.sum()) for name, mask in masks.items()}
+-    if any(count < 1000 for count in pixels.values()) or overlap.mean() > 0.05:
++    min_pixels = 500 if boxes is not None else 1000
++    if any(count < min_pixels for count in pixels.values()) or overlap.mean() > 0.05:
+         raise RuntimeError(f"suspicious automatic laptop masks: {pixels}")
+ 
+     view = np.asarray(image).copy()
+@@ -56,6 +82,8 @@ def main():
+                       + 0.65 * np.asarray(colors[name])).astype(np.uint8)
+     Image.fromarray(view).save(args.output / "preview.png")
+     summary = {
++        "method": ("SAM3 manual box masks" if boxes is not None
++                   else "SAM3 text masks"),
+         "prompts": {"base": base_prompt, "moving_link": moving_prompt},
+         "scores": {"base": base_score, "moving_link": moving_score},
+         "pixels": pixels,
+diff --git a/foundationpose/run_desk_lamp_live.py b/foundationpose/run_desk_lamp_live.py
+index 0b16d58..7d0624f 100644
+--- a/foundationpose/run_desk_lamp_live.py
++++ b/foundationpose/run_desk_lamp_live.py
+@@ -6,11 +6,12 @@ import json
+ import subprocess
+ import sys
+ import time
++from collections import deque
+ from pathlib import Path
+ 
+ import numpy as np
+ 
+-from axis_geometry import axis_geometry, lamp_joint_angles, pca_axis
++from axis_geometry import axis_geometry, lamp_joint_angles, part_mesh_path, pca_axis
+ 
+ 
+ PARTS = ("base", "support", "head")
+@@ -59,11 +60,11 @@ def write_status(path, result):
+     temporary.replace(path)
+ 
+ 
+-def configure_camera(config, serial, width, height):
++def configure_camera(config, serial, width, height, fps):
+     if serial:
+         config.enable_device(serial)
+-    config.enable_stream(rs.stream.depth, width, height, rs.format.z16, 30)
+-    config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, 30)
++    config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
++    config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+ 
+ 
+ def capture_and_mask(args):
+@@ -71,7 +72,7 @@ def capture_and_mask(args):
+         path.parent.mkdir(parents=True, exist_ok=True)
+ 
+     pipeline, config = rs.pipeline(), rs.config()
+-    configure_camera(config, args.serial, 1280, 720)
++    configure_camera(config, args.serial, args.width, args.height, args.fps)
+     pipeline.start(config)
+     align = rs.align(rs.stream.color)
+     try:
+@@ -91,11 +92,14 @@ def capture_and_mask(args):
+     finally:
+         pipeline.stop()
+ 
+-    subprocess.run([
+-        str(args.sam3_python), str(Path(__file__).with_name("make_desk_lamp_masks.py")),
++    command = [
++        str(Path(sys.executable) if args.manual_mask else args.sam3_python),
++        str(Path(__file__).with_name("make_desk_lamp_masks.py")),
+         str(args.init_rgb), str(args.masks), "--sam3-root", str(args.sam3_root),
+-        "--manual",
+-    ], check=True)
++    ]
++    if args.manual_mask:
++        command.append("--manual")
++    subprocess.run(command, check=True)
+ 
+ 
+ def parse_args():
+@@ -111,12 +115,29 @@ def parse_args():
+     parser.add_argument("--output", type=Path, required=True)
+     parser.add_argument("--calibration-path", type=Path)
+     parser.add_argument("--serial")
++    parser.add_argument("--width", type=int, default=1280)
++    parser.add_argument("--height", type=int, default=720)
++    parser.add_argument("--fps", type=int, default=30)
++    parser.add_argument("--angle-window", type=int, default=10,
++                        help="moving-average window for reported angles")
+     parser.add_argument("--max-frames", type=int, default=0)
+     parser.add_argument("--no-window", action="store_true")
++    parser.add_argument("--manual-mask", action="store_true",
++                        help="새 캡처 뒤 base/support/head 박스를 직접 지정")
+     parser.add_argument("--reuse-init", action="store_true")
++    parser.add_argument("--grasp-target", type=Path,
++                        help="PIVOT grasp_target.py JSON; overlay the "
++                             "recommended grasp on the live view")
++    parser.add_argument("--grasp-part", default="support",
++                        help="which part the grasp target belongs to")
++    parser.add_argument("--grasp-overlay", type=Path,
++                        default=Path.home() / "Desktop/PIVOT/my_work/grasp_overlay.py",
++                        help="path to PIVOT my_work/grasp_overlay.py")
+     args = parser.parse_args()
+     if not args.reuse_init and args.sam3_root is None:
+         parser.error("--sam3-root is required unless --reuse-init is used")
++    if args.angle_window < 1:
++        parser.error("--angle-window must be at least 1")
+     return args
+ 
+ 
+@@ -138,6 +159,20 @@ def main():
+     if not args.reuse_init:
+         capture_and_mask(args)
+ 
++    grasp_overlay = grasp_target = None
++    if args.grasp_target:
++        # sys.path 에 PIVOT my_work 를 넣지 않는다. 그 폴더에는 hardware.py
++        # 처럼 흔한 이름이 있어 FoundationPose 쪽 import 를 가릴 수 있다.
++        import importlib.util
++        spec = importlib.util.spec_from_file_location(
++            "pivot_grasp_overlay", args.grasp_overlay)
++        grasp_overlay = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(grasp_overlay)
++        grasp_target = grasp_overlay.load_target(args.grasp_target)
++        print(f"[grasp] {args.grasp_part}: "
++              f"{1000*grasp_target['width_m']:.1f} mm wide, "
++              f"open {1000*grasp_target['opening_m']:.1f} mm")
++
+     intr = json.loads(args.intrinsics.read_text())
+     intrinsics = np.float32([
+         [intr["fx"], 0, intr["cx"]],
+@@ -153,7 +188,7 @@ def main():
+ 
+     meshes = {
+         part: trimesh.load_mesh(
+-            args.mesh_dir / f"{part}_metric_watertight.ply", process=False)
++            part_mesh_path(args.mesh_dir, part), process=False)
+         for part in PARTS
+     }
+     boxes = {part: trimesh.bounds.oriented_bounds(meshes[part])
+@@ -163,8 +198,8 @@ def main():
+                          cv2.IMREAD_GRAYSCALE) > 0
+         for part in PARTS
+     }
+-    masks["head"] &= ~masks["support"]
+-    masks["base"] &= ~(masks["support"] | masks["head"])
++    # make_desk_lamp_masks.py가 작은 선택 박스를 우선해 이미 겹침을 정리한다.
++    # 여기서 고정된 이름 순서로 다시 빼면 가느다란 support가 0픽셀이 된다.
+     if any((masks[part] & (init_depth > 0)).sum() <= 100 for part in PARTS):
+         raise RuntimeError("not enough valid masked depth for lamp registration")
+ 
+@@ -209,9 +244,10 @@ def main():
+         axes["base_inward"] *= -1
+ 
+     pipeline, config = rs.pipeline(), rs.config()
+-    configure_camera(config, args.serial, 1280, 720)
++    configure_camera(config, args.serial, args.width, args.height, args.fps)
+     pipeline.start(config)
+     align, last, view = rs.align(rs.stream.color), {}, init_bgr
++    angle_history = deque(maxlen=args.angle_window)
+     try:
+         for _ in range(20):
+             align.process(pipeline.wait_for_frames(10000))
+@@ -232,7 +268,9 @@ def main():
+                 tracked[part] = trackers[part].track_one(
+                     rgb, part_depth, intrinsics, iteration=1)
+             poses = tracked
+-            angles = lamp_joint_angles(poses, axes)
++            raw_angles = lamp_joint_angles(poses, axes)
++            angle_history.append(raw_angles)
++            angles = np.mean(angle_history, axis=0)
+             view = bgr.copy()
+             for part in PARTS:
+                 to_origin, extents = boxes[part]
+@@ -241,6 +279,11 @@ def main():
+                     poses[part] @ np.linalg.inv(to_origin),
+                     np.array((-extents / 2, extents / 2)), COLORS[part], 2,
+                 )
++            if grasp_target is not None:
++                # 메시를 process=False 로 읽으므로 poses[part] 가 곧
++                # 카메라 <- 원본 메시 좌표다. 추가 변환이 필요 없다.
++                view = grasp_overlay.draw(
++                    view, grasp_target, poses[args.grasp_part], intrinsics)
+             cv2.rectangle(view, (12, 12), (510, 112), (0, 0, 0), -1)
+             cv2.putText(view, f"base-support: {angles[0]:7.2f} deg",
+                         (28, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.85,
+@@ -252,10 +295,28 @@ def main():
+                 "status": "tracking", "timestamp_s": time.time(),
+                 "frame": frame, "base_support_deg": angles[0],
+                 "support_head_deg": angles[1],
++                "base_support_raw_deg": raw_angles[0],
++                "support_head_raw_deg": raw_angles[1],
++                "angle_window": len(angle_history),
++                "X_CO": poses[args.grasp_part].tolist(),
++                "X_C_parts": {part: poses[part].tolist() for part in PARTS},
++                "pose_part": args.grasp_part,
+             }
++            if grasp_target is not None:
++                geometry = grasp_overlay.target_geometry(
++                    grasp_target, poses[args.grasp_part])
++                pixels, visible = grasp_overlay.project(
++                    intrinsics, geometry["point"][None, :])
++                last["grasp_pixel"] = ([float(v) for v in pixels[0]]
++                                       if visible[0] else None)
++                last["grasp_point_cam_m"] = [float(v) for v in geometry["point"]]
+             if args.calibration_path:
+                 last["calibration_path"] = str(args.calibration_path.resolve())
+             write_status(args.output / "latest.json", last)
++            if frame % 3 == 0:
++                temporary = args.output / "latest.tmp.jpg"
++                cv2.imwrite(str(temporary), view)
++                temporary.replace(args.output / "latest.jpg")
+             if not args.no_window:
+                 cv2.imshow("FoundationPose Lamp Angles | Q: quit", view)
+                 if cv2.waitKey(1) & 0xFF in (ord("q"), ord("Q"), 27):
+diff --git a/foundationpose/run_laptop_live.py b/foundationpose/run_laptop_live.py
+index 4afcbc3..c0439ca 100644
+--- a/foundationpose/run_laptop_live.py
++++ b/foundationpose/run_laptop_live.py
+@@ -5,29 +5,31 @@ import argparse
+ import json
+ import subprocess
+ import sys
++import time
++from collections import deque
+ from pathlib import Path
+ 
+ import numpy as np
+ 
+-from axis_geometry import laptop_opening_angle, pca_axis
++from axis_geometry import laptop_opening_angle, part_mesh_path, pca_axis
+ 
+ 
+ PARTS = ("base", "moving_link")
+ COLORS = {"base": (255, 100, 20), "moving_link": (30, 40, 240)}
+ 
+ 
+-def configure_camera(config, serial):
++def configure_camera(config, serial, width, height, fps):
+     if serial:
+         config.enable_device(serial)
+-    config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+-    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
++    config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
++    config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+ 
+ 
+ def capture_and_mask(args):
+     for path in (args.init_rgb, args.init_depth, args.intrinsics):
+         path.parent.mkdir(parents=True, exist_ok=True)
+     pipeline, config = rs.pipeline(), rs.config()
+-    configure_camera(config, args.serial)
++    configure_camera(config, args.serial, args.width, args.height, args.fps)
+     pipeline.start(config)
+     align = rs.align(rs.stream.color)
+     try:
+@@ -46,10 +48,13 @@ def capture_and_mask(args):
+         }, indent=2) + "\n")
+     finally:
+         pipeline.stop()
+-    subprocess.run([
++    command = [
+         str(args.sam3_python), str(Path(__file__).with_name("make_laptop_masks.py")),
+         str(args.init_rgb), str(args.masks), "--sam3-root", str(args.sam3_root),
+-    ], check=True)
++    ]
++    if args.manual_mask:
++        command.append("--manual")
++    subprocess.run(command, check=True)
+ 
+ 
+ def write_status(path, result):
+@@ -70,12 +75,24 @@ def parse_args():
+     parser.add_argument("--masks", type=Path, required=True)
+     parser.add_argument("--output", type=Path, required=True)
+     parser.add_argument("--serial")
++    parser.add_argument("--width", type=int, default=640)
++    parser.add_argument("--height", type=int, default=480)
++    parser.add_argument("--fps", type=int, default=30)
++    parser.add_argument("--angle-window", type=int, default=10)
+     parser.add_argument("--max-frames", type=int, default=0)
+     parser.add_argument("--no-window", action="store_true")
++    parser.add_argument("--manual-mask", action="store_true",
++                        help="새 캡처 뒤 base/moving_link 박스를 직접 지정")
+     parser.add_argument("--reuse-init", action="store_true")
++    parser.add_argument("--grasp-target", type=Path)
++    parser.add_argument("--grasp-part", default="base", choices=PARTS)
++    parser.add_argument("--grasp-overlay", type=Path,
++                        default=Path.home() / "Desktop/PIVOT/my_work/grasp_overlay.py")
+     args = parser.parse_args()
+     if not args.reuse_init and args.sam3_root is None:
+         parser.error("--sam3-root is required unless --reuse-init is used")
++    if args.angle_window < 1:
++        parser.error("--angle-window must be at least 1")
+     return args
+ 
+ 
+@@ -97,6 +114,18 @@ def main():
+     if not args.reuse_init:
+         capture_and_mask(args)
+ 
++    grasp_overlay = grasp_target = None
++    if args.grasp_target:
++        import importlib.util
++        spec = importlib.util.spec_from_file_location(
++            "pivot_grasp_overlay", args.grasp_overlay)
++        grasp_overlay = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(grasp_overlay)
++        grasp_target = grasp_overlay.load_target(args.grasp_target)
++        print(f"[grasp] {args.grasp_part}: "
++              f"{1000*grasp_target['width_m']:.1f} mm wide, "
++              f"open {1000*grasp_target['opening_m']:.1f} mm")
++
+     intr = json.loads(args.intrinsics.read_text())
+     intrinsics = np.float32([
+         [intr["fx"], 0, intr["cx"]],
+@@ -110,13 +139,15 @@ def main():
+     init_depth = np.load(args.init_depth).astype(np.float32)
+     init_depth[(init_depth < 0.15) | (init_depth > 3.0)] = 0
+ 
+-    base_mesh = args.mesh_dir / "base_metric_watertight.ply"
+-    if not base_mesh.exists():
+-        base_mesh = args.mesh_dir / "base_metric_watertight (1).ply"
+     mesh_files = {
+-        "base": base_mesh,
+-        "moving_link": args.mesh_dir / "moving_link_metric_watertight.ply",
++        part: part_mesh_path(args.mesh_dir, part) for part in PARTS
+     }
++    if (grasp_target is not None
++            and Path(grasp_target["mesh"]).resolve()
++            != mesh_files[args.grasp_part].resolve()):
++        raise RuntimeError(
++            "grasp target mesh와 FoundationPose mesh가 다릅니다: "
++            f"{grasp_target['mesh']} != {mesh_files[args.grasp_part]}")
+     meshes = {part: trimesh.load_mesh(mesh_files[part], process=False)
+               for part in PARTS}
+     masks = {part: cv2.imread(str(args.masks / f"{part}.png"), 0) > 0
+@@ -148,9 +179,10 @@ def main():
+                        np.array((-extents / 2, extents / 2)))
+ 
+     pipeline, config = rs.pipeline(), rs.config()
+-    configure_camera(config, args.serial)
++    configure_camera(config, args.serial, args.width, args.height, args.fps)
+     pipeline.start(config)
+     align, frame, last, view = rs.align(rs.stream.color), 0, {}, init_bgr
++    angle_history = deque(maxlen=args.angle_window)
+     try:
+         for _ in range(20):
+             align.process(pipeline.wait_for_frames(10000))
+@@ -164,17 +196,35 @@ def main():
+             depth[(depth < 0.15) | (depth > 3.0)] = 0
+             poses = {part: trackers[part].track_one(
+                 rgb, depth, intrinsics, iteration=1) for part in PARTS}
+-            angle = laptop_opening_angle(poses, normals)
++            raw_angle = laptop_opening_angle(poses, normals)
++            angle_history.append(raw_angle)
++            angle = float(np.mean(angle_history))
+             view = bgr.copy()
+             for part in PARTS:
+                 transform, bounds = boxes[part]
+                 view = draw_posed_3d_box(
+                     intrinsics, view, poses[part] @ transform, bounds,
+                     COLORS[part], 2)
++            if grasp_target is not None:
++                view = grasp_overlay.draw(
++                    view, grasp_target, poses[args.grasp_part], intrinsics)
+             cv2.rectangle(view, (12, 12), (430, 72), (0, 0, 0), -1)
+             cv2.putText(view, f"laptop opening: {angle:7.2f} deg", (28, 52),
+                         cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 255, 255), 2)
+-            last = {"frame": frame, "opening_angle_deg": angle}
++            last = {
++                "status": "tracking", "timestamp_s": time.time(),
++                "frame": frame, "opening_angle_deg": angle,
++                "opening_angle_raw_deg": raw_angle,
++                "angle_window": len(angle_history),
++            }
++            if grasp_target is not None:
++                geometry = grasp_overlay.target_geometry(
++                    grasp_target, poses[args.grasp_part])
++                pixels, visible = grasp_overlay.project(
++                    intrinsics, geometry["point"][None, :])
++                last["grasp_pixel"] = ([float(v) for v in pixels[0]]
++                                       if visible[0] else None)
++                last["grasp_point_cam_m"] = [float(v) for v in geometry["point"]]
+             write_status(args.output / "latest.json", last)
+             if not args.no_window:
+                 cv2.imshow("FoundationPose Laptop Opening | Q: quit", view)
+diff --git a/foundationpose/test_axis_geometry.py b/foundationpose/test_axis_geometry.py
+index fed9141..60c84fc 100644
+--- a/foundationpose/test_axis_geometry.py
++++ b/foundationpose/test_axis_geometry.py
+@@ -22,14 +22,20 @@ def main():
+ 
+     laptop_poses = {"base": identity.copy(), "moving_link": identity.copy()}
+     normals = {"base": np.array([0.0, 0.0, 1.0]),
+-               "moving_link": np.array([0.0, 0.0, 1.0])}
+-    assert np.isclose(laptop_opening_angle(laptop_poses, normals), 180.0)
++               "moving_link": np.array([0.0, 0.0, -1.0])}
++    assert np.isclose(laptop_opening_angle(laptop_poses, normals), 0.0)
+     laptop_poses["moving_link"][:3, :3] = np.array([
+-        [0.0, 0.0, 1.0],
++        [1.0, 0.0, 0.0],
++        [0.0, 0.0, -1.0],
+         [0.0, 1.0, 0.0],
+-        [-1.0, 0.0, 0.0],
+     ])
+     assert np.isclose(laptop_opening_angle(laptop_poses, normals), 90.0)
++    laptop_poses["moving_link"][:3, :3] = np.array([
++        [1.0, 0.0, 0.0],
++        [0.0, -1.0, 0.0],
++        [0.0, 0.0, -1.0],
++    ])
++    assert np.isclose(laptop_opening_angle(laptop_poses, normals), 180.0)
+     print("FoundationPose axis geometry check passed")
+ 
+ 
+diff --git a/pivot/aft_tare.py b/pivot/aft_tare.py
+index 5b292d7..be51bbb 100644
+--- a/pivot/aft_tare.py
++++ b/pivot/aft_tare.py
+@@ -12,12 +12,21 @@ import numpy as np
+ class Aft200Sensor:
+     """Read holding registers 304--309 from the AFT200 controller."""
+ 
+-    def __init__(self, host="192.168.50.51", hz=50.0, timeout_s=2.0):
++    # 센서 본체 축과 그리퍼/PIVOT 축이 실제 장착에서 일치한다.
++    SENSOR_TO_PIVOT = np.eye(6, dtype=float)
++
++    def __init__(self, host="192.168.50.51", hz=50.0, timeout_s=2.0,
++                 sensor_to_pivot=None):
+         self.host = host
+         self.hz = float(hz)
+         self.timeout_s = float(timeout_s)
++        self.sensor_to_pivot = np.asarray(
++            self.SENSOR_TO_PIVOT if sensor_to_pivot is None else sensor_to_pivot,
++            dtype=float)
+         if self.hz <= 0:
+             raise ValueError("sampling frequency must be positive")
++        if self.sensor_to_pivot.shape != (6, 6):
++            raise ValueError("sensor-to-PIVOT transform must be 6x6")
+         self.transaction_id = 1
+ 
+     @staticmethod
+@@ -40,7 +49,11 @@ class Aft200Sensor:
+         if (response_id, protocol_id, unit_id, body[:2]) != expected:
+             raise RuntimeError("unexpected AFT200 Modbus response: " + (header + body).hex())
+         self.transaction_id = transaction_id % 65535 + 1
+-        return np.asarray(struct.unpack(">6h", body[2:14]), dtype=float) * 0.02
++        # 변환 전 레지스터도 남겨 배율 문제를 평균 렌치와 구분한다.
++        self.last_registers = list(struct.unpack(">6h", body[2:14]))
++        self.last_sample_time_s = time.time()
++        sensor_wrench = np.asarray(self.last_registers, dtype=float) * 0.02
++        return self.sensor_to_pivot @ sensor_wrench
+ 
+     def read_raw(self, n_samples):
+         n_samples = int(n_samples)
+diff --git a/pivot/rb5_ui.py b/pivot/rb5_ui.py
+index f14a5dc..bf2dd64 100644
+--- a/pivot/rb5_ui.py
++++ b/pivot/rb5_ui.py
+@@ -2,14 +2,19 @@
+ """PIVOT용 AFT200 모니터와 Robotiq 2F-85 통합 UI."""
+ 
+ import argparse
++import csv
++from datetime import datetime
+ import glob
++import json
+ import os
+ from pathlib import Path
+ import queue
++import re
+ import shutil
+ import subprocess
+ import tempfile
+ import threading
++import time
+ import tkinter as tk
+ from tkinter import font, messagebox, ttk
+ 
+@@ -24,6 +29,27 @@ except ImportError:  # 직접 `python pivot/rb5_ui.py`로 실행할 때
+ AXES = ("Fx", "Fy", "Fz", "Tx", "Ty", "Tz")
+ AXIS_LABELS = ("Fx (N)", "Fy (N)", "Fz (N)",
+                "Tx (N·m)", "Ty (N·m)", "Tz (N·m)")
++CSV_HEADER = ("timestamp_s", "Fx_N", "Fy_N", "Fz_N",
++              "Tx_Nm", "Ty_Nm", "Tz_Nm")
++DEFAULT_CSV_PATH = (Path.home() / "Desktop" / "Latch Measurement" /
++                    "Latch Measurement.csv")
++
++
++def open_measurement_csv(path):
++    path = Path(path)
++    path.parent.mkdir(parents=True, exist_ok=True)
++    new = not path.is_file() or path.stat().st_size == 0
++    handle = path.open("a", newline="", buffering=1)
++    writer = csv.writer(handle)
++    if new:
++        writer.writerow(CSV_HEADER)
++    return handle, writer
++
++
++def next_measurement_csv(path, now=None):
++    path = Path(path)
++    stamp = (now or datetime.now()).strftime("%Y%m%d_%H%M%S_%f")
++    return path.with_name(f"{path.stem}_{stamp}{path.suffix or '.csv'}")
+ 
+ 
+ def prepare_korean_font():
+@@ -65,7 +91,8 @@ class DisplayFilter:
+ 
+ 
+ class App(tk.Tk):
+-    def __init__(self, host, port, tare_path, ui_font):
++    def __init__(self, host, port, tare_path, ui_font, status_file=None,
++                 csv_path=DEFAULT_CSV_PATH):
+         super().__init__()
+         self.title("PIVOT · RB5 AFT200 + Robotiq 2F-85")
+         self.geometry("980x760")
+@@ -92,6 +119,19 @@ class App(tk.Tk):
+ 
+         self.host = host
+         self.tare_path = tare_path
++        self.status_file = Path(status_file) if status_file else None
++        self.csv_path = Path(csv_path)
++        self.current_csv_path = None
++        self.csv_file = self.csv_writer = None
++        self.command_file = (self.status_file.with_name("hardware_command.json")
++                             if self.status_file else None)
++        self.command_started_at_s = time.time()
++        self.last_command_id = None
++        self.command_status = "대기"
++        self.gripper_busy = False
++        self.gripper_sample = None
++        self.headless = False
++        self.last_status_write = 0.0
+         self.samples = queue.SimpleQueue()
+         self.stop_event = threading.Event()
+         self.display_filter = DisplayFilter()
+@@ -100,6 +140,7 @@ class App(tk.Tk):
+         self.sensor_status = tk.StringVar(value="AFT 연결: 확인 중")
+         self.pivot_tare_status = tk.StringVar()
+         self.gripper_status = tk.StringVar(value="연결 안 됨")
++        self.recording_status = tk.StringVar(value=f"기록 대기: {self.csv_path.parent}")
+         self.raw_vars = [tk.StringVar(value="-") for _ in AXES]
+         self.filtered_vars = [tk.StringVar(value="-") for _ in AXES]
+         self.port = tk.StringVar(value=port)
+@@ -145,8 +186,15 @@ class App(tk.Tk):
+                       style="Filtered.TLabel").grid(row=row, column=2, pady=2)
+         ttk.Label(sensor, textvariable=self.pivot_tare_status, style="Header.TLabel").grid(
+             row=9, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 10))
+-        ttk.Button(sensor, text="PIVOT 타어 다시 읽기", command=self.refresh_pivot_tare).grid(
++        ttk.Button(sensor, text="PIVOT 영점 조정 다시 읽기", command=self.refresh_pivot_tare).grid(
+             row=9, column=3, sticky="e", padx=12, pady=(12, 10))
++        ttk.Label(sensor, textvariable=self.recording_status,
++                  style="Header.TLabel").grid(
++            row=10, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
++        ttk.Button(sensor, text="기록 시작", command=self.start_recording).grid(
++            row=10, column=2, sticky="e", padx=6, pady=(0, 10))
++        ttk.Button(sensor, text="기록 중지", command=self.stop_recording).grid(
++            row=10, column=3, sticky="e", padx=12, pady=(0, 10))
+ 
+         grip = ttk.LabelFrame(self, text="Robotiq 2F-85 · USB/RS485")
+         grip.pack(fill="x", padx=18, pady=10)
+@@ -179,7 +227,7 @@ class App(tk.Tk):
+ 
+         ttk.Label(self, style="Danger.TLabel", text=(
+             "센서 원값을 0으로 만들지 않습니다. PIVOT 측정 단계가 저장된 "
+-            "3방향 6축 타어를 자동으로 빼서 물체 렌치를 계산합니다."), wraplength=920).pack(
++            "3방향 6축 영점 조정값을 자동으로 빼서 물체 렌치를 계산합니다."), wraplength=920).pack(
+                 anchor="w", padx=22, pady=(8, 2))
+         ttk.Label(self, text="그리퍼 동작 전 손과 물체를 손가락 사이에서 치우세요.",
+                   style="Danger.TLabel").pack(anchor="w", padx=22, pady=(2, 10))
+@@ -192,7 +240,7 @@ class App(tk.Tk):
+                 for values in sensor.stream():
+                     if self.stop_event.is_set():
+                         return
+-                    self.samples.put(("sample", values))
++                    self.samples.put(("sample", (time.time(), values)))
+             except Exception as error:
+                 self.samples.put(("status", f"AFT 연결 오류: {error}"))
+                 self.stop_event.wait(1.0)
+@@ -204,25 +252,116 @@ class App(tk.Tk):
+                 if kind == "status":
+                     self.sensor_status.set(value)
+                     continue
++                timestamp, value = value
+                 filtered = self.display_filter.update(value)
++                if self.csv_writer is not None:
++                    self.csv_writer.writerow([f"{timestamp:.6f}", *map(float, value)])
+                 for variable, number in zip(self.raw_vars, value):
+                     variable.set(f"{number:.3f}")
+                 for variable, number in zip(self.filtered_vars, filtered):
+                     variable.set(f"{number:.3f}")
++                if self.status_file and time.monotonic() - self.last_status_write >= 0.1:
++                    self.last_status_write = time.monotonic()
++                    self.status_file.parent.mkdir(parents=True, exist_ok=True)
++                    payload = {
++                        "timestamp_s": time.time(), "raw": list(map(float, value)),
++                        "filtered": list(map(float, filtered)),
++                        "sensor": self.sensor_status.get(),
++                        "gripper": self.gripper_status.get(),
++                        "port": self.port.get(),
++                        "ports": list(self.port_box["values"]),
++                        "command_status": self.command_status,
++                        "last_command_id": self.last_command_id,
++                        "gripper_busy": self.gripper_busy,
++                        "gripper_sample": self.gripper_sample,
++                        "recording": self.csv_writer is not None,
++                        "csv_path": str(self.current_csv_path or self.csv_path.parent),
++                        "speed": int(self.speed.get()), "force": int(self.force.get()),
++                    }
++                    temporary = self.status_file.with_suffix(
++                        self.status_file.suffix + ".tmp")
++                    temporary.write_text(json.dumps(payload) + "\n")
++                    temporary.replace(self.status_file)
+         except queue.Empty:
+             pass
++        self.consume_command()
+         if not self.stop_event.is_set():
+             self.after(20, self.consume_samples)
+ 
++    def consume_command(self):
++        if not self.command_file or not self.command_file.is_file():
++            return
++        try:
++            # 모니터 재시작이 디스크에 남은 이전 구동 명령을 재실행하지 않게 한다.
++            if self.command_file.stat().st_mtime < self.command_started_at_s:
++                return
++            request = json.loads(self.command_file.read_text())
++            command_id = request.get("id")
++            if command_id == self.last_command_id:
++                return
++            self.last_command_id = command_id
++            action = request.get("action")
++            port = request.get("port")
++            speed, force = request.get("speed"), request.get("force")
++            if port is not None:
++                if not re.fullmatch(r"/dev/tty(?:USB|ACM)\d+", str(port)):
++                    raise ValueError("허용되지 않은 포트")
++                self.port.set(port)
++            if speed is not None:
++                self.speed.set(max(1, min(255, int(speed))))
++            if force is not None:
++                self.force.set(max(1, min(255, int(force))))
++            if action == "refresh_ports":
++                self.refresh_ports()
++                self.command_status = "포트 목록 새로고침 완료"
++            elif action == "reconnect":
++                self.connect_gripper("다시 연결")
++            elif action == "activate":
++                self.initialize_gripper("Reset + Activate")
++            elif action in {"open", "close"}:
++                self.move_gripper(action == "close", "닫기" if action == "close" else "열기")
++            elif action == "move_position":
++                self.move_gripper_position(request.get("position"))
++            elif action == "start_recording":
++                self.start_recording()
++            elif action == "stop_recording":
++                self.stop_recording()
++            else:
++                raise ValueError("알 수 없는 명령")
++        except Exception as error:
++            self.command_status = f"명령 거부: {error}"
++
++    def start_recording(self):
++        if self.csv_file is not None:
++            return
++        self.current_csv_path = next_measurement_csv(self.csv_path)
++        try:
++            self.csv_file, self.csv_writer = open_measurement_csv(self.current_csv_path)
++        except OSError as error:
++            self.current_csv_path = None
++            self.recording_status.set(f"기록 실패: {error}")
++            self.command_status = f"F/T CSV 기록 실패: {error}"
++            return
++        self.recording_status.set(f"기록 중: {self.current_csv_path.name}")
++        self.command_status = "F/T CSV 기록 시작"
++
++    def stop_recording(self):
++        if self.csv_file is None:
++            return
++        self.csv_file.close()
++        self.csv_file = self.csv_writer = None
++        self.recording_status.set(f"기록 완료: {self.current_csv_path.name}")
++        self.command_status = "F/T CSV 기록 중지"
++
+     def refresh_pivot_tare(self):
+         try:
+             table = TareTable.load(self.tare_path)
+             count = len(table.table)
+             label = "준비됨" if count == 3 else "불완전"
+             self.pivot_tare_status.set(
+-                f"밀도 추정용 PIVOT 6축 타어: {label} ({count}/3 방향)")
++                f"밀도 추정용 PIVOT 6축 영점 조정: {label} ({count}/3 방향)")
+         except Exception as error:
+-            self.pivot_tare_status.set(f"PIVOT 6축 타어 없음/오류: {error}")
++            self.pivot_tare_status.set(f"PIVOT 6축 영점 조정 없음/오류: {error}")
+ 
+     def refresh_ports(self):
+         ports = sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
+@@ -235,17 +374,30 @@ class App(tk.Tk):
+         return (f"활성={int(status['activated'])} · fault=0x{status['fault']:02X} · "
+                 f"위치={status['position']}")
+ 
+-    def run_gripper(self, action):
++    def run_gripper(self, action, label="그리퍼 명령"):
++        if self.gripper_busy:
++            self.command_status = f"{label} 거부: 이전 명령 실행 중"
++            return
++        self.gripper_busy = True
++        self.command_status = f"{label} 실행 중"
++
+         def worker():
+             try:
+                 status = action()
++                self.gripper_sample = dict(timestamp_s=time.time(), **status)
+                 self.after(0, self.gripper_status.set, self.status_text(status))
++                self.command_status = f"{label} 완료"
+             except Exception as error:
+                 self.after(0, self.gripper_status.set, "통신 실패")
+-                self.after(0, messagebox.showerror, "Robotiq 오류", str(error))
++                print(f"[Robotiq] {label} 실패: {error}", flush=True)
++                if not self.headless:
++                    self.after(0, messagebox.showerror, "Robotiq 오류", str(error))
++                self.command_status = f"{label} 실패: {error}"
++            finally:
++                self.gripper_busy = False
+         threading.Thread(target=worker, daemon=True).start()
+ 
+-    def connect_gripper(self):
++    def connect_gripper(self, label="다시 연결"):
+         self.gripper.port = self.port.get()
+         def connect():
+             status = self.gripper.connect()
+@@ -253,7 +405,7 @@ class App(tk.Tk):
+                 self.gripper_keepalive_started = True
+                 threading.Thread(target=self.gripper_keepalive, daemon=True).start()
+             return status
+-        self.run_gripper(connect)
++        self.run_gripper(connect, label)
+ 
+     def gripper_keepalive(self):
+         while not self.stop_event.wait(0.5):
+@@ -261,20 +413,37 @@ class App(tk.Tk):
+                 continue
+             try:
+                 status = self.gripper.status()
++                self.gripper_sample = dict(timestamp_s=time.time(), **status)
+                 self.after(0, self.gripper_status.set, self.status_text(status))
+             except Exception as error:
+                 self.after(0, self.gripper_status.set, f"통신 오류: {error}")
+ 
+-    def initialize_gripper(self):
+-        self.run_gripper(self.gripper.initialize)
++    def initialize_gripper(self, label="Reset + Activate"):
++        self.run_gripper(self.gripper.initialize, label)
+ 
+-    def move_gripper(self, close):
++    def move_gripper(self, close, label=None):
+         speed, force = int(self.speed.get()), int(self.force.get())
+         action = self.gripper.close_gripper if close else self.gripper.open
+-        self.run_gripper(lambda: action(speed, force))
++        self.run_gripper(lambda: action(speed, force),
++                         label or ("닫기" if close else "열기"))
++
++    def move_gripper_position(self, position):
++        """같은 개구의 빈 기준을 위해 실제 드라이버의 위치 지정 기능을 사용한다."""
++        if type(position) is not int or not 0 <= position <= 255:
++            raise ValueError("그리퍼 위치는 0..255 정수여야 합니다")
++        sample = self.gripper_sample
++        if (not sample or not 0 <= time.time() - sample["timestamp_s"] <= 2.
++                or not sample.get("activated") or sample.get("status") != 3
++                or sample.get("fault") != 0):
++            raise ValueError("최근의 활성·무고장 그리퍼 피드백이 필요합니다")
++        speed, force = int(self.speed.get()), int(self.force.get())
++        self.run_gripper(lambda: self.gripper.move(position, speed, force),
++                         f"위치 {position}")
+ 
+     def shutdown(self):
+         self.stop_event.set()
++        if self.csv_file is not None:
++            self.csv_file.close()
+         self.gripper.close()
+         self.destroy()
+ 
+@@ -284,8 +453,16 @@ def main():
+     parser.add_argument("--host", default="192.168.50.51")
+     parser.add_argument("--port", default="/dev/ttyUSB0")
+     parser.add_argument("--tare", default="calibration/aft_tare_current.json")
++    parser.add_argument("--status-file")
++    parser.add_argument("--csv", default=DEFAULT_CSV_PATH)
++    parser.add_argument("--headless", action="store_true")
+     args = parser.parse_args()
+-    App(args.host, args.port, args.tare, prepare_korean_font()).mainloop()
++    app = App(args.host, args.port, args.tare, prepare_korean_font(),
++              args.status_file, args.csv)
++    app.headless = args.headless
++    if args.headless:
++        app.withdraw()
++    app.mainloop()
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/pivot/tare_real.py b/pivot/tare_real.py
+index fd5f764..577fc60 100644
+--- a/pivot/tare_real.py
++++ b/pivot/tare_real.py
+@@ -1,5 +1,50 @@
+ #!/usr/bin/env python3
+-"""Plan safe RB5 paths and record empty Robotiq wrench in three orientations."""
++"""Plan safe RB5 paths and record empty Robotiq wrench in three orientations.
++
++언제 재나 — 세팅 때 한 번, 그 뒤로는 확인만
++------------------------------------------
++    --setup   3자세를 다 잰다. **실험 환경을 세팅할 때 한 번.**
++    --verify  기록된 자세 하나로만 돌아가 다시 읽고 그때와 비교한다.
++              차이가 문턱 안이면 세팅 때 값을 그대로 쓴다. 10초면 된다.
++
++왜 "예측"이 아니라 "확인"인가
++-----------------------------
++세팅 때 한 번 재고 그 뒤로는 계산으로 때우려면
++    raw(g) = 공구무게 * g + 영점치우침
++이 성립해야 한다. 실측 데이터로 맞춰 보면 **안 맞는다** — 라벨·순서를 어떻게
++바꿔도 잔차가 4.35 N 아래로 안 내려간다. 램프 전체 무게 5.60 N 의 78 % 다.
++반복오차가 0.02 N 인 것을 보면 잡음이 아니라 모형에 없는 계통 효과이고,
++센서 케이블 당김이 유력하다.
++
++자세별 표는 그 효과를 **모형화하지 않고 통째로 빼기** 때문에 문제가 안 된다.
++타어와 측정이 같은 자세면 그 4.35 N 이 양쪽에 똑같이 들어가 상쇄된다.
++모형으로 갈아타는 순간 그것이 오차로 튀어나온다. 그래서 예측하지 않고
++**같은 자세로 돌아가 다시 읽어** 드리프트만 확인한다.
++
++두 가지 방식
++------------
++기본     로봇이 스스로 세 자세로 이동한다. IK 가 푼 자세를 그대로 가므로
++         목표 중력방향과 정확히 맞는다.
++--manual 로봇에 **명령을 보내지 않는다.** 작업자가 직접교시(freedrive)로
++         팔을 세 자세로 옮기고, 이 프로그램은 관절각과 렌치를 **읽기만**
++         한다. 준비 과정에서 로봇이 스스로 움직이는 구간을 없애고 싶을 때.
++
++--manual 의 대가 — 자세 정확도
++------------------------------
++타어는 "그 중력방향에서 빈 그리퍼가 만드는 렌치" 다. 자세가 목표에서
++어긋난 만큼 그 값이 틀리고, 나중에 그대로 빼진다. 센서 아래 무게는
++그리퍼 0.414 kg + 센서 퍽 0.236 kg = 0.65 kg 이므로
++
++    자세 오차 0.5 deg -> 0.06 N   (램프 전체 5.60 N 의  1.0 %)
++    자세 오차 1.0 deg -> 0.11 N   (                     2.0 %)
++    자세 오차 2.0 deg -> 0.22 N   (                     4.0 %)
++    자세 오차 5.0 deg -> 0.56 N   (                     9.9 %)
++
++목표 불확실성이 5 % 이므로 **1 deg 이내**로 맞춰야 한다. 그래서 이 모드는
++지금 자세가 목표에서 몇 도 떨어져 있는지 실시간으로 찍어 주고, 문턱 안에
++들어오기 전에는 안 읽는다. 사람이 6 관절을 다 맞출 필요는 없다 — 제약은
++**손목이 향하는 방향** 하나뿐이라 손목만 돌리면 수렴한다.
++"""
+ 
+ import argparse
+ import os
+@@ -8,6 +53,8 @@ import sys
+ import time
+ 
+ import numpy as np
++from pydrake.multibody.inverse_kinematics import InverseKinematics
++from pydrake.solvers import Solve
+ 
+ from aft_tare import Aft200Sensor, TareTable, stable_wrench
+ 
+@@ -18,7 +65,7 @@ sys.path.insert(0, str(PIVOT_WORKDIR.resolve()))
+ 
+ import density_id_drake as alg
+ import density_id_objects as obj
+-import hardware as hw
++import hardware_real as hr
+ from path_planning import ArmPathPlanner
+ import robot_scene as scene
+ 
+@@ -42,7 +89,7 @@ def nearest_equivalent(q, reference, lower, upper):
+     return np.asarray(result)
+ 
+ 
+-def require_ready(data, require_real=False):
++def require_ready(data, require_real=False, allow_freedrive=False):
+     state = data.request_data(2.0)
+     if state is None:
+         raise TimeoutError("no RB5 state response")
+@@ -52,7 +99,7 @@ def require_ready(data, require_real=False):
+         "arm_power": ((status.information_chunk_1 >> 6) & 1) == 1,
+         "idle": status.robot_state == 1 and status.task_state == 1,
+         "collision_detection": status.collision_detect_onoff == 1,
+-        "freedrive_off": status.is_freedrive_mode == 0,
++        "freedrive_off": allow_freedrive or status.is_freedrive_mode == 0,
+         "no_fault": not any((status.op_stat_collision_occur, status.op_stat_sos_flag,
+                               status.op_stat_soft_estop_occur, status.op_stat_ems_flag)),
+         "real_mode": not require_real or status.real_vs_simulation_mode == 0,
+@@ -103,12 +150,330 @@ def plan_paths(current, clearance_m, max_iters):
+     return start, paths, clearances
+ 
+ 
++def plan_wrist_paths(current, clearance_m, max_wrist_deg=120.0):
++    """J1--J3를 고정하고 손목 J4--J6만으로 세 중력방향을 만든다."""
++    checker = scene.PoseChecker(
++        empty_tool_spec(), densities=[1000.0], joint_limits_rad=[],
++        min_distance_m=clearance_m, gripper="robotiq2f85",
++        ik_restarts=0, seed_q=current)
++    indices = [joint.position_start() for joint in checker.arm_joints]
++    fixed = checker.plant.GetPositions(checker.context).copy()
++    start = np.asarray(current, dtype=float).copy()
++    for joint, value in zip(checker.arm_joints, start):
++        fixed[joint.position_start()] = value
++    planner = ArmPathPlanner(checker.plant, checker.context,
++                             checker.arm_joints, clearance_m, fixed, seed=11)
++
++    def solve_wrist(reference, g_hat):
++        ik = InverseKinematics(checker.plant, checker.context,
++                               with_joint_limits=True)
++        prog, q = ik.prog(), ik.q()
++        for joint, value in zip(checker.arm_joints[:3], start[:3]):
++            index = joint.position_start()
++            prog.AddBoundingBoxConstraint(value, value, q[index])
++        limit = np.deg2rad(max_wrist_deg)
++        for joint, value in zip(checker.arm_joints[3:], reference[3:]):
++            index = joint.position_start()
++            lower = max(joint.position_lower_limits()[0], value - limit)
++            upper = min(joint.position_upper_limits()[0], value + limit)
++            prog.AddBoundingBoxConstraint(lower, upper, q[index])
++        for joint in checker.finger_joints:
++            index = joint.position_start()
++            prog.AddBoundingBoxConstraint(checker.finger_value,
++                                          checker.finger_value, q[index])
++        ik.AddAngleBetweenVectorsConstraint(
++            checker.plant.world_frame(), np.array([0.0, 0.0, -1.0]),
++            checker.sensor_frame, np.asarray(g_hat, dtype=float),
++            0.0, scene.ANGLE_TOL_RAD)
++        ik.AddMinimumDistanceLowerBoundConstraint(checker.ik_distance_m, 0.01)
++        prog.AddQuadraticErrorCost(np.eye(3), reference[3:], q[indices[3:]])
++        guess = fixed.copy()
++        for index, value in zip(indices, reference):
++            guess[index] = value
++        prog.SetInitialGuess(q, guess)
++        result = Solve(prog)
++        return None if not result.is_success() else result.GetSolution(q)[indices]
++
++    paths, clearances, targets, state = [], [], [], start
++    for g_hat in alg.G_DIRS:
++        target = solve_wrist(state, g_hat)
++        if target is None:
++            raise RuntimeError(f"손목만으로 중력 방향 {g_hat.tolist()}를 못 만듭니다")
++        if np.max(np.abs(target[:3] - start[:3])) > 1e-9:
++            raise RuntimeError("손목 전용 계획이 J1--J3를 움직였습니다")
++        if not planner.edge_valid(state, target):
++            raise RuntimeError(f"손목 직선 경로가 충돌합니다: {g_hat.tolist()}")
++        path = [state, target]
++        paths.append(path)
++        clearances.append(planner.path_clearance(path, samples_per_edge=60))
++        targets.append(target)
++        state = target
++
++    return start, paths, clearances
++
++
++def gravity_in_sensor(checker, q):
++    """팔 관절각 q 일 때, 센서 프레임에서 본 월드 아래 방향.
++
++    IK 가 거는 제약(AddAngleBetweenVectorsConstraint)과 같은 양이다. 자동
++    모드에서는 IK 가 이것을 g_hat 에 맞춰 풀고, --manual 에서는 사람이 맞춘
++    결과를 여기서 확인한다.
++    """
++    for joint, value in zip(checker.arm_joints, q):
++        joint.set_angle(checker.context, float(value))
++    R_WS = checker.sensor_frame.CalcPoseInWorld(checker.context).rotation()
++    return R_WS.matrix().T @ np.array([0.0, 0.0, -1.0])
++
++
++def orientation_error_deg(checker, q, g_hat):
++    achieved = gravity_in_sensor(checker, q)
++    cosine = float(np.clip(np.dot(achieved, np.asarray(g_hat, dtype=float)),
++                           -1.0, 1.0))
++    return float(np.degrees(np.arccos(cosine))), achieved
++
++
++TOOL_MASS_KG = 0.650          # 센서 아래: Robotiq 0.414 + AFT200 퍽 0.236
++
++
++def tare_error_n(error_deg):
++    """자세 오차가 타어에 만드는 힘 오차 [N]."""
++    return TOOL_MASS_KG * 9.81 * float(np.sin(np.deg2rad(error_deg)))
++
++
++def hold_and_read(data, checker, sensor, g_hat, label, tol_deg, samples,
++                  poll_s=0.5):
++    """작업자가 자세를 만들 때까지 기다렸다가 읽는다. 로봇에 명령하지 않는다."""
++    print(f"\n[{label}] 목표 중력방향 {np.asarray(g_hat).tolist()}")
++    direction = {
++        (0.0, 0.0, -1.0): "센서 +Z축을 천장으로",
++        (1.0, 0.0, 0.0): "센서 +X축을 바닥으로",
++        (0.0, 1.0, 0.0): "센서 +Y축을 바닥으로",
++    }[tuple(np.asarray(g_hat, dtype=float))]
++    print(f"  방향: {direction} 향하게 하세요. TCP 위치는 중요하지 않습니다.")
++    print("  직접교시로 팔을 옮긴 뒤 freedrive 를 끄세요 (hold).")
++    print(f"  목표에서 {tol_deg:.1f} deg 안에 들어오면 자동으로 읽습니다."
++          f"  (Ctrl-C 로 중단)")
++    last = None
++    while True:
++        try:
++            q = require_ready(data, allow_freedrive=True)
++        except RuntimeError as exc:
++            if last != str(exc):
++                print(f"  대기: {exc}")
++                last = str(exc)
++            time.sleep(poll_s)
++            continue
++        error_deg, achieved = orientation_error_deg(checker, q, g_hat)
++        try:
++            require_ready(data)
++            holding = True
++        except RuntimeError as exc:
++            if "freedrive_off" not in str(exc):
++                raise
++            holding = False
++        state = "hold" if holding else "freedrive"
++        print(f"\r  오차 {error_deg:6.2f} deg"
++              f"  현재 g={np.round(achieved, 2).tolist()}  [{state}]"
++              + ("  방향 OK -> freedrive를 끄세요" if error_deg <= tol_deg
++                 and not holding else "") + "   ", end="")
++        if error_deg <= tol_deg and holding:
++            print("\n  문턱 안. 렌치를 읽습니다 (손을 떼고 기다리세요).")
++            time.sleep(1.0)
++            raw = stable_wrench(sensor, samples)
++            return raw, q, error_deg, achieved
++        last = None
++        time.sleep(poll_s)
++
++
+ def path_duration(path, speed_deg_s):
+     max_delta = max(float(np.max(np.abs(np.degrees(b - a))))
+                     for a, b in zip(path[:-1], path[1:]))
+     return len(path) * max(10.0, 2.0 * max_delta / speed_deg_s)
+ 
+ 
++def nearest_entry(entries, q):
++    """지금 자세에 가장 가까운 기록 자세를 고른다."""
++    best, best_gap = None, None
++    for entry in entries:
++        recorded = np.deg2rad(np.asarray(entry["joint_deg"], dtype=float))
++        recorded = np.arctan2(np.sin(recorded), np.cos(recorded))
++        folded = np.arctan2(np.sin(q), np.cos(q))
++        gap = float(np.degrees(np.abs(np.arctan2(
++            np.sin(folded - recorded), np.cos(folded - recorded)))).max())
++        if best_gap is None or gap < best_gap:
++            best, best_gap = entry, gap
++    return best, best_gap
++
++
++def run_verify(args, data, current):
++    """드리프트 확인. 세팅 때 잰 값을 그대로 써도 되는지 10초 만에 본다.
++
++    자세를 **다시 만들어** 읽는다. 예측하지 않는다 (위 문서 참고).
++    로봇이 이동하는 것은 기록된 자세 하나까지, 한 번뿐이다.
++    --manual 이면 그것도 사람이 직접교시로 옮긴다.
++    """
++    import json
++
++    if not args.output.is_file():
++        raise SystemExit(f"확인할 타어 파일이 없습니다: {args.output}\n"
++                         f"  먼저 세팅 때 한 번 재세요 (--setup)")
++    payload = json.loads(args.output.read_text())
++    entries = [e for e in payload["entries"] if "joint_deg" in e]
++    if not entries:
++        raise SystemExit("타어 파일에 joint_deg 가 없어 자세를 되짚을 수 없습니다.\n"
++                         "  --setup 으로 다시 재세요 (지금 코드는 자세를 함께 남깁니다)")
++
++    entry, gap_deg = nearest_entry(entries, current)
++    target = np.deg2rad(np.asarray(entry["joint_deg"], dtype=float))
++    target = np.arctan2(np.sin(target), np.cos(target))
++    print(f"확인 대상 자세  g={entry['g_hat']}")
++    print(f"  지금 자세와의 차이 {gap_deg:.2f} deg")
++
++    if gap_deg > args.pose_tol_deg:
++        if args.manual:
++            print(f"  직접교시로 아래 관절각까지 옮기세요"
++                  f" (허용 {args.pose_tol_deg:.1f} deg):")
++            print(f"    {np.round(np.degrees(target), 2).tolist()}")
++            while True:
++                q = require_ready(data)
++                _, gap_deg = nearest_entry([entry], q)
++                print(f"\r  차이 {gap_deg:6.2f} deg   ", end="")
++                if gap_deg <= args.pose_tol_deg:
++                    print("\n  도착.")
++                    break
++                time.sleep(0.5)
++        else:
++            print(f"  그 자세로 이동합니다 (한 번, 경로 계획됨)")
++            start, paths, _ = plan_paths(current, args.clearance_mm / 1000.0,
++                                         args.max_iters)
++            checker_planner = None
++            robot = hr.Rb5Driver(
++                hr.RbpodoBackend(host=args.robot_ip),
++                max_speed=np.deg2rad(args.speed_deg_s))
++            try:
++                index = [tuple(np.round(e["g_hat"], 6))
++                         for e in entries].index(tuple(np.round(entry["g_hat"], 6)))
++                robot.follow(paths[index], path_duration(paths[index],
++                                                         args.speed_deg_s))
++                robot.stop()
++            finally:
++                robot.stop()
++
++    time.sleep(1.0)
++    sensor = Aft200Sensor(args.robot_ip, args.aft_hz)
++    raw = stable_wrench(sensor, args.samples)
++    recorded = np.asarray(entry["wrench"], dtype=float)
++    drift = raw - recorded
++    force_drift = float(np.linalg.norm(drift[:3]))
++
++    print(f"\n  세팅 때  {np.round(recorded, 3).tolist()}")
++    print(f"  지금     {np.round(raw, 3).tolist()}")
++    print(f"  차이     {np.round(drift, 3).tolist()}")
++    print(f"\n  힘 드리프트 {force_drift:.3f} N"
++          f"   (문턱 {args.drift_tol_n:.2f} N,"
++          f" 램프 5.60 N 의 {100*force_drift/5.60:.1f} %)")
++
++    payload.setdefault("verifications", []).append(dict(
++        time=time.time(), g_hat=entry["g_hat"],
++        pose_gap_deg=gap_deg, drift=drift.tolist(),
++        force_drift_n=force_drift, tolerance_n=args.drift_tol_n,
++        passed=bool(force_drift <= args.drift_tol_n)))
++    args.output.write_text(json.dumps(payload, indent=2) + "\n")
++
++    if force_drift <= args.drift_tol_n:
++        print("  통과 — 세팅 때 값을 그대로 쓰세요.")
++        return 0
++    print("  **초과 — 다시 재세요** (--setup)")
++    print("  온도가 변했거나 그리퍼 구성이 바뀐 것입니다.")
++    return 1
++
++
++def run_manual(args, data, current):
++    """직접교시 모드. 로봇에 **명령을 보내지 않는다.**
++
++    경로 계획도 안 한다 — 움직일 경로가 없으니 계획할 것이 없다. 대신
++    작업자가 만든 자세가 목표 중력방향과 얼마나 맞는지만 계속 확인한다.
++    IK 목표 관절각은 참고용으로만 알려 준다 (그대로 맞출 필요 없다 —
++    제약은 손목이 향하는 방향 하나다).
++    """
++    checker = scene.PoseChecker(
++        empty_tool_spec(), densities=[1000.0], joint_limits_rad=[],
++        min_distance_m=args.clearance_mm / 1000.0, gripper="robotiq2f85",
++        ik_restarts=30, seed_q=current)
++    indices = [joint.position_start() for joint in checker.arm_joints]
++
++    print("직접교시 모드 — 이 프로그램은 로봇에 명령하지 않습니다.")
++    print(f"  허용 오차 {args.angle_tol_deg:.1f} deg"
++          f"  (타어 오차 {tare_error_n(args.angle_tol_deg):.2f} N,"
++          f" 램프 5.60 N 의 {100*tare_error_n(args.angle_tol_deg)/5.60:.1f} %)")
++
++    # 참고용 목표 자세. 못 풀어도 진행한다 — 사람은 손목만 맞추면 된다.
++    hints = []
++    for g_hat in alg.G_DIRS:
++        checker._last_solution = None
++        try:
++            full = checker.solve_robust(np.array([]), g_hat)
++        except Exception:                                       # noqa: BLE001
++            full = None
++        hints.append(None if full is None else np.asarray(full)[indices])
++    for g_hat, hint in zip(alg.G_DIRS, hints):
++        if hint is None:
++            print(f"  g={g_hat.tolist()}: 참고 자세를 못 풀었습니다"
++                  f" (손목 방향만 맞추면 됩니다)")
++        else:
++            print(f"  g={g_hat.tolist()}: 참고 관절각"
++                  f" {np.round(np.degrees(hint), 1).tolist()} deg")
++
++    if args.plan_only:
++        print("\nPLAN ONLY: 로봇 명령 없음 (직접교시 모드는 원래 명령이 없습니다)")
++        return
++
++    sensor = Aft200Sensor(args.robot_ip, args.aft_hz)
++    tare = TareTable()
++    records = []
++    for g_hat, label in zip(alg.G_DIRS, ("g-down", "g-x", "g-y")):
++        raw, q, error_deg, achieved = hold_and_read(
++            data, checker, sensor, g_hat, label,
++            args.angle_tol_deg, args.samples)
++        tare.record(g_hat, raw)
++        records.append(dict(label=label, g_hat=np.asarray(g_hat).tolist(),
++                            wrench=np.asarray(raw).tolist(),
++                            joints_rad=np.asarray(q).tolist(),
++                            achieved_g_hat=np.asarray(achieved).tolist(),
++                            orientation_error_deg=error_deg,
++                            tare_error_n=tare_error_n(error_deg)))
++        print(f"  기록 {label}: {np.round(raw, 4).tolist()}")
++
++    tare.save(args.output)
++    # 실제로 맞춘 자세와 그 오차를 함께 남긴다. TareTable.load 는 entries 만
++    # 읽으므로 다른 키를 더해도 안전하다. 나중에 결과가 이상할 때 여기부터 본다.
++    #
++    # joint_deg 는 **실물 장비가 내는 파일과 같은 키 이름**이다. --verify 가
++    # 이 값으로 자세를 되짚으므로 이름이 갈리면 안 된다.
++    import json
++    payload = json.loads(args.output.read_text())
++    for entry, record in zip(payload["entries"], records):
++        entry["joint_deg"] = np.degrees(
++            np.asarray(record["joints_rad"], dtype=float)).tolist()
++        entry["direction_error_deg"] = record["orientation_error_deg"]
++    worst = max(r["orientation_error_deg"] for r in records)
++    payload["manual"] = dict(
++        method="freedrive hold, no robot command",
++        angle_tol_deg=args.angle_tol_deg,
++        worst_orientation_error_deg=worst,
++        worst_tare_error_n=tare_error_n(worst),
++        tool_mass_kg=TOOL_MASS_KG,
++        records=records)
++    payload["created_at_s"] = time.time()
++    args.output.write_text(json.dumps(payload, indent=2) + "\n")
++    print(f"\nsaved: {args.output.resolve()}")
++    print(f"  최악 자세 오차 {worst:.2f} deg"
++          f" -> 타어 오차 {tare_error_n(worst):.2f} N"
++          f" (램프 5.60 N 의 {100*tare_error_n(worst)/5.60:.1f} %)")
++    if worst > args.angle_tol_deg:
++        print("  [주의] 문턱을 넘겼습니다 — 다시 재세요")
++
++
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--robot-ip", default="192.168.50.51")
+@@ -121,17 +486,41 @@ def main():
+     parser.add_argument("--max-iters", type=int, default=10000)
+     parser.add_argument("--plan-only", action="store_true")
+     parser.add_argument("--overwrite", action="store_true")
++    parser.add_argument("--manual", action="store_true",
++                        help="로봇에 명령하지 않는다. 사람이 직접교시로 자세를 "
++                             "만들고 이 프로그램은 읽기만 한다")
++    parser.add_argument("--setup", action="store_true",
++                        help="3자세를 다 잰다 (실험 환경 세팅 때 한 번). "
++                             "아무 모드도 안 주면 이것이 기본이다")
++    parser.add_argument("--verify", action="store_true",
++                        help="기록된 자세 하나로 돌아가 드리프트만 확인한다 "
++                             "(실험 직전, 10초)")
++    parser.add_argument("--drift-tol-n", type=float, default=0.10,
++                        help="--verify 통과 문턱 [N]. 반복오차 0.03 N 보다 크고 "
++                             "램프 5.60 N 의 1.8 %% 다")
++    parser.add_argument("--pose-tol-deg", type=float, default=0.5,
++                        help="--verify 에서 기록 자세로 돌아왔다고 볼 관절각 오차")
++    parser.add_argument("--angle-tol-deg", type=float, default=1.0,
++                        help="--manual 에서 허용하는 중력방향 오차 [deg]. "
++                             "1 deg 가 램프 무게의 2 %% 에 해당한다")
+     args = parser.parse_args()
+-    if args.output.exists() and not args.overwrite and not args.plan_only:
++    if (args.output.exists() and not args.overwrite and not args.plan_only
++            and not args.verify):
+         parser.error(f"refusing to overwrite {args.output}")
+ 
+     rbpodo = __import__("rbpodo")
+     data = rbpodo.CobotData(args.robot_ip)
+     current = require_ready(data)
+-    start, paths, clearances = plan_paths(
+-        current, args.clearance_mm / 1000.0, args.max_iters)
++
++    if args.verify:
++        return run_verify(args, data, current)
++    if args.manual:
++        return run_manual(args, data, current)
++
++    start, paths, clearances = plan_wrist_paths(
++        current, args.clearance_mm / 1000.0)
+     print("start joints [deg]:", np.round(np.degrees(start), 2).tolist())
+-    for label, path, clearance in zip(("g-down", "g-x", "g-y", "return"),
++    for label, path, clearance in zip(("g-down", "g-x", "g-y"),
+                                       paths, clearances):
+         print(f"{label}: {len(path)} waypoints, clearance {clearance*1000:.2f} mm, "
+               f"goal {np.round(np.degrees(path[-1]), 1).tolist()} deg")
+@@ -145,31 +534,40 @@ def main():
+     if np.max(error) > 0.05:
+         raise RuntimeError("robot pose changed while planning")
+ 
+-    robot = hw.Rb5Driver(args.robot_ip, enable_motion=True,
+-                         max_speed_deg_s=args.speed_deg_s,
+-                         max_accel_deg_s2=2 * args.speed_deg_s)
++    robot = hr.Rb5Driver(
++                hr.RbpodoBackend(host=args.robot_ip),
++                max_speed=np.deg2rad(args.speed_deg_s))
+     sensor = Aft200Sensor(args.robot_ip, args.aft_hz)
+     tare = TareTable()
++    records = []
+     try:
+-        deadline = time.monotonic() + 3.0
+-        while data.request_data(2.0).sdata.real_vs_simulation_mode != 0:
+-            if time.monotonic() >= deadline:
+-                raise RuntimeError("RB5 did not enter Real mode within 3 seconds")
+-            time.sleep(0.1)
+-        require_ready(data, require_real=True)
++        require_ready(data)
+         for g_hat, path in zip(alg.G_DIRS, paths[:3]):
+             robot.follow(path, path_duration(path, args.speed_deg_s))
+             robot.stop()
+             time.sleep(1.0)
+             raw = stable_wrench(sensor, args.samples)
+             tare.record(g_hat, raw)
++            q = robot.joint_positions()
++            checker = scene.PoseChecker(
++                empty_tool_spec(), densities=[1000.0], joint_limits_rad=[],
++                min_distance_m=args.clearance_mm / 1000.0,
++                gripper="robotiq2f85", seed_q=q)
++            error_deg, _ = orientation_error_deg(checker, q, g_hat)
++            records.append((q, error_deg))
+             print(f"tare g={g_hat.tolist()}: {np.round(raw, 4).tolist()}")
+-        robot.follow(paths[3], path_duration(paths[3], args.speed_deg_s))
+-        robot.stop()
+     finally:
+         robot.stop()
+ 
+     tare.save(args.output)
++    import json
++    payload = json.loads(args.output.read_text())
++    for entry, (q, error_deg) in zip(payload["entries"], records):
++        entry["joint_deg"] = np.degrees(q).tolist()
++        entry["direction_error_deg"] = error_deg
++    payload["automatic"] = {"method": "J1-J3 fixed, J4-J6 only"}
++    payload["created_at_s"] = time.time()
++    args.output.write_text(json.dumps(payload, indent=2) + "\n")
+     print(f"saved: {args.output.resolve()}")
+ 
+ 
+diff --git a/pivot/test_aft_tare.py b/pivot/test_aft_tare.py
+index 3bf2d3e..f1f34d7 100644
+--- a/pivot/test_aft_tare.py
++++ b/pivot/test_aft_tare.py
+@@ -32,10 +32,10 @@ class FakeSensor:
+ 
+ class AftTareTest(unittest.TestCase):
+     def test_modbus_decode(self):
+-        payload = struct.pack(">6h", 4, 1, -1, 0, 0, 0)
++        payload = struct.pack(">6h", 4, 1, -1, 2, 3, -2)
+         response = struct.pack(">HHHB", 1, 0, 15, 1) + b"\x03\x0c" + payload
+         np.testing.assert_allclose(Aft200Sensor()._read_one(FakeSocket(response)),
+-                                   [0.08, 0.02, -0.02, 0, 0, 0])
++                                   [0.02, -0.08, -0.02, 0.06, -0.04, -0.04])
+ 
+     def test_tare_roundtrip(self):
+         with tempfile.TemporaryDirectory() as directory:
+diff --git a/pivot/test_rb5_ui.py b/pivot/test_rb5_ui.py
+new file mode 100644
+index 0000000..a735eba
+--- /dev/null
++++ b/pivot/test_rb5_ui.py
+@@ -0,0 +1,60 @@
++"""CSV 기록은 실제 장비 없이 검사한다."""
++
++import tempfile
++import unittest
++import json
++import time
++from datetime import datetime
++from pathlib import Path
++from types import SimpleNamespace
++from unittest.mock import Mock
++
++from pivot.rb5_ui import App, CSV_HEADER, next_measurement_csv, open_measurement_csv
++
++
++class MeasurementCsvTest(unittest.TestCase):
++    def test_position_uses_existing_driver_and_rejects_invalid_or_stale_input(self):
++        calls = []
++        app = SimpleNamespace(gripper=SimpleNamespace(move=lambda *v: calls.append(v)),
++                              speed=SimpleNamespace(get=lambda: 16),
++                              force=SimpleNamespace(get=lambda: 16),
++                              gripper_sample=dict(timestamp_s=time.time(), activated=True,
++                                                  status=3, fault=0),
++                              run_gripper=lambda fn, label: fn())
++        App.move_gripper_position(app, 11)
++        self.assertEqual(calls, [(11, 16, 16)])
++        for invalid in (True, -1, 256, 11.5, "11", None):
++            with self.assertRaises(ValueError):
++                App.move_gripper_position(app, invalid)
++        app.gripper_sample['timestamp_s'] -= 10
++        with self.assertRaises(ValueError):
++            App.move_gripper_position(app, 11)
++        self.assertEqual(len(calls), 1)
++
++    def test_restart_does_not_replay_old_command(self):
++        with tempfile.TemporaryDirectory() as directory:
++            path = Path(directory) / 'hardware_command.json'
++            path.write_text(json.dumps(dict(id='old', action='close')))
++            app = SimpleNamespace(command_file=path, command_started_at_s=path.stat().st_mtime+1,
++                                  move_gripper=Mock(), last_command_id=None)
++            App.consume_command(app)
++            app.move_gripper.assert_not_called()
++            self.assertIsNone(app.last_command_id)
++
++    def test_each_measurement_gets_a_timestamped_file(self):
++        with tempfile.TemporaryDirectory() as directory:
++            template = Path(directory) / "Latch Measurement.csv"
++            path = next_measurement_csv(
++                template, datetime(2026, 9, 4, 18, 45, 12, 123456))
++            self.assertEqual(path.name,
++                             "Latch Measurement_20260904_184512_123456.csv")
++            handle, writer = open_measurement_csv(path)
++            writer.writerow([1.0, 1, 2, 3, 4, 5, 6])
++            handle.close()
++            rows = path.read_text().splitlines()
++            self.assertEqual(rows[0].split(","), list(CSV_HEADER))
++            self.assertEqual(len(rows), 2)
++
++
++if __name__ == "__main__":
++    unittest.main()

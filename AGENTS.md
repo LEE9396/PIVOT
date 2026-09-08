@@ -1,5 +1,7 @@
 # AI 도우미에게 (Claude Code / Codex / ChatGPT 등)
 
+> **2026-09-08 통합 UI 새 PC 설치:** [setup/REPRODUCE.md](setup/REPRODUCE.md)를 먼저 따르세요. 아래의 과거 4창/드라이버 미구현 설명보다 이 문서가 우선합니다.
+
 이 파일은 **사람이 아니라 AI 가 읽는 안내서**입니다.
 새 PC 에서 이 저장소를 받은 사람이 AI 에게 "환경 구성해 줘" 라고 하면,
 AI 는 이 파일만 읽고 끝까지 갈 수 있어야 합니다.
@@ -7,7 +9,7 @@ AI 는 이 파일만 읽고 끝까지 갈 수 있어야 합니다.
 사람이 할 일은 이 두 줄이 전부입니다.
 
 ```bash
-git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT && cd ~/Desktop/PIVOT
+git clone https://github.com/Yuseong-Cheon/PIVOT.git ~/Desktop/PIVOT && cd ~/Desktop/PIVOT
 # 그 다음 AI 에게: "AGENTS.md 를 읽고 이 PC 에 환경을 구성해 줘"
 ```
 

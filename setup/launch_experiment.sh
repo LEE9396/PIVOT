@@ -89,11 +89,19 @@ if [[ ! -f "${FP_GRASP_MESH}" ]]; then
 fi
 if [[ -f "${FP_GRASP_MESH}" ]]; then
   FP_MESH_DIR="$(dirname "${FP_GRASP_MESH}")"
-  FP_GRASP_PART="$(basename "${FP_GRASP_MESH}")"
-  FP_GRASP_PART="${FP_GRASP_PART%.*}"
 fi
 echo "[메시] FoundationPose: ${FP_GRASP_MESH}"
 FOUNDATIONPOSE_PYTHON="${FOUNDATIONPOSE_PYTHON:-${SAM3_PYTHON%%/envs/*}/envs/${FOUNDATIONPOSE_CONDA_ENV}/bin/python}"
+FOUNDATIONPOSE_PYTHON="$(expand "${FOUNDATIONPOSE_PYTHON}")"
+
+# run_desk_lamp_live.py 는 파지 부위 하나뿐 아니라 base/support/head 세 메시를
+# 같은 폴더에서 읽는다. 마스킹을 끝낸 뒤에야 죽지 않도록 미리 확인한다.
+FP_MISSING_PARTS=()
+for part in base support head; do
+  [[ -f "${FP_MESH_DIR}/${part}.ply" \
+     || -f "${FP_MESH_DIR}/${part}_metric_watertight.ply" \
+     || -f "${FP_MESH_DIR}/${part}.obj" ]] || FP_MISSING_PARTS+=("${part}")
+done
 
 start_foundationpose() {
   local mask_mode="${1:-auto}" pid_file="${FP_OUTPUT}/foundationpose.pid"
@@ -140,13 +148,18 @@ start_foundationpose() {
         --output "${FP_OUTPUT}" \
         --grasp-target "${GRASP_JSON}" --grasp-part "${FP_GRASP_PART}" \
         --grasp-overlay "${WORK}/grasp_overlay.py" \
-      >>/tmp/pivot_win2.log 2>&1 ) &
+        --no-window \
+      >/tmp/pivot_win2.log 2>&1 ) &
   echo "$!" >"${pid_file}"
   sleep 2
   kill -0 "$!" 2>/dev/null || return 1
 }
 
 if [[ "${MODE}" == "--remask" ]]; then
+  if ((${#FP_MISSING_PARTS[@]})); then
+    echo "[실패] FoundationPose 부위 메시 없음: ${FP_MISSING_PARTS[*]} (${FP_MESH_DIR})"
+    exit 1
+  fi
   PART_LEGEND="${PART_LEGEND:-/tmp/pivot_part_legend_3dgs.png}"
   if [[ ! -f "${PART_LEGEND}" ]]; then
     ( cd "${WORK}" && "${R}" python ../tools/make_part_legend.py \
@@ -220,6 +233,14 @@ fi
 # --- 창 2·3 준비물 ---
 need_file "${MESHPCA_PYTHON}" "MeshPCA 파이썬 (창 3)"
 need_dir  "${FOUNDATIONPOSE_ROOT}" "FoundationPose 체크아웃 (창 2)"
+need_file "${FOUNDATIONPOSE_PYTHON}" "FoundationPose 파이썬"
+need_file "${SAM3_PYTHON}" "SAM3 파이썬"
+if ((${#FP_MISSING_PARTS[@]})); then
+  bad "FoundationPose 부위 메시" \
+      "없음: ${FP_MISSING_PARTS[*]} (${FP_MESH_DIR})"
+else
+  ok "FoundationPose 부위 메시 (base/support/head)"
+fi
 if [[ -r "${GRIPPER_PORT}" && -w "${GRIPPER_PORT}" ]]; then
   ok "Robotiq 포트 권한 (${GRIPPER_PORT})"
 else
@@ -296,7 +317,7 @@ export PIVOT_PART_LEGEND="${PART_LEGEND}"
 
 # --- 창 2: 카메라 뷰 + 파지점 오버레이 ---
 echo "[창 2] 카메라 뷰 + 파지점 오버레이를 띄웁니다"
-start_foundationpose
+start_foundationpose || { echo "[실패] 추적기 시작 실패: /tmp/pivot_win2.log"; exit 1; }
 
 # 통합 UI를 먼저 띄운다. 0단계 화면이 트래커 첫 각도와 최종 점검을 기다린다.
 echo "      카메라 초기화는 통합 UI의 0단계에서 확인합니다"

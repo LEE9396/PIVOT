@@ -5,6 +5,7 @@ import argparse
 import json
 from pathlib import Path
 import tkinter as tk
+from tkinter import messagebox
 
 import cv2
 import numpy as np
@@ -45,10 +46,24 @@ def fit_plane(points, threshold_m=0.006, trials=400, seed=0):
     return normal, offset, inliers, rms_mm
 
 
-def select_table(image):
+def ordered_table_polygon(points):
+    """모서리를 누른 순서 때문에 X자 마스크가 만들어지는 것을 막는다."""
+    points = np.asarray(points, dtype=float)
+    if (points.ndim != 2 or points.shape[1] != 2 or len(points) < 3
+            or not np.all(np.isfinite(points))
+            or len(np.unique(points, axis=0)) != len(points)):
+        raise ValueError("서로 다른 상판 영역의 모서리를 3개 이상 선택하세요.")
+    hull = cv2.convexHull(points.astype(np.int32)).reshape(-1, 2)
+    if len(hull) != len(points) or cv2.contourArea(hull) < 500:
+        raise ValueError("한 평평한 상판 영역의 바깥 모서리만 넓게 선택하세요.")
+    return hull
+
+
+def select_table(image, title="Optical/table plane: clear surface only - Enter=fit, R=reset",
+                 instructions="Select CLEAR FLAT SURFACE only (no robot/cables/rim)"):
     points = []
     root = tk.Tk()
-    root.title("Table calibration - left click, Enter=fit, Backspace=undo, R=reset")
+    root.title(title)
     ppm = cv2.imencode(".ppm", image)[1].tobytes()
     photo = tk.PhotoImage(data=ppm)
     canvas = tk.Canvas(root, width=image.shape[1], height=image.shape[0],
@@ -60,19 +75,19 @@ def select_table(image):
     def redraw():
         canvas.delete("selection")
         if len(points) >= 2:
-            coords = [value for point in points for value in point]
-            canvas.create_line(*coords, fill="#00ffff", width=3,
-                               tags="selection")
-        if len(points) >= 3:
-            canvas.create_line(*points[-1], *points[0], fill="#00ffff",
-                               width=3, tags="selection")
+            boundary = cv2.convexHull(np.asarray(points, np.int32)).reshape(-1, 2).tolist()
+            coords = [value for point in boundary for value in point]
+            if len(boundary) >= 3:
+                coords.extend(boundary[0])
+            if len(coords) >= 4:
+                canvas.create_line(*coords, fill="#00ffff", width=3,
+                                   tags="selection")
         for x, y in points:
             canvas.create_oval(x - 5, y - 5, x + 5, y + 5,
                                fill="#ff3030", outline="", tags="selection")
         canvas.create_text(18, 18, anchor="nw", fill="white",
                            font=("Sans", 16, "bold"),
-                           text="LEFT: table boundary   ENTER: fit   "
-                                "BACKSPACE: undo   R: reset",
+                           text=instructions + "\nLEFT: corners   ENTER: accept   BACKSPACE: undo   R: reset",
                            tags="selection")
 
     def click(event):
@@ -80,8 +95,12 @@ def select_table(image):
         redraw()
 
     def accept(_event=None):
-        if len(points) >= 3:
-            root.quit()
+        try:
+            ordered_table_polygon(points)
+        except ValueError as exc:
+            messagebox.showerror("Table selection", str(exc), parent=root)
+            return
+        root.quit()
 
     def cancel(_event=None):
         cancelled[0] = True
@@ -100,7 +119,7 @@ def select_table(image):
     root.destroy()
     if cancelled[0]:
         raise KeyboardInterrupt("테이블 선택을 취소했습니다.")
-    return np.asarray(points, np.int32)
+    return ordered_table_polygon(points)
 
 
 def capture(serial, frames):
@@ -207,6 +226,18 @@ def calibrate(args):
 
 
 def self_test():
+    crossed = [[513, 439], [1058, 445], [529, 380], [986, 395]]
+    polygon = ordered_table_polygon(crossed)
+    assert cv2.isContourConvex(polygon)
+    assert set(map(tuple, polygon)) == set(map(tuple, crossed))
+    for invalid in ([[0, 0], [10, 10]], [[0, 0], [100, 0], [0, 100], [0, 0]],
+                    [[0, 0], [100, 0], [200, 0]], [[0, 0], [100, 0], [0, float("nan")]]):
+        try:
+            ordered_table_polygon(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("잘못된 선택을 허용했습니다")
     rng = np.random.default_rng(4)
     xy = rng.uniform(-1, 1, (4000, 2))
     z = 0.42 + 0.02 * xy[:, 0] - 0.01 * xy[:, 1] + rng.normal(0, 0.001, 4000)

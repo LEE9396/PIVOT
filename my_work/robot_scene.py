@@ -47,6 +47,7 @@ import density_id_drake as alg
 import density_id_objects as obj
 import grippers as gr
 import path_planning as pp
+import workspace_obstacles
 
 WORKSPACE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKSPACE / "robot_learning" / "scripts"))
@@ -180,7 +181,9 @@ def table_box_pose(calibration=None):
     helper = np.array([1.0, 0.0, 0.0])
     if abs(z_axis @ helper) > 0.9:
         helper = np.array([0.0, 1.0, 0.0])
-    x_axis = np.cross(helper, z_axis); x_axis /= np.linalg.norm(x_axis)
+    # 수평일 때 명목 +X를 유지한다. 외적을 쓰면 긴 변/짧은 변이 90° 뒤바뀐다.
+    x_axis = helper - np.dot(helper, z_axis) * z_axis
+    x_axis /= np.linalg.norm(x_axis)
     y_axis = np.cross(z_axis, x_axis)
     rotation = RotationMatrix(np.column_stack([x_axis, y_axis, z_axis]))
     centre = top - z_axis * (size[2] / 2.0)
@@ -680,7 +683,7 @@ def sensor_object_transform(spec, gripper="robotiq2f85", grasp_transform=None,
 def build_scene(spec, densities=None, joint_limits_rad=None,
                 builder=None, include_visuals=True, gripper="robotiq2f85",
                 grasp_transform=None, payload_pose_tcp=None,
-                include_aft_cable=False):
+                include_aft_cable=True):
     """RB5 + AFT200 + 그리퍼 + 물체(그리퍼에 고정)를 한 plant 로 만든다.
 
     gripper 는 grippers.GRIPPERS 의 키다. 개구량이 달라 잡을 수 있는 물체가
@@ -735,8 +738,7 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
                                GRIPPER_MOUNT_YAW_RAD).matrix()),
                        [0.0, -AFT_TOTAL_H_M / 2.0, 0.0]))
 
-    # 케이블은 실행 경로(RRT) 장면에만 추가한다. 후보 IK와 기존 로봇 충돌
-    # 모델은 케이블을 넣기 전과 완전히 같게 유지한다.
+    # 후보 자세·실행 경로·피드백 검사에 같은 케이블 보호 원통을 사용한다.
     cable = None
     if include_aft_cable:
         cable_model = plant.AddModelInstance("aft200_cable")
@@ -853,6 +855,16 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
                         ROBOT_BASE_XYZ_M[2] - base_floor_depth / 2.0]),
         [0.30, 0.31, 0.33, 1.0])
 
+    # 상판 옆 단차와 돌출 지지대는 평면으로 표현할 수 없어 별도 입체로 검사한다.
+    extra_obstacles = workspace_obstacles.load()
+    plant.workspace_obstacles_sha256 = extra_obstacles["sha256"]
+    for obstacle in extra_obstacles["boxes"]:
+        size = np.asarray(obstacle["size_m"], dtype=float) + 2 * obstacle["padding_m"]
+        pose_B = RigidTransform(RollPitchYaw(np.deg2rad(obstacle["rpy_deg"])),
+                                np.asarray(obstacle["center_m"], dtype=float))
+        add_fixture("obstacle_" + obstacle["name"], Box(*size),
+                    _robot_base_pose() @ pose_B, [0.85, 0.40, 0.12, 1.0])
+
     # 카메라 본체와 지지봉. 팔이 여기에 닿으면 안 되므로 충돌 대상이다.
     # 캘리브레이션을 했으면 **실측 자세**로 세운다. 명목 위치로 세워 두면
     # 실제로는 부딪히는 자세를 통과시키게 된다.
@@ -880,7 +892,8 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
                      for n in gripper_spec.body_names]
     end_effector += [parts[spec.parts[0].name]]
     # 손목 링크: AFT200 이 link6 플랜지에 볼트로 붙으므로 항상 겹친다.
-    wrist = [plant.GetBodyByName(n, arm) for n in ("link5", "link6")]
+    # link5와는 J6 회전으로 상대 자세가 바뀐다. 고정 장착 링크만 제외한다.
+    wrist = [plant.GetBodyByName("link6", arm)]
 
     def ids(bodies):
         out = []
@@ -904,20 +917,22 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
         # 팔을 어디로 보내든 절대 통과할 수 없다 — 고칠 수 없는 실패다.
         #
         # 진짜로 봐야 하는 것은 케이블이 **움직일 수 있는 것**에 닿는가이다:
-        # link0~link4, 테이블, 받침대, 카메라. 그쪽은 그대로 검사한다.
+        # link0~link5, 테이블, 받침대, 카메라. 그쪽은 그대로 검사한다.
         manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
             ids([cable]), ids(end_effector)))
         manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
             ids([cable]), ids(wrist)))
     manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
         ids([base_floor]), ids([plant.GetBodyByName("link0", arm)])))
-    # link0..link4 와 물체의 나머지 부위, 테이블은 그대로 검사한다.
+    # link0..link5 와 물체의 나머지 부위, 테이블은 그대로 검사한다.
 
     return dict(
         builder=builder, plant=plant, scene_graph=scene_graph,
         arm=arm, gripper=gripper, payload=payload, parts=parts,
-        mount=mount, cable=cable, sensor_frame=sensor_frame, spec=spec,
+        mount=mount, cable=cable, sensor_frame=sensor_frame,
+        wrench_frame=mount.body_frame(), spec=spec,
         gripper_spec=gripper_spec, jaw_opening_m=opening, tcp_z_m=tcp_z,
+        workspace_obstacles=extra_obstacles,
     )
 
 
@@ -984,6 +999,8 @@ class PoseChecker:
         self.gripper = scene["gripper"]
         self.payload = scene["payload"]
         self.sensor_frame = scene["sensor_frame"]
+        # 파지 위치용 obj_sensor는 물체마다 회전한다. 중력은 공통 F/T 축으로 잰다.
+        self.wrench_frame = scene["wrench_frame"]
         # min_distance_m 은 '지켜야 하는 값', ik_distance_m 은 'IK 에게
         # 요구하는 값'. 둘을 나눠 두어야 IK 해가 검사를 통과한다.
         self.min_distance_m = min_distance_m
@@ -1039,7 +1056,7 @@ class PoseChecker:
         # 중력 방향 조건: 월드 아래 방향이 센서 좌표계에서 ĝ 가 되어야 한다.
         ik.AddAngleBetweenVectorsConstraint(
             self.plant.world_frame(), np.array([0.0, 0.0, -1.0]),
-            self.sensor_frame, np.asarray(g_hat, dtype=float),
+            self.wrench_frame, np.asarray(g_hat, dtype=float),
             0.0, ANGLE_TOL_RAD,
         )
         # 작업 공간 상자 안에 물체를 둔다.
@@ -1066,6 +1083,12 @@ class PoseChecker:
         for joint in self.finger_joints:
             guess[joint.position_start()] = self.finger_value
         prog.SetInitialGuess(q, guess)
+
+        # 같은 센서 방향을 만드는 해 중 시작/직전 자세와 가장 가까운 것을
+        # 고른다. 초기 추측만 주면 solver가 먼 관절 분기를 골라도 성공이다.
+        arm_indices = [joint.position_start() for joint in self.arm_joints]
+        prog.AddQuadraticErrorCost(
+            np.eye(len(arm_indices)), guess[arm_indices], q[arm_indices])
 
         result = Solve(prog)
         if not result.is_success():
@@ -1606,7 +1629,7 @@ def find_viewing_poses(checker, theta_rad, scorer=None, presentations=None,
     return out
 
 
-def find_starting_pose(checker, thetas, presentations=None):
+def find_starting_pose(checker, thetas, presentations=None, theta_rad=None):
     """작업자가 물체 관절을 손으로 조정하는 동안 로봇이 멈춰 있을 자세.
 
     작업자가 관절을 움직이므로, 이 자세는 **구동범위 전 구간에서** 충돌이
@@ -1623,8 +1646,56 @@ def find_starting_pose(checker, thetas, presentations=None):
                 if np.all(point >= WORKSPACE_LOWER_M) and \
                         np.all(point <= WORKSPACE_UPPER_M):
                     presentations.append(point)
+
+    # 기존 관측성 점수로 방향 후보를 먼저 싼값에 정렬하고, 상위 후보만
+    # IK·실제 메시 충돌·FOV를 검사한다.
+    theta = np.asarray(theta_rad if theta_rad is not None
+                       else thetas[len(thetas) // 2], dtype=float)
+    scorer = ViewScorer(checker.spec)
+
+    def rank(q):
+        checker.plant.SetPositions(checker.context, q)
+        observability = min(
+            observability_px_per_deg(checker.plant, checker.context,
+                                     checker.spec, index, checker.payload)
+            for index in range(len(checker.spec.joints)))
+        part = checker.spec.parts[0]
+        X_WB = checker.plant.GetBodyByName(
+            part.name, checker.payload).body_frame().CalcPoseInWorld(
+                checker.context)
+        bounds = _image_bounds([X_WB @ p for p in _part_corners(part)])
+        footprint = (0.0 if bounds is None else
+                     np.sqrt(max(0.0, (bounds[2] - bounds[0])
+                                      * (bounds[3] - bounds[1]))))
+        position = checker.sensor_frame.CalcPoseInWorld(
+            checker.context).translation()
+        return observability * footprint, observability, footprint, q, position
+
+    predicted = []
+    indices = range(len(checker.spec.joints))
+    for position in presentations:
+        for rotation in candidate_rotations():
+            predicted.append((scorer.score_group(
+                rotation, position, theta, indices), position, rotation))
+    ranked = []
+    for _, position, rotation in sorted(predicted, key=lambda row: -row[0])[:48]:
+        checker._last_solution = None
+        q = checker.solve_oriented(theta, rotation, position)
+        if q is None or any(not checker.arm_pose_is_clear(q, th)
+                            for th in thetas):
+            continue
+        ranked.append(rank(q))
+        if len(ranked) == 4:
+            break
+    if ranked:
+        _, obs, footprint, q, position = max(ranked, key=lambda row: row[0])
+        print(f"  초기 자세 자동 선택: 관절 최소 관측성 {obs:.2f} px/deg,"
+              f" 파지 부위 화면 크기 {footprint:.0f} px")
+        return q, position
+
     down = np.array([0.0, 0.0, -1.0])
     best = (None, None, len(thetas) + 1)
+    ranked = []
     for target in presentations:
         checker._last_solution = None
         q = checker.solve_at(thetas[0], down, position=target, tol_m=0.02)
@@ -1634,9 +1705,14 @@ def find_starting_pose(checker, thetas, presentations=None):
         blocked = [th for th in thetas
                    if not checker.arm_pose_is_clear(q, th)]
         if not blocked:
-            return q, target
+            ranked.append(rank(q))
         if len(blocked) < best[2]:
             best = (q, target, len(blocked))
+    if ranked:
+        _, obs, footprint, q, position = max(ranked, key=lambda row: row[0])
+        print(f"  초기 자세 자동 선택: 관절 최소 관측성 {obs:.2f} px/deg,"
+              f" 파지 부위 화면 크기 {footprint:.0f} px (중력축 후보)")
+        return q, position
     if best[0] is not None:
         print(f"  가장 좋은 후보도 {best[2]}/{len(thetas)} 자세에서 간섭"
               f" (제시 위치 {np.round(best[1], 3)} m)")

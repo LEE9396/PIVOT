@@ -161,9 +161,10 @@ def rotation_angle_deg(R):
 
 
 def load(path):
-    data = json.loads(open(path, encoding="utf-8").read())
+    with open(path, encoding="utf-8") as stream:
+        data = json.load(stream)
     entries = data["entries"]
-    g = np.array([e["g_hat"] for e in entries], dtype=float)
+    g = np.array([e.get("achieved_g_hat", e["g_hat"]) for e in entries], dtype=float)
     w = np.array([e["wrench"] for e in entries], dtype=float)
     return data, g, w
 

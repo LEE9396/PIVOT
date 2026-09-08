@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# RB5 손목 전용 3자세 영점 조정. 기본은 무동작 계획 검증이다.
+# RB5 손목 전용 3자세 영점 조정. 기본은 무동작 계획, 시작점 ±2° 이내다.
+# 먼저 local_ft_check.sh --record로 정지 측정. 3방향에 못 닿으면 이동하지 않는다.
 #
 #   setup/wrist_tare.sh --plan       J1-J3 고정 경로만 계산
 #   setup/wrist_tare.sh --run        J4-J6 자동 영점 조정 실행 (원위치 복귀 없음)

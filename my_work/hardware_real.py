@@ -26,6 +26,8 @@ RB5 나 AFT200 의 API 를 코드 곳곳에 흩뿌리면 두 가지가 나빠진
 """
 
 import argparse
+import json
+from pathlib import Path
 import time
 from types import SimpleNamespace
 
@@ -153,6 +155,10 @@ class RbpodoBackend(ArmBackend):
         saw_motion = False
         while True:
             status = self._read_status()
+            guard = getattr(self, "motion_guard", None)
+            if guard is not None:
+                guard(principal_angles(self._to_rad(
+                    np.asarray(status.jnt_ang[:N_ARM_JOINT], dtype=float))))
             if any((status.op_stat_collision_occur, status.op_stat_sos_flag,
                     status.op_stat_soft_estop_occur, status.op_stat_ems_flag)):
                 raise SafetyViolation("RB5 충돌/SOS/비상정지 상태를 감지했다")
@@ -280,6 +286,42 @@ class Rb5Driver(hw.RobotDriver):
         self.log = log
         self._servo_on = True
         self.stretched_s = 0.0        # 안전 때문에 늘린 총 시간 (보고용)
+        self.motion_anchor = self.motion_radius = None
+        self.collision_planner = None
+        self.backend.motion_guard = self.check_motion_window
+
+    def set_collision_planner(self, planner):
+        """계획에 쓴 형상으로 명령 직전 경로와 이동 중 실제 자세를 재검사한다."""
+        self.collision_planner = planner
+
+    def limit_to_start(self, anchor, radius_rad):
+        anchor = np.asarray(anchor, dtype=float)
+        radius = np.broadcast_to(np.asarray(radius_rad, dtype=float), (N_ARM_JOINT,))
+        if (anchor.shape != (N_ARM_JOINT,) or not np.all(np.isfinite(anchor))
+                or not np.all(np.isfinite(radius)) or np.any(radius < 0)):
+            raise ValueError("시작 자세/이동 제한이 올바르지 않습니다")
+        self.motion_anchor, self.motion_radius = anchor.copy(), radius.copy()
+
+    def check_collision_scene(self):
+        if isinstance(self.backend, RbpodoBackend) and self.collision_planner is not None:
+            import workspace_obstacles
+            try:
+                workspace_obstacles.require_current_scene(
+                    getattr(self.collision_planner, "plant", None))
+            except (ValueError, KeyError, TypeError, OSError) as exc:
+                raise SafetyViolation(f"충돌 장면 검증 실패: {exc}") from exc
+
+    def check_motion_window(self, q):
+        self.check_collision_scene()
+        q = np.asarray(q, dtype=float)
+        if q.shape != (N_ARM_JOINT,) or not np.all(np.isfinite(q)):
+            raise SafetyViolation("경유점은 유한한 관절각 6개여야 합니다")
+        if self.motion_anchor is not None and np.any(
+                np.abs(principal_angles(q - self.motion_anchor))
+                > self.motion_radius + 1e-9):
+            raise SafetyViolation("시작 자세의 이동 제한을 벗어납니다. 이동하지 않습니다")
+        if self.collision_planner is not None and not self.collision_planner.valid(q):
+            raise SafetyViolation("실제 자세/경유점의 충돌·관절 제한 검사 실패")
 
     # -- 상태 ---------------------------------------------------------------
     def joint_positions(self):
@@ -307,19 +349,38 @@ class Rb5Driver(hw.RobotDriver):
         return float(requested_s)
 
     def follow(self, waypoints, duration_s):
+        if isinstance(self.backend, RbpodoBackend) and self.collision_planner is None:
+            raise SafetyViolation("실물 이동에는 충돌 검사기가 필요합니다. 이동하지 않습니다")
         if not self._servo_on:
             raise SafetyViolation(
                 "서보가 꺼진 상태에서 이동을 시도했다. servo_on() 을 먼저 부르세요.")
+        # 실제 상태를 읽거나 명령을 보내기 전에 알려진 미확인 장애물을 먼저 거부한다.
+        self.check_collision_scene()
         q = self.joint_positions()
-        for target in waypoints:
-            target = np.asarray(target, dtype=float)
-            if target.shape != (N_ARM_JOINT,):
-                raise SafetyViolation(f"경유점 차원이 {target.shape} 다")
+        targets = [np.asarray(target, dtype=float) for target in waypoints]
+        self.check_motion_window(q)
+        for target in targets:
+            self.check_motion_window(target)    # 뒷 경유점이 잘못돼도 앞부분부터 움직이지 않는다
+        if self.collision_planner is not None:
+            for a, b in zip([q] + targets, targets):
+                if not self.collision_planner.edge_valid(a, b):
+                    raise SafetyViolation("전체 이동 경로의 충돌 검사 실패. 이동하지 않습니다")
+        for target in targets:
+            q = self.joint_positions()
+            self.check_motion_window(q)
+            if (self.collision_planner is not None
+                    and not self.collision_planner.edge_valid(q, target)):
+                raise SafetyViolation("명령 직전 실제 자세에서의 경로 검사 실패")
             if np.max(np.abs(principal_angles(target - q))) <= self.arrival_tol:
                 continue
             dt = self.safe_duration(q, target, duration_s)
             self.backend.move_to(target, dt)
             q = self.joint_positions()                 # 도착을 **확인**한다
+            try:
+                self.check_motion_window(q)
+            except SafetyViolation:
+                self.backend.halt()
+                raise
             gap = float(np.max(np.abs(principal_angles(q - target))))
             if gap > self.arrival_tol:
                 self.backend.halt()
@@ -351,6 +412,21 @@ class Rb5Driver(hw.RobotDriver):
 # ---------------------------------------------------------------------------
 # 렌치 센서
 # ---------------------------------------------------------------------------
+def gripper_snapshot(path):
+    """창3의 최신 정지 피드백만 읽는다. 시리얼 포트 소유권을 건드리지 않는다."""
+    status = json.loads(Path(path).read_text())
+    sample = status["gripper_sample"]
+    age = time.time() - float(sample["timestamp_s"])
+    position = sample["position"]
+    if (not np.isfinite(age) or not 0 <= age <= 2.0
+            or status.get("gripper_busy") or not sample.get("activated")
+            or sample.get("status") != 3 or sample.get("object") not in (1, 2, 3)
+            or sample.get("fault") != 0 or not isinstance(position, int)
+            or not 0 <= position <= 255):
+        raise ValueError("그리퍼의 최신 정지 상태 되읽기가 필요합니다")
+    return sample
+
+
 class Aft200Sensor(hw.WrenchSensor):
     """AFT200-D80. 샘플 소스만 백엔드로 받고 나머지는 여기서 한다.
 
@@ -364,17 +440,28 @@ class Aft200Sensor(hw.WrenchSensor):
         **이게 틀리면 밀도가 통째로 틀어지는데 결과만 봐서는 모른다.**
     """
 
-    def __init__(self, sample_fn, rate_hz=1000.0, mad_k=6.0, log=print):
+    def __init__(self, sample_fn, rate_hz=1000.0, mad_k=6.0, log=print,
+                 gripper_status_file=None):
         self.sample_fn = sample_fn
         self.rate_hz = float(rate_hz)
         self.mad_k = float(mad_k)
         self.log = log
         self.n_rejected = 0
+        self.gripper_status_file = gripper_status_file
 
     def read_raw(self, n_samples):
         n = int(max(1, n_samples))
         buf = np.empty((n, 6))
+        anchor = gripper_snapshot(self.gripper_status_file) if self.gripper_status_file else None
+        if anchor is not None:
+            # 정지 완료를 확인한 뒤 추가로 기다린다. 구동 중 샘플을 필터로 숨기지 않는다.
+            time.sleep(1.)
         for k in range(n):
+            if anchor is not None:
+                sample = gripper_snapshot(self.gripper_status_file)
+                if (abs(sample["position"] - anchor["position"]) > 1
+                        or sample.get("requested_position") != anchor.get("requested_position")):
+                    raise SafetyViolation("F/T 평균 중 그리퍼 개구 또는 명령이 바뀌었습니다")
             s = np.asarray(self.sample_fn(), dtype=float)
             if s.shape != (6,) or not np.all(np.isfinite(s)):
                 raise SafetyViolation(f"렌치 샘플이 이상하다: {s}")

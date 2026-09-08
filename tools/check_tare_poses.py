@@ -65,7 +65,8 @@ def main(argv=None):
 
     if args.object == "desklamp":
         import desk_lamp
-        spec = desk_lamp.build_spec(grasp_at=args.grasp_part)
+        spec = desk_lamp.build_spec(grasp_at="pinch",
+                                    grasp_part=args.grasp_part)
     else:
         spec = obj.OBJECTS[args.object]
     rho = obj.bind_object(spec)

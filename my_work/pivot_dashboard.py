@@ -2,7 +2,9 @@
 """HTML 통합 지휘 화면. 기존 프로세스의 JSON과 Meshcat을 한곳에 모은다."""
 
 import json
+import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -21,6 +23,8 @@ class Dashboard:
         self.current_prompt = None
         self.clicks = []
         self.jobs = {}
+        self.experiment_process = None
+        self.experiment_stop_requested = False
         self.lock = threading.Lock()
         self.server = self.thread = None
 
@@ -86,7 +90,25 @@ class Dashboard:
                             "완료" if process.returncode == 0 else
                             f"실패 ({process.returncode})")
                      for name, process in jobs.items()},
+            "exploration_active": (self.experiment_process is not None
+                                   and self.experiment_process.poll() is None),
+            "exploration_stop_requested": self.experiment_stop_requested,
         }
+
+    def set_experiment_process(self, process):
+        with self.lock:
+            self.experiment_process = process
+            self.experiment_stop_requested = False
+
+    def stop_exploration(self):
+        with self.lock:
+            process = self.experiment_process
+            if (self.experiment_stop_requested or process is None
+                    or process.poll() is not None):
+                return False
+            self.experiment_stop_requested = True
+        os.kill(process.pid, signal.SIGUSR1)
+        return True
 
     def hardware_command(self, action, port=None, speed=None, force=None):
         if action not in {"refresh_ports", "reconnect", "activate", "open", "close",
@@ -171,8 +193,21 @@ class Dashboard:
                     return self.send_bytes(
                         json.dumps({"accepted": accepted}).encode(),
                         "application/json", 200 if accepted else 409)
+                if self.path == "/api/stop-exploration":
+                    accepted = dashboard.stop_exploration()
+                    return self.send_bytes(
+                        json.dumps({"accepted": accepted}).encode(),
+                        "application/json", 200 if accepted else 409)
                 root = Path(dashboard.conf.get("PIVOT_ROOT", Path(__file__).parents[1]))
                 if self.path == "/api/remask":
+                    # 파지 후 재마스킹은 FoundationPose 좌표계를 바꾸어
+                    # grasp.json·가상환경·밀도 회귀가 서로 어괋난다.
+                    if dashboard.session.phase().get("index", 0) >= 1:
+                        return self.send_bytes(
+                            json.dumps({"accepted": False,
+                                        "error": "파지 후에는 재마스킹할 수 없습니다. 실험을 재시작하세요."},
+                                       ensure_ascii=False).encode(),
+                            "application/json; charset=utf-8", 409)
                     accepted = dashboard.start_job(
                         "FoundationPose 재마스킹",
                         [str(root / "setup/launch_experiment.sh"), "--remask"],

@@ -41,10 +41,26 @@ COLOR_TEXT = (255, 255, 255)
 
 def load_target(path):
     """grasp_target.py 가 낸 JSON 을 읽어 넘파이로 바꾼다."""
-    data = json.loads(Path(path).read_text())
+    path = Path(path)
+    data = json.loads(path.read_text())
     for key in ("point", "jaw_axis", "long_axis"):
         data[key] = np.asarray(data[key], dtype=float)
+    # FoundationPose 트래커는 이 dict 를 시작할 때 한 번만 받는다.
+    # 파지 직후 grasp_measure.py 가 같은 JSON 을 실측값으로 바꾸면,
+    # draw() 가 다음 프레임에서 새 값을 읽을 수 있게 경로를 남겨 둔다.
+    data["_path"] = path
+    data["_mtime_ns"] = path.stat().st_mtime_ns
     return data
+
+
+def refresh_target(target):
+    """파지 후 명목점이 실측점으로 바뀐 경우 dict 를 제자리에서 갱신한다."""
+    path = target.get("_path")
+    if path is None or path.stat().st_mtime_ns == target.get("_mtime_ns"):
+        return target
+    target.clear()
+    target.update(load_target(path))
+    return target
 
 
 def intrinsic_matrix(fx, fy, cx, cy):
@@ -91,6 +107,7 @@ def target_geometry(target, X_CM, pad_half_len_m=0.018):
         pad_bars    패드마다 장축을 따라 그은 선분의 양 끝 (2, 2, 3)
         long_bar    장축 방향 안내선의 양 끝
     """
+    refresh_target(target)
     point = np.asarray(target["point"], dtype=float)
     jaw = np.asarray(target["jaw_axis"], dtype=float)
     jaw = jaw / np.linalg.norm(jaw)
@@ -150,8 +167,7 @@ def draw(image, target, X_CM, K, label=None, thickness=2):
     cv2.circle(view, xy(0), 7, COLOR_POINT, -1, cv2.LINE_AA)
     cv2.circle(view, xy(0), 12, COLOR_POINT, thickness, cv2.LINE_AA)
 
-    text = label or (f"grasp {1000*target['width_m']:.0f} mm"
-                     f" / open {1000*target['opening_m']:.0f} mm")
+    text = label or "grasping point"
     origin = (min(max(xy(0)[0] + 18, 8), width - 260), max(xy(0)[1] - 14, 22))
     cv2.putText(view, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (0, 0, 0), 3, cv2.LINE_AA)

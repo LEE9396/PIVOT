@@ -142,6 +142,25 @@ def measure(X_C_O, X_W_C, q_rad, gripper="robotiq2f85"):
     return invert(X_W_G) @ np.asarray(X_W_C, float) @ np.asarray(X_C_O, float), X_W_G
 
 
+def measured_target(X_G_O, nominal, mesh_offset_m, tcp_z_m):
+    """실측 X_G_O 에서 메시 좌표의 패드 중심·축을 구한다.
+
+    X_G_O 의 G 는 그리퍼 베이스이다. 화면에 찍을 곳은 베이스가 아니라
+    실제 패드 중점 [0, 0, tcp_z]이며, FoundationPose 는 body 좌표가
+    아닌 원본 mesh 좌표를 쓴다.
+    """
+    X_O_G = invert(np.asarray(X_G_O, dtype=float))
+    point_o = (X_O_G @ np.array([0.0, 0.0, float(tcp_z_m), 1.0]))[:3]
+    out = dict(nominal)
+    out.update(
+        point=(point_o - np.asarray(mesh_offset_m, dtype=float)).tolist(),
+        jaw_axis=X_O_G[:3, 0].tolist(),
+        long_axis=X_O_G[:3, 1].tolist(),
+        source="measured",
+    )
+    return out
+
+
 def fit_lamp_pose(data):
     """세 부품 중심을 함께 맞춘 카메라 기준 전체 램프 자세 X_C_O."""
     if not all(name in data.get("X_C_parts", {})
@@ -240,9 +259,14 @@ def self_test(seed=0):
         (np.trace(fitted[:3, :3].T @ true[:3, :3]) - 1) / 2, -1, 1)))
     # 부동소수점 잡음만 남아야 한다. arccos 는 1 근처에서 sqrt 만큼 부풀므로
     # 각도 문턱을 위치보다 느슨하게 둔다 (그래도 물리적으로는 무한히 엄격하다).
+    target = measured_target(true, {"width_m": 0.01, "opening_m": 0.02},
+                             [-0.2, -0.3, -0.4], 0.15)
+    expected_point = (invert(true) @ np.array([0.0, 0.0, 0.15, 1.0]))[:3]
+    expected_point -= np.array([-0.2, -0.3, -0.4])
     ok = (position_mm < 1e-6 and rotation_deg < 1e-3
           and fit_position_mm < 1e-6 and fit_rotation_deg < 1e-3
-          and fit_rms_mm < 1e-6)
+          and fit_rms_mm < 1e-6
+          and np.allclose(target["point"], expected_point))
     print(f"자기검사  위치 오차 {position_mm:.3e} mm,"
           f" 자세 오차 {rotation_deg:.3e} deg")
     print(f"  전체 정합 위치 {fit_position_mm:.3e} mm,"
@@ -266,6 +290,8 @@ def main():
     ap.add_argument("--session", type=Path, default=None)
     ap.add_argument("--part", default="support", help="잡은 부위 이름")
     ap.add_argument("--opening-mm", type=float, default=None)
+    ap.add_argument("--grasp-target", type=Path, default=None,
+                    help="FoundationPose 오버레이 JSON을 실측 파지점으로 갱신")
     args = ap.parse_args()
 
     if args.self_test:
@@ -282,14 +308,18 @@ def main():
     X_W_C = rs.camera_pose(camera).GetAsMatrix4()
 
     data = json.loads(args.pose_file.read_text())
+    # 파지한 support 는 곧 모형의 root body 다. FoundationPose 가 준
+    # support 메시 자세에 고정 평행이동만 적용하면 X_C_O 가 바로 나온다.
+    # 세 부품 중심은 거의 일직선이어서 Kabsch 회전을 맞추면, 작은
+    # 추적 오차에도 회전이 180° 뒤집힌다. 실제로 그 값이 가상환경과
+    # 밀도 모형에 넘어갔다. 전체 정합은 잔차 진단에만 쓴다.
+    X_C_O = desk_lamp_body_pose(find_pose(data, args.pose_key), args.part)
+    orientation_correction = "tracked support mesh"
     fitted = fit_lamp_pose(data) if args.part == "support" else None
-    if fitted is None:
-        X_C_O = desk_lamp_body_pose(find_pose(data, args.pose_key), args.part)
-        orientation_correction = None
-    else:
-        X_C_O, residual_mm = fitted
-        orientation_correction = "base/support/head rigid fit"
-        print(f"  전체 램프 정합 rms {residual_mm:.1f} mm")
+    if fitted is not None:
+        _, residual_mm = fitted
+        print(f"  전체 램프 중심 정합 rms {residual_mm:.1f} mm"
+              " (진단만, 회전은 support 추적값 사용)")
 
     if args.joints_deg:
         q = np.deg2rad([float(v) for v in args.joints_deg.split(",")])
@@ -327,6 +357,25 @@ def main():
         print(f"\n{session.path('grasp.json')} 에 저장했습니다.")
         print("  build_scene 이 이 값을 WeldFrames 에 그대로 씁니다 —")
         print("  GRASP_LONG_AXIS / grasp_rotation 추측은 더 안 씁니다.")
+
+    if args.grasp_target:
+        import desk_lamp
+        import grippers
+
+        path = args.grasp_target.expanduser()
+        nominal = json.loads(path.read_text())
+        spec = desk_lamp.build_spec(grasp_at="pinch", grasp_part="link_3")
+        opening_m = float(nominal["opening_m"])
+        tcp_z_m = (grippers.robotiq_tcp_z(opening_m)
+                   if args.gripper == "robotiq2f85"
+                   else grippers.GRIPPERS[args.gripper].tcp_z_m)
+        target = measured_target(X_G_O, nominal, spec.parts[0].mesh_offset_m,
+                                 tcp_z_m)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(json.dumps(target, indent=2) + "\n")
+        temporary.replace(path)
+        print(f"  창 2 파지점을 실측 패드 중심으로 갱신:"
+              f" {np.round(1000 * np.asarray(target['point']), 1)} mm")
 
 
 if __name__ == "__main__":

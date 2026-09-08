@@ -61,7 +61,8 @@ def main(argv=None):
 
     if args.object == "desklamp":
         import desk_lamp
-        spec = desk_lamp.build_spec(grasp_at=args.grasp_part)
+        spec = desk_lamp.build_spec(grasp_at="pinch",
+                                    grasp_part=args.grasp_part)
     else:
         spec = obj.OBJECTS[args.object]
     rho_gt = obj.bind_object(spec)
@@ -103,26 +104,31 @@ def main(argv=None):
         d = np.linalg.inv(guess) @ X_aft
         from pydrake.math import RotationMatrix
         angle = np.degrees(RotationMatrix(d[:3, :3]).ToAngleAxis().angle())
+        R_O_guess = guess[:3, :3].T
+        R_O_measured = X_aft[:3, :3].T
+        long_index = (1 if rs.GRASP_LONG_AXIS_BY_OBJECT.get(spec.key,
+                      rs.GRASP_LONG_AXIS) == "y" else 2)
+        axis_angle = lambda a, b: np.degrees(np.arccos(np.clip(
+            abs(float(np.dot(a, b))), -1.0, 1.0)))
+        jaw_angle = axis_angle(R_O_guess[:, 0], R_O_measured[:, 0])
+        long_angle = axis_angle(R_O_guess[:, long_index],
+                                R_O_measured[:, long_index])
         print(f"   위치 차이 {np.round(1000*d[:3, 3], 1)} mm"
               f"  (크기 {1000*np.linalg.norm(d[:3, 3]):.1f} mm)")
         print(f"   회전 차이 {angle:.2f} deg")
+        print(f"   파지 축 차이  죠 {jaw_angle:.2f} deg /"
+              f" 장축 {long_angle:.2f} deg  (부호 대칭 반영)")
         print(f"   -> 회귀행렬은 이 차이를 모릅니다."
               f" build_plant(X_sensor_object=...) 로 넘겨야 반영됩니다.")
         if angle > 30.0:
-            print(f"   [경고] 회전 차이 {angle:.0f} deg 는 사람이 손으로 만들 수"
-                  f" 있는 오차가 아닙니다.\n"
-                  "          FoundationPose 가 쓰는 메시 좌표계와 자산(spec)의"
-                  " 링크 좌표계가\n"
-                  "          서로 다를 가능성이 큽니다. **이 상태로 실측값을"
-                  " 회귀행렬에 넣으면\n"
-                  "          지금보다 나빠집니다.** 두 좌표계 규약을 먼저"
-                  " 맞추세요:\n"
-                  "            - grasp_measure.py 의 X_C_O 가 어느 메시"
-                  " 원점 기준인지\n"
-                  "            - density_id_objects 의 part body frame 이"
-                  " 어디인지 (bbox 중심)\n"
-                  "          알려진 자세로 놓고 두 값이 같게 나오는지"
-                  " 대조하는 것이 확인 방법입니다.")
+            if max(jaw_angle, long_angle) < 10.0:
+                print("   [통과] 전체 프레임은 반대지만 죠·장축은 같습니다."
+                      " 대칭인 파지를 180° 뒤집은 실제 배치이며,"
+                      " 실측 프레임을 써야 합니다.")
+            else:
+                print(f"   [경고] 회전 차이 {angle:.0f} deg 뿐 아니라 파지 축도"
+                      " 맞지 않습니다. FoundationPose 메시와"
+                      " 자산(spec) 좌표계를 먼저 확인하세요.")
 
     print("\n3) 지금 회귀행렬이 실제로 쓰는 값")
     print(f"   spec.base_bbox_center_in_sensor_mm ="

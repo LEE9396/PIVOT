@@ -17,7 +17,8 @@ MESHPCA_PYTHON=~/MeshPCA/.venv/bin/python
 # 창 2 (FoundationPose) 가 쓰는 conda 환경 이름
 FOUNDATIONPOSE_CONDA_ENV=bundlesdf
 # SAM3 전용 파이썬 (없으면 위 환경과 같게 두세요)
-SAM3_PYTHON=~/sam3/env/bin/python
+SAM3_PYTHON=~/miniforge3/envs/sam3/bin/python
+FOUNDATIONPOSE_PYTHON=~/miniforge3/envs/bundlesdf/bin/python
 
 # ---- 장비 -----------------------------------------------------------------
 ROBOT_HOST=192.168.50.51
@@ -49,7 +50,7 @@ GRASP_PART=link_3
 # 도로 나오면 그건 사람의 파지 오차가 아니라 **메시 좌표계 규약이 서로 다른
 # 것**이고, 그 상태로 켜면 지금보다 나빠진다. 이 컴퓨터에서 계산했을 때는
 # 137.9 도였다 — 아직 실물로 재본 적이 없다.
-GRASP_FRAME=legacy
+GRASP_FRAME=measured
 # FoundationPose 가 추적하는 부위 이름 (파지점을 계산할 메시)
 FP_GRASP_PART=support
 FP_MESH_DIR=~/Desktop/PIVOT/assets/final_objects/lamp/visual_meshes
@@ -62,8 +63,9 @@ FP_GRASP_MESH_OVERRIDE=
 # 창 3 (그리퍼 + F/T) 에 같이 띄울 표. 비워 두면 안 띄운다.
 # 걸쇠 실험 표(Latch Measurement.csv)는 이 실험과 상관이 없어 기본은 꺼 둔다.
 WIN3_CSV=
-GAUSSIAN_DIR=~/Desktop/Lab/issacimport/issac_sim_urdf/desk_lamp_refined_v1_rgb/gaussian
-GAUSSIAN_FILES=base=gaussian_1.ply,support=gaussian_3.ply,head=gaussian_2.ply
+GAUSSIAN_DIR=
+# 비워 두면 저장소의 visual_meshes를 이름표로 사용한다.
+GAUSSIAN_FILES=base=base.obj,support=support.obj,head=head.obj
 FP_LIVE_SCRIPT=foundationpose/run_desk_lamp_live.py
 FP_CAMERA_WIDTH=640
 FP_CAMERA_HEIGHT=480
@@ -91,3 +93,12 @@ TARGET=0.05
 MAX_ROUNDS=8
 # 이동 하나에 쓰는 시간 [s]. 클수록 준정적.
 MOVE_DURATION=8
+
+# 현재 통합 UI 기준. 물리 배치가 다르면 자세/오차를 다시 측정한다.
+TARE_MODE=gravity
+ANGLE_FLOOR_DEG=3.0
+ANGLE_REL_ERROR=0.0
+GRASP_SIGMA_MM=10.0
+ANGLE_MARGIN_DEG=0.0
+PART_NAMES=base,support,head
+# START_ARM_DEG="J1 J2 J3 J4 J5 J6"  # 현장에서 확인한 시작 자세 [deg]

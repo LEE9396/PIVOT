@@ -28,6 +28,7 @@ Rb5Driver / Aft200Sensor / FoundationPoseSensor 는 실물 붙일 자리다.
 """
 
 from abc import ABC, abstractmethod
+import time
 
 import numpy as np
 
@@ -116,6 +117,72 @@ class TareTable:
 
     def is_complete(self, g_dirs):
         return all(self.key(g) in self.table for g in g_dirs)
+
+
+class GravityTare:
+    """빈 공구 질량/1차 모멘트/바이어스를 고정하고 현재 센서 중력으로 보정한다.
+
+    물체 파지 후에는 계수를 다시 맞추지 않는다. g_hat은 월드 중력을 FK로
+    센서 좌표계에 옮긴 단위벡터이며, 회전된 공구 성분만 원시값에서 제거한다.
+    """
+
+    def __init__(self, payload, max_age_s=0., clock=time.time):
+        import tare_check as tc
+
+        if (payload.get("wrench_frame") != "ft_mount"
+                or payload.get("measured", {}).get("passed") is not True):
+            raise ValueError("ft_mount 좌표계에서 검증된 빈 공구 영점이 필요합니다")
+        entries = payload["entries"]
+        directions = np.asarray([e["achieved_g_hat"] for e in entries], dtype=float)
+        values = np.asarray([e["wrench"] for e in entries], dtype=float)
+        if (directions.ndim != 2 or directions.shape[1] != 3 or len(directions) < 4
+                or values.shape != (len(directions), 6)
+                or not np.all(np.isfinite(directions)) or not np.all(np.isfinite(values))
+                or not np.allclose(np.linalg.norm(directions, axis=1), 1., atol=1e-5)):
+            raise ValueError("실제 중력 방향과 6축 빈 공구 렌치가 4자세 이상 필요합니다")
+        # 한 자세 근처의 자료를 넓은 방향의 중력 보정으로 외삽하지 않는다.
+        design = np.column_stack([np.ones(len(directions)), directions])
+        self.condition = float(np.linalg.cond(design))
+        if np.linalg.matrix_rank(design) < 4 or self.condition > 100.:
+            raise ValueError("중력 방향의 분포가 부족해 연속 영점을 식별할 수 없습니다")
+        bf, weight, force_residual = tc.fit_force(directions, values[:, :3])
+        bt, moment, torque_residual = tc.fit_torque(directions, values[:, 3:])
+        if not np.all(np.isfinite(np.r_[bf, weight, bt, moment,
+                                       force_residual, torque_residual])):
+            raise ValueError("빈 공구 중력 모델 계수가 유한하지 않습니다")
+        if weight * alg.FORCE_SIGN <= 0:
+            raise ValueError("공구 힘의 부호가 추정기 중력 부호와 다릅니다")
+        self.bias = np.r_[bf, bt]
+        self.weight_n = weight
+        self.moment_kg_m = moment
+        self.mass_kg = abs(weight) / alg.G_ACC
+        self.com_m = moment / (weight / alg.G_ACC)
+        self.created_at_s = float(payload["created_at_s"])
+        self.max_age_s, self.clock = float(max_age_s), clock
+        if (not np.isfinite(self.created_at_s) or self.created_at_s <= 0
+                or not np.isfinite(self.max_age_s) or self.max_age_s < 0):
+            raise ValueError("유효한 영점 측정 시각과 유효기간이 필요합니다")
+        residual = values - np.asarray([self.predict(g) for g in directions])
+        self.residual_rms = np.sqrt(np.mean(residual**2, axis=0))
+        if (force_residual > tc.FORCE_RESIDUAL_MAX_N
+                or torque_residual > tc.TORQUE_RESIDUAL_MAX_NM):
+            raise ValueError("빈 공구 중력 모델의 맞춤 잔차가 허용치를 넘습니다")
+
+    def predict(self, g_hat):
+        g = np.asarray(g_hat, dtype=float)
+        if (g.shape != (3,) or not np.all(np.isfinite(g))
+                or not np.isclose(np.linalg.norm(g), 1., atol=1e-5)):
+            raise ValueError("센서 좌표계의 유한한 단위 중력 방향이 필요합니다")
+        return self.bias + np.r_[self.weight_n * g,
+                                 alg.G_ACC * np.cross(self.moment_kg_m, g)]
+
+    def apply(self, g_hat, wrench):
+        if self.max_age_s > 0 and self.clock() - self.created_at_s > self.max_age_s:
+            raise RuntimeError("연속 중력 보정의 빈 공구 측정 유효기간이 지났습니다")
+        raw = np.asarray(wrench, dtype=float)
+        if raw.shape != (6,) or not np.all(np.isfinite(raw)):
+            raise ValueError("유한한 6축 원시 렌치가 필요합니다")
+        return raw - self.predict(g_hat)
 
 
 def run_tare(robot, sensor, arm_poses, n_samples, settle_s=1.0,

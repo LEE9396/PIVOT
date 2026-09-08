@@ -128,8 +128,10 @@ def check_asset(report, conf):
         return report.add(FAIL, "충돌 메시", f"{root} 에 collision_meshes 가 없습니다")
 
     parts = sorted({p.stem for p in collisions.glob("*.obj")})
-    if not parts:                              # minimal_v2 배치
-        parts = sorted(d.name for d in collisions.iterdir() if d.is_dir())
+    if not parts:
+        part_root = (collisions / "convex"
+                     if (collisions / "convex").is_dir() else collisions)
+        parts = sorted(d.name for d in part_root.iterdir() if d.is_dir())
     missing = []
     for name in parts:
         pieces = sorted((collisions / "convex" / name).glob("part_*.obj"))
@@ -181,6 +183,16 @@ def check_same_build(report, conf):
 def check_calibration(report, conf, root):
     """핸드아이·영점 조정·책상·각도부호 — 없으면 조용히 명목값으로 돈다."""
     calib = root / "calibration"
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "my_work"))
+        import workspace_obstacles
+        obstacles = workspace_obstacles.load(calib / "workspace_obstacles_current.json")
+        if obstacles["status"] != "validated":
+            raise ValueError("미확인: " + ", ".join(obstacles["unresolved"]))
+        report.add(OK, "추가 장애물", f"검증된 상자 {len(obstacles['boxes'])}개")
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        report.add(FAIL, "추가 장애물", str(exc),
+                   "optical table과 단차 지지대의 실제 범위를 확인한 뒤 충돌 장면을 다시 만드세요")
     camera = sorted(calib.glob("camera_*.json"))
     if camera:
         report.add(OK, "핸드아이", f"{camera[0].name}")
@@ -215,10 +227,21 @@ def check_calibration(report, conf, root):
         try:
             payload = json.loads(Path(tare).read_text())
             entries = payload.get("entries", [])
-            if len(entries) != 3 or any("joint_deg" not in e or
-                                        "direction_error_deg" not in e
-                                        for e in entries):
-                raise ValueError("3방향 joint_deg/direction_error_deg 기록이 불완전")
+            if payload.get("wrench_frame") != "ft_mount":
+                raise ValueError("F/T 좌표계가 ft_mount로 검증되지 않았습니다")
+            if payload.get("measured", {}).get("passed") is not True:
+                raise ValueError("영점 물리 검산 합격 기록이 없습니다")
+            if conf.get("TARE_MODE", "gravity") == "gravity":
+                from hardware import GravityTare
+                model = GravityTare(payload, max_age_s=float(conf.get("TARE_MAX_AGE_S", 1800)))
+                model.apply(entries[0]["achieved_g_hat"], entries[0]["wrench"])
+            directions = {tuple(e["g_hat"]) for e in entries}
+            if not {(0., 0., -1.), (1., 0., 0.), (0., 1., 0.)} <= directions:
+                raise ValueError("탐색에 필요한 -Z, +X, +Y 영점이 없습니다")
+            if len(entries) < 3 or any("joint_deg" not in e or
+                                       "direction_error_deg" not in e
+                                       for e in entries):
+                raise ValueError("3방향 이상의 joint_deg/direction_error_deg 기록이 불완전")
             worst = max(float(e["direction_error_deg"]) for e in entries)
             verified = [float(v["time"]) for v in payload.get("verifications", [])
                         if v.get("passed")]
@@ -226,7 +249,8 @@ def check_calibration(report, conf, root):
             age = time.time() - stamp
             max_age_s = float(conf.get("TARE_MAX_AGE_S", 30 * 60))
             if worst > 1.0:
-                report.add(FAIL, "3자세 영점 조정", f"방향오차 최대 {worst:.2f} deg",
+                report.add(FAIL, "3자세 영점 조정",
+                           f"방향오차 최대 {worst:.2f} deg",
                            "1 deg 이내로 다시 재세요")
             elif stamp <= 0 or (max_age_s > 0 and age > max_age_s):
                 report.add(FAIL, "3자세 영점 조정", "유효한 측정/검증 기록이 없습니다",
@@ -263,13 +287,14 @@ def check_calibration(report, conf, root):
                       f"잔차 {info['residual_force_n']:.2f} N /"
                       f" {info['residual_torque_nm']:.3f} N·m")
             failed = [name for name, ok, _, _ in info["rows"] if not ok]
-            report.add(OK if passed else FAIL, "영점 물리 검산", detail,
+            report.add(OK if passed else FAIL,
+                       "영점 물리 검산", detail,
                        None if passed else
-                       "실패 항목: " + ", ".join(failed) + "\n"
+                       ("실패 항목: " + ", ".join(failed) + "\n"
                        "  자세한 이유와 조치는 다음을 실행하세요:\n"
-                       f"  cd my_work && python tare_check.py {tare}")
+                       f"  cd my_work && python tare_check.py {tare}"))
         except Exception as exc:                       # noqa: BLE001
-            report.add(WARN, "영점 물리 검산", f"검산을 못 돌렸습니다: {exc}",
+            report.add(FAIL, "영점 물리 검산", f"검산을 못 돌렸습니다: {exc}",
                        "my_work/tare_check.py 가 있는지 확인하세요")
 
     if tare and float(conf.get("TARE_MAX_AGE_S", 30 * 60)) <= 0:
@@ -296,10 +321,15 @@ def check_calibration(report, conf, root):
     signs = calib / "angle_signs.json"
     if signs.is_file():
         data = json.loads(signs.read_text())
-        rms = max(v.get("residual_rms_deg", 0) for v in data.values())
-        report.add(OK, "각도 부호·영점",
-                   f"{len(data)} 관절, 잔차 최대 {rms:.2f} deg"
-                   f" (ANGLE_FLOOR_DEG 에 쓰세요)")
+        if not data or any("residual_rms_deg" not in v for v in data.values()):
+            report.add(WARN, "각도 부호·영점",
+                       f"{len(data)} 관절 변환은 있으나 실측 잔차 기록이 없습니다",
+                       "기준 각도와 실측값을 비교하세요. 기록 없음은 오차 0°가 아닙니다.")
+        else:
+            rms = max(float(v["residual_rms_deg"]) for v in data.values())
+            report.add(WARN, "각도 부호·영점",
+                       f"{len(data)} 관절, 맞춤 잔차 최대 {rms:.2f} deg",
+                       "맞춤 잔차와 독립 기준에 대한 각도 정확도는 별도로 검증하세요.")
     else:
         report.add(WARN, "각도 부호·영점", "없습니다 — 각도 판정이 반대로 나올 수 있습니다",
                    "tools/angle_signs.py 로 관절마다 한 번씩 쓸어담으세요")

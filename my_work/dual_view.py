@@ -24,6 +24,7 @@ import argparse
 import itertools
 import json
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -40,10 +41,15 @@ import angle_aware as aa
 import design_core as dc
 import explore_view as ev
 import gripper_hw as gh
+import hardware as hw
 import path_planning as pp
 import robot_scene as rs
 from operator_ui import ANGLE_TOL_DEG, Console
 from pose_bus import LocalBus, TcpBus
+
+
+class ExplorationStopped(Exception):
+    pass
 
 # 준정적 이동. 관절이 흐르지 않도록 천천히 옮긴다. 힌지 유지토크를 모르므로
 # 한계 기준을 세울 수 없어, 넉넉히 느린 시간을 기본으로 둔다.
@@ -108,11 +114,11 @@ def report_reachable_target(spec, joint_limits_rad, args):
     n_wanted = len(spec.parts)
     grasp_sigma = (args.grasp_sigma_mm * 1e-3
                    if args.grasp_sigma_mm is not None
-                   else (0.005 if args.mode == "deploy" else 0.0))
+                   else (0.010 if args.mode == "deploy" else 0.0))
     saved = (alg.SIGMA_F, alg.SIGMA_T, alg.R_EPS_DIAG.copy())
     total_mass = None
     try:
-        total_mass = float(obj.assembled_mass_kg(spec, alg.TRUE_RHO))
+        total_mass = float(alg.VOLUMES @ alg.MU0)
     except Exception:                                  # noqa: BLE001
         pass
 
@@ -169,8 +175,11 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
     # 지금보다 나빠진다.
     X_sensor_object = None
     if grasp_frame == "measured":
+        measured_grasp = rs.load_measured_grasp()
+        if measured_grasp is None:
+            raise RuntimeError("실측 파지 모드에 grasp.json이 없습니다. 현재 파지를 먼저 측정하세요")
         X_sensor_object = rs.sensor_object_transform(
-            spec, gripper, rs.load_measured_grasp(), origin="aft",
+            spec, gripper, measured_grasp, origin="aft",
             joint_limits_rad=joint_limits_rad)
         print(f"  회귀행렬 파지: **실측값** 사용"
               f" (위치 {np.round(1000 * X_sensor_object[:3, 3], 1)} mm)")
@@ -204,7 +213,8 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
         hinge_ok = obj.make_is_feasible(spec, hinge, safety, rho_gt)
     checker = rs.PoseChecker(spec, densities=rho_gt,
                              joint_limits_rad=joint_limits_rad,
-                             min_distance_m=min_distance_m, gripper=gripper)
+                             min_distance_m=min_distance_m, gripper=gripper,
+                             seed_q=start_arm_q)
 
     axes = [np.linspace(lo, hi, steps) for lo, hi in joint_limits_rad]
     grid = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(
@@ -223,7 +233,8 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
         raise RuntimeError("힌지·도달·충돌을 모두 통과하는 자세가 없다")
 
     if start_arm_q is None:
-        start_q, presentation = rs.find_starting_pose(checker, feasible)
+        start_q, presentation = rs.find_starting_pose(
+            checker, feasible, theta_rad=start_theta)
         if start_q is None:
             raise RuntimeError("전 구동범위에서 안전한 시작 자세를 찾지 못했다")
     else:
@@ -274,7 +285,7 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
     # 반복 횟수를 15배 늘려도 못 찾는 자세가 있는데, 그건 탐색 부족이 아니라
     # 실제로 연결 불가능한 것이다. 그런 자세는 후보에서 뺀다.
     indices = [joint.position_start() for joint in checker.arm_joints]
-    # IK 후보는 기존 장면으로 만들고, RRT 장면에만 FT 케이블을 보탠다.
+    # IK와 경로 계획 모두 같은 FT 케이블 보호 형상을 포함한다.
     path_scene = rs.build_scene(spec, rho_gt, joint_limits_rad,
                                 include_visuals=False, gripper=gripper,
                                 include_aft_cable=True)
@@ -316,11 +327,8 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
         legs = [np.array(arm)[indices]
                 for arm in arm_solutions[key].values()]
         chain = [home] + legs + [home]
-        ok = all(planner.plan(chain[i], chain[i + 1]) is not None
+        ok = all(planner.plan(chain[i], chain[i + 1], shortcut_rounds=0) is not None
                  for i in range(len(chain) - 1))
-        if ok:
-            ok = all(planner.plan(home, leg) is not None
-                     and planner.plan(leg, home) is not None for leg in legs)
         if ok:
             connected.append(theta)
         else:
@@ -345,7 +353,8 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
 
     return dict(rho_gt=rho_gt, feasible=feasible, arm_solutions=arm_solutions,
                 start_q=start_q, presentation=presentation,
-                finger=checker.finger_value, n_grid=len(grid),
+                finger=checker.finger_value, tcp_z_m=checker.tcp_z_m,
+                n_grid=len(grid),
                 checker=checker, planner=planner, gripper=gripper,
                 scorer=scorer, view_poses=view_poses,
                 path_diagram=path_diagram)
@@ -436,7 +445,7 @@ class PlannerScreen:
         # 본다 (시뮬레이션). 실물에서는 지그를 대도 몇 mm 는 어긋나므로 켠다.
         self.grasp_sigma_m = float(grasp_sigma_m)
         self.grasp_hat = np.zeros(3)
-        self.total_mass_kg = float(obj.assembled_mass_kg(spec, setup["rho_gt"]))
+        self.total_mass_kg = float(alg.VOLUMES @ alg.MU0)
         self.rho_gt = setup["rho_gt"]
 
         builder = DiagramBuilder()
@@ -456,6 +465,7 @@ class PlannerScreen:
         self.rho_prior = alg.MU0.copy()
         self.blocks = []
         self.rounds = []          # (measured_theta, y) — TLS 가 쓴다
+        self.g_history = []       # 영점 차감에 사용한 실제 센서 중력 방향
         self.inflate = 1.0
         self.bias_cov = None
 
@@ -474,9 +484,17 @@ class PlannerScreen:
         프레임이 원점이므로, 거기서 base_bbox_center_in_sensor_mm 만큼
         되돌리면 파지점이 된다 (robot_scene._add_object 의 obj_sensor 와 같다).
         """
-        origin = -np.array(self.spec.base_bbox_center_in_sensor_mm) * rs.MM
-        jaw, _ = rs.grasp_axes(self.spec)
-        jaw = np.asarray(jaw, dtype=float)
+        measured = rs.load_measured_grasp()
+        if measured is None:
+            origin = -np.array(self.spec.base_bbox_center_in_sensor_mm) * rs.MM
+            jaw, _ = rs.grasp_axes(self.spec)
+            jaw = np.asarray(jaw, dtype=float)
+        else:
+            # 바닥에 떠 있는 명목 점이 아니라 실제 Robotiq 패드 중점.
+            X_O_G = np.linalg.inv(measured)
+            point_g = np.array([0.0, 0.0, self.setup["tcp_z_m"], 1.0])
+            origin = (X_O_G @ point_g)[:3]
+            jaw = X_O_G[:3, 0]
         jaw = jaw / np.linalg.norm(jaw)
         half = 0.5 * rs.jaw_dimension_m(self.spec) + 0.5 * PAD_SIZE_M[0]
 
@@ -490,7 +508,9 @@ class PlannerScreen:
                                    Rgba(0.16, 0.17, 0.20, 0.85))
             self.meshcat.SetTransform(
                 node, RigidTransform(origin + sign * half * jaw))
-        print(f"  [1] 파지점 표시: 부위 {self.spec.parts[0].name},"
+        print(f"  [1] 파지점 표시:"
+              f" {'실측 패드 중심' if measured is not None else '명목점'},"
+              f" 부위 {self.spec.parts[0].name},"
               f" 단면 {1000*rs.jaw_dimension_m(self.spec):.1f} mm,"
               f" 개구 {1000*self.setup['finger']:.1f} mm")
 
@@ -515,6 +535,12 @@ class PlannerScreen:
 
     def converged(self):
         return self.half_width() <= self.target
+
+    def absolute_half_width(self):
+        return dc.absolute_half_width(
+            self.Sigma,
+            Cov_bias=self.bias_cov if self.stop_rule == "bias" else None,
+            inflate=1.0 if self.stop_rule == "variance" else self.inflate)
 
     # ------------------------------------------------------------------
     def score(self, theta):
@@ -619,16 +645,19 @@ class PlannerScreen:
         planner.set_fixed(q)
         home = np.array(self.setup["start_q"])[indices]
         legs = [np.array(arm)[indices] for arm in solutions.values()]
-        # prepare() 와 같은 기준: 실행할 사슬 + home 왕복(되돌아갈 길).
+        # 실행할 사슬을 검사하면 중간에 멈춰도 그 길을 거꾸로 돌아갈
+        # 수 있다. home<->각 leg 별 모양 재검사는 새 RRT 하나를 더
+        # 돌릴 뿐 안전성을 더하지 않으므로 하지 않는다.
         chain = [home] + legs + [home]
+        started, checks = time.perf_counter(), planner.checks
         for i in range(len(chain) - 1):
-            if planner.plan(chain[i], chain[i + 1]) is None:
+            if planner.plan(chain[i], chain[i + 1], shortcut_rounds=0) is None:
+                print(f"        경로 검증 {time.perf_counter()-started:.1f}초,"
+                      f" 충돌·FOV 질의 {planner.checks-checks}회"
+                      f" ({i + 1}/{len(chain) - 1} 구간 실패)")
                 return False
-        for leg in legs:
-            if planner.plan(home, leg) is None:
-                return False
-            if planner.plan(leg, home) is None:
-                return False
+        print(f"        경로 검증 {time.perf_counter()-started:.1f}초,"
+              f" 충돌·FOV 질의 {planner.checks-checks}회")
         return True
 
     def select_continuous(self, round_index):
@@ -729,8 +758,8 @@ class PlannerScreen:
             best_score = float(gains.max())
             _, solutions = self.check_candidate(theta)
             self.show(theta)
-        R_eff = aa.effective_covariance(self.spec, theta, self.rho_hat,
-                                        self.angle_rel_error)
+        R_eff = dc.effective_cov(theta, self.rho_hat, alg.G_DIRS,
+                                self.angle_rel_error, self.angle_floor_deg)
         share = 1.0 - float(np.mean(alg.R_STACK_DIAG)) / float(np.mean(np.diag(R_eff)))
         deg = np.degrees(theta)
         shown = model_to_observed_deg(self.spec.key, deg)
@@ -762,15 +791,23 @@ class PlannerScreen:
             time.sleep(0.5)
         self.show(measured)
 
-        wrench = np.array(reply["wrench"])
-        A = alg.regressor(measured)
-        R_eff = aa.effective_covariance(self.spec, measured, self.rho_hat,
-                                        self.angle_rel_error)
+        poses = reply.get("measurement_poses") or []
+        if poses and len(poses) != len(alg.G_DIRS):
+            raise ValueError("렌치와 실제 중력 방향의 측정 수가 다릅니다")
+        if reply.get("gravity_tare") and not poses:
+            raise ValueError("연속 영점 보정에는 실제 FK 중력 방향 기록이 필요합니다")
+        directions = dc.round_directions(
+            [p["achieved_g_hat"] for p in poses] if poses else alg.G_DIRS, 1)[0]
+        A, wrench = dc.measurement_equation(measured, reply, directions)
+        R_eff = dc.effective_cov(measured, self.rho_hat, directions,
+                                self.angle_rel_error, self.angle_floor_deg)
         self.blocks.append((A, wrench, R_eff))
         self.rounds.append((measured, wrench))
+        self.g_history.append(directions)
         self.Sigma = aa.posterior_covariance(self.Sigma, A, R_eff)
 
         grasp_init = None
+        grasp_mass = self.total_mass_kg
         if self.grasp_sigma_m > 0.0:
             # 파지점 어긋남을 미지수로 함께 푼다. 먼저 선형으로 풀어 두고
             # (안정적이다) 그 값을 TLS 의 시작점으로 넘긴다. 찬 시작으로
@@ -778,7 +815,7 @@ class PlannerScreen:
             # (어긋남이 없는데도 9 mm 를 지어내며 오차 110% 가 났다).
             rho_lin, grasp_init, Sigma_full = dc.grasp_map(
                 self.blocks, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS,
-                dc.CANONICAL_TRIAD, self.total_mass_kg,
+                self.g_history, self.total_mass_kg,
                 grasp_sigma_m=self.grasp_sigma_m)
             self.grasp_hat = grasp_init
             self.Sigma = Sigma_full[:len(alg.MU0), :len(alg.MU0)]
@@ -791,33 +828,39 @@ class PlannerScreen:
             # 모형 안에 있으므로 오차변수 치우침이 남지 않는다.
             self.rho_hat, tls_info = dc.tls_map(
                 self.rounds, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS,
-                dc.CANONICAL_TRIAD, rho_init=rho_wls,
+                self.g_history, rho_init=rho_wls,
                 rel_error=self.angle_rel_error,
+                floor_deg=self.angle_floor_deg,
                 grasp_sigma_m=self.grasp_sigma_m,
-                total_mass_kg=self.total_mass_kg,
                 grasp_init=grasp_init)
+            self.Sigma = dc.tls_covariance(tls_info, len(alg.MU0))
             if self.grasp_sigma_m > 0.0 and len(tls_info.get("grasp", ())) == 3:
                 self.grasp_hat = np.asarray(tls_info["grasp"], dtype=float)
         else:
             self.rho_hat, tls_info = rho_wls, None
 
+        self.total_mass_kg = float(alg.VOLUMES @ self.rho_hat)
+        if self.estimator == "tls":
+            grasp_mass = self.total_mass_kg
+
         # 미지수로 함께 푼 것은 **무엇이든** 잔차를 잴 때 반영해야 한다.
         # 파지점 몫은 예측에 더하고, 각도 보정량은 회귀행렬에 넣는다. 후자를
         # 빠뜨리면 TLS 가 찾아낸 보정량이 통째로 잔차로 잡혀 팽창이 80배까지
         # 뛰고, 추정이 이미 목표를 넘었는데도 정지 조건이 만족되지 않는다.
-        grasp_offset = (dc.grasp_columns(dc.CANONICAL_TRIAD,
-                                         self.total_mass_kg) @ self.grasp_hat
+        grasp_offset = (np.asarray([dc.grasp_columns(g, grasp_mass)
+                                   @ self.grasp_hat for g in self.g_history])
                         if self.grasp_sigma_m > 0.0 else None)
         self.inflate = dc.residual_scale(
-            self.blocks, self.rounds, self.rho_hat, dc.CANONICAL_TRIAD,
+            self.blocks, self.rounds, self.rho_hat, self.g_history,
             tls_info if self.estimator == "tls" else None,
             stop_rule=self.stop_rule, grasp_offset=grasp_offset,
             n_grasp=3 if self.grasp_sigma_m > 0.0 else 0)
         if self.stop_rule == "bias":
             self.bias_cov = dc.bias_by_refit(
                 self.rounds, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS,
-                dc.CANONICAL_TRIAD, self.rho_hat, self.systematic,
-                self.estimator, self.angle_rel_error)
+                self.g_history, self.rho_hat, self.systematic,
+                self.estimator, self.angle_rel_error, self.angle_floor_deg,
+                grasp_sigma_m=self.grasp_sigma_m)
 
         half = dc.half_width(
             self.Sigma, self.rho_hat,
@@ -964,6 +1007,10 @@ class RobotScreen:
             self.arm_joints, min_distance_m, self.q, seed=seed,
             pose_is_valid=lambda: rs.object_in_camera(
                 self.plant, self.planner.context, self.spec, self.payload))
+        if driver is not None and getattr(driver, "motion_anchor", None) is not None:
+            self.planner.limit_to_start(driver.motion_anchor, driver.motion_radius)
+        if driver is not None:
+            driver.set_collision_planner(self.planner)
         self.min_distance_m = min_distance_m
         self.plan_iters = plan_iters
         self.plan_cache = {}
@@ -1035,6 +1082,10 @@ class RobotScreen:
         """
         duration_s = duration_s or self.move_duration_s
         target = np.array([full_q[j.position_start()] for j in self.arm_joints])
+        if self.driver is not None:
+            self.sync_from_robot()
+            if hasattr(self.driver, "check_motion_window"):
+                self.driver.check_motion_window(target)
         start = np.array([self.q[j.position_start()] for j in self.arm_joints])
         gap = (target - start + np.pi) % (2.0 * np.pi) - np.pi
         if np.max(np.abs(gap)) <= np.deg2rad(0.5):
@@ -1056,7 +1107,7 @@ class RobotScreen:
         # RRT-Connect 로 충돌 없는 경로를 찾는다. 직선 보간은 두 끝점만
         # 안전할 뿐 사이를 보장하지 않는다 (물체가 테이블을 관통했다).
         path = self.plan_path(start, target)
-        if path is None and allow_recovery:
+        if path is None and allow_recovery and not self.planner.direct_only:
             # 현재 자세가 이미 10 mm/FOV 기준 밖이면 엄격 계획기는 출발점부터
             # 거부한다. 초기자세로 빠져나가는 직선이 현재 간격보다 나빠지지
             # 않고 목표가 엄격 기준을 통과할 때만 한 번 허용한다.
@@ -1463,6 +1514,30 @@ class RobotScreen:
               f" {np.round(np.degrees(actual), 1)} deg"
               f"  (시작 자세와 최대 {np.degrees(np.abs(actual - start)).max():.1f} deg 차이)")
 
+    def use_current_as_start(self):
+        """로봇을 움직이지 않고 지금 관절각을 초기 자세로 채택한다."""
+        self.sync_from_robot()
+        current = np.array([self.q[j.position_start()] for j in self.arm_joints])
+        fixed = self.q.copy()
+        for joint, value in zip(self.object_joints, self.believed_q_deg):
+            fixed[joint.position_start()] = np.deg2rad(value)
+        self.planner.set_fixed(fixed)
+        if not self.planner.valid(current):
+            self.console.stopped("현재 자세는 충돌/FOV 기준 밖 — 초기 자세로 쓰지 않음")
+            print("[로봇] 현재 자세가 충돌·안전 여유·카메라 FOV 검사를"
+                  " 통과하지 못해 초기 자세를 바꾸지 않았습니다.")
+            return False
+        start_q = np.array(self.setup["start_q"], dtype=float).copy()
+        for joint, value in zip(self.arm_joints, current):
+            start_q[joint.position_start()] = value
+        self.setup["start_q"] = start_q
+        self.plan_cache.clear()
+        self.console.stopped(
+            f"현재 자세를 초기 자세로 설정 {np.round(np.degrees(current), 1)} deg")
+        print(f"[로봇] 현재 자세를 초기 자세로 설정했습니다:"
+              f" {np.round(np.degrees(current), 1)} deg (로봇 이동 없음)")
+        return True
+
     # -- 파지 안내 그림 ------------------------------------------------
     def _draw_guide_part(self, path, part, X_GP, rgba=None):
         """부위 하나를 안내 화면에 그린다.
@@ -1853,11 +1928,17 @@ class RobotScreen:
         if self.autostart:
             print("[로봇] --autostart 라 바로 시작합니다.")
         else:
-            button = self.console.button("두 화면 확인 · 작업영역 비움 — 이동 승인")
+            use_current = self.console.button("현재 자세를 초기 자세로 설정")
+            approve = self.console.button("두 화면 확인 · 작업영역 비움 — 이동 승인")
             print("[로봇] 왼쪽·오른쪽 화면을 모두 연 뒤 오른쪽 화면의"
                   " 시작 버튼을 누르세요.")
-            start = self.ui.GetButtonClicks(button)
-            while self.ui.GetButtonClicks(button) == start:
+            current_clicks = self.ui.GetButtonClicks(use_current)
+            approve_clicks = self.ui.GetButtonClicks(approve)
+            while self.ui.GetButtonClicks(approve) == approve_clicks:
+                clicks = self.ui.GetButtonClicks(use_current)
+                if clicks != current_clicks:
+                    self.use_current_as_start()
+                    current_clicks = clicks
                 time.sleep(0.05)
             self.console.clear()
         # 파지가 먼저, 이동이 나중. execute() 첫머리의 '시작 자세로 이동'이
@@ -1904,7 +1985,7 @@ class RobotScreen:
         # 예전에는 이 값이 지난 라운드 각도로 남아 있어서, 이번 라운드의
         # 물체 모양과 다른 형상으로 경로를 짰다. 그 경로는 실제로는 물체가
         # 다른 곳에 있으므로 부딪힐 수 있다.
-        self.believed_q_deg = deg.copy()
+        self.believed_q_deg = actual.copy()
 
         # --- 3) FoundationPose 로 각도 측정 ---
         measured = self.measure_angles(actual, deg)
@@ -1917,10 +1998,11 @@ class RobotScreen:
             print(f"[로봇] 측정값 {np.round(measured, 2)} 가 구동범위를 벗어나"
                   f" {np.round(clipped, 2)} 로 보정")
         measured = clipped
-        # 경로 계획도 계획 쪽이 검사한 그 형상으로 해야 검사와 일치한다.
-        # 측정 각도는 밀도 추정에만 쓴다.
-        self.believed_q_deg = (deg.copy() if target.get("arm_solutions")
-                               else measured.copy())
+        # 파지 변환은 고정하고, 바뀐 관절각으로 실제 경로를 다시 검사한다.
+        self.believed_q_deg = measured.copy()
+        if self.pose_sensor is not None:
+            self.object_q_deg = measured.copy()
+            self.set_object_deg(measured)
         print(f"[로봇] FoundationPose 각도 측정 {np.round(measured, 2)} deg"
               f"  (명령 {np.round(deg, 2)}, 실제 {np.round(actual, 2)})")
 
@@ -1948,11 +2030,12 @@ class RobotScreen:
         # --- 5~6) 자세마다 이동하고 **그 자리에서** 렌치를 읽는다 ---
         # 한 자세로 다 돌고 나서 한꺼번에 읽으면 안 된다. 실물 센서는 지금
         # 손목에 걸린 것만 읽으므로, 중력 방향마다 그 자리에서 재야 한다.
-        self.console.measuring()
         readings = []
         self.last_raw, self.last_tare = [], []
+        self.last_measurement_poses = []
         for g_hat in alg.G_DIRS:
             name = f"탐색 자세 (중력 {np.round(g_hat, 0)})"
+            self.console.stopped(f"{name} 경로 계산 중")
             if not self.move_to(solutions[tuple(g_hat)], name):
                 # 직접 간선이 막혔다. 시작 자세를 거쳐 돌아간다 — prepare()
                 # 가 home 왕복을 함께 검증해 두므로 이 길은 있어야 한다.
@@ -1963,6 +2046,7 @@ class RobotScreen:
                 if not self.move_to(solutions[tuple(g_hat)], name):
                     return dict(round=target["round"], aborted=True)
             time.sleep(self.settle_s)         # 흔들림이 가라앉기를 기다린다
+            self.console.measuring()
             readings.append(self.read_one(g_hat, actual))
         wrench = np.concatenate(readings)
         flat = lambda rows: ([float(v) for v in np.concatenate(rows)]
@@ -1973,6 +2057,9 @@ class RobotScreen:
                     wrench=[float(v) for v in wrench],
                     wrench_raw=flat(self.last_raw),
                     tare_applied=flat(self.last_tare),
+                    tare_required=self.wrench_sensor is not None,
+                    gravity_tare=isinstance(self.tare, hw.GravityTare),
+                    measurement_poses=self.last_measurement_poses,
                     robot_joint_deg=[float(v) for v in
                                      np.degrees(np.asarray(self.q)[
                                          [j.position_start()
@@ -2123,8 +2210,32 @@ class RobotScreen:
         if hasattr(self.wrench_sensor, "set_pose"):
             self.wrench_sensor.set_pose(
                 np.deg2rad(np.atleast_1d(actual_deg)), g_hat)
+        continuous = isinstance(self.tare, hw.GravityTare)
+        if continuous and self.driver is None:
+            raise RuntimeError("연속 중력 보정에는 로봇 관절 피드백이 필요합니다")
+        q_before = (self.driver.joint_positions()
+                    if continuous or getattr(self.driver, "motion_anchor", None) is not None
+                    else None)
         raw = self.wrench_sensor.read_raw(self.samples_per_hold)
-        tared = self.tare.apply(g_hat, raw)
+        if q_before is not None:
+            q_after = self.driver.joint_positions()
+            import hardware_real as hr
+            if np.max(np.abs(hr.principal_angles(q_after - q_before))) > np.deg2rad(0.1):
+                raise hr.SafetyViolation("F/T 평균 측정 중 로봇 자세가 변했습니다")
+            for joint, value in zip(self.arm_joints, q_after):
+                self.q[joint.position_start()] = value
+            self.plant.SetPositions(self.plant_context, self.q)
+            rotation = self.plant.GetBodyByName("ft_mount").body_frame().CalcPoseInWorld(
+                self.plant_context).rotation().matrix()
+            achieved = rotation.T @ np.array([0.0, 0.0, -1.0])
+            error = float(np.degrees(np.arccos(np.clip(np.dot(achieved, g_hat), -1, 1))))
+            if error > np.degrees(rs.ANGLE_TOL_RAD) + 0.1:
+                raise hr.SafetyViolation(f"실제 F/T 중력 방향 오차 {error:.2f}°: 차감 중단")
+            self.last_measurement_poses.append(dict(
+                g_hat=np.asarray(g_hat).tolist(), achieved_g_hat=achieved.tolist(),
+                robot_joint_deg=np.degrees(q_after).tolist(), direction_error_deg=error,
+                wrench_frame="ft_mount", sampled_at_s=time.time()))
+        tared = self.tare.apply(achieved if continuous else g_hat, raw)
         # 영점 적용 **전** 값을 남긴다. 이게 없으면 나중에 "센서가 이상한가,
         # 영점이 이상한가" 를 못 가른다. session_20260904_1736 이 정확히 그
         # 이유로 사후 분석에서 막혔다 — 잔차 팽창 6506 의 출처를 못 찾았다.
@@ -2279,7 +2390,12 @@ def connect_hardware(args, spec=None):
 
     driver = hr.Rb5Driver(hr.RbpodoBackend(
         host=getattr(args, "robot_host", "192.168.0.10")))
-    wrench = hr.Aft200Sensor(sample_fn=_ft_sample_fn(args))
+    radius = float(getattr(args, "max_start_deviation_deg", 2.0))
+    if not np.isfinite(radius) or radius <= 0:
+        raise ValueError("시작 자세 이동 제한은 양의 유한수여야 합니다")
+    driver.limit_to_start(driver.joint_positions(), np.deg2rad(radius))
+    wrench = hr.Aft200Sensor(sample_fn=_ft_sample_fn(args),
+                            gripper_status_file=getattr(args, "gripper_status_file", None))
     pose_fn, stamp_fn = _pose_fn(args)
     pose = hr.FoundationPoseSensor(
         pose_fn=pose_fn, stamp_fn=stamp_fn,
@@ -2358,6 +2474,15 @@ def _load_tare(args):
         return tare
     path = Path(path).expanduser()
     payload = json.loads(path.read_text())
+    if payload.get("wrench_frame") != "ft_mount":
+        raise RuntimeError("영점의 F/T 프레임이 검증되지 않았습니다. 기존 obj_sensor 영점은 재사용할 수 없습니다")
+    if payload.get("measured", {}).get("passed") is not True:
+        raise RuntimeError("물리 검산을 통과한 영점이 필요합니다. 먼저 정지 하중 차분을 검증하세요")
+    if getattr(args, "tare_mode", "gravity") == "gravity":
+        tare = hw.GravityTare(payload, max_age_s=tare.max_age_s)
+        print(f"  연속 공구 중력 보정: {tare.mass_kg:.4f} kg, "
+              f"도심 {np.round(1000*tare.com_m, 2)} mm, 조건수 {tare.condition:.2f}")
+        return tare
     entries = payload["entries"]
     # 잰 시각을 그대로 넘긴다. 안 넘기면 '읽은 시각' 이 기준이 되어,
     # 3 일 전 파일도 읽는 순간 나이가 0 이 된다.
@@ -2560,13 +2685,17 @@ def main():
     parser.add_argument("--pose-max-age-s", type=float, default=2.0,
                         help="이보다 오래된 트래커 값은 거부한다")
     parser.add_argument("--tare-file", default=None,
-                        help="3자세 영점 조정 JSON (MeshPCA pivot/tare_real.py 산출)."
+                        help="여러 빈 공구 자세의 영점 JSON (tare_real.py 산출)."
                              " 실물에서는 반드시 필요하다")
+    parser.add_argument("--tare-mode", choices=("gravity", "table"), default="gravity",
+                        help="gravity: 현재 FK 중력으로 공구 보정, table: 과거 방향별 영점표")
     parser.add_argument("--tare-max-age-s", type=float, default=None,
                         help="이보다 오래된 영점 조정값은 거부한다. 0이면 세션 동안 재사용")
     parser.add_argument("--aft-host", default="192.168.50.51",
                         help="AFT200 컨트롤러 주소 (Modbus TCP 502)")
     parser.add_argument("--aft-hz", type=float, default=50.0)
+    parser.add_argument("--gripper-status-file", type=Path,
+                        help="창3 상태 파일: 닫힘 완료 후에만 F/T 평균 수집")
     parser.add_argument("--meshpca-root", default="~/MeshPCA",
                         help="팀원 MeshPCA 체크아웃 (pivot/aft_tare.py 위치)")
     parser.add_argument("--no-density-view", action="store_true",
@@ -2579,9 +2708,11 @@ def main():
                         default=DEFAULT_MAX_JOINT_SPEED_DEG,
                         help="관절 속도 상한 [deg/s]. 경로가 길면 이동 시간을"
                              " 늘려서라도 이 속도를 넘지 않는다. 0 이면 끔.")
+    parser.add_argument("--max-start-deviation-deg", type=float, default=2.0,
+                        help="실물 검증의 최초 자세 기준 각 관절 이동 한계. 기본 ±2°, 우회 금지")
     parser.add_argument("--grasp-sigma-mm", type=float, default=None,
                         help="파지점이 어긋날 수 있는 크기 [mm]. 0 이면 정확히"
-                             " 안다고 본다. 기본값은 sim 0, deploy 5.")
+                             " 안다고 본다. 각 축 1σ이며 기본값은 sim 0, deploy 10.")
     parser.add_argument("--grasp-error-mm", type=float, default=0.0,
                         help="시뮬레이션에서 파지점을 일부러 이만큼 어긋뜨린다"
                              " (실물이 그렇기 때문). 방향은 --seed 로 정해진다.")
@@ -2640,10 +2771,6 @@ def main():
     start_arm_q = (None if args.start_arm_deg is None
                    else np.deg2rad(args.start_arm_deg))
     start_theta = None
-    if (start_arm_q is None and args.mode == "deploy" and args.hardware == "real"
-            and args.arm_backend == "rbpodo"):
-        import hardware_real as hr
-        start_arm_q = hr.RbpodoBackend(args.robot_host).joint_positions()
     if args.pose_file:
         read_pose, _ = _pose_fn(args)
         start_theta = np.deg2rad(read_pose()[0])
@@ -2697,6 +2824,8 @@ def main():
     scene_diagram.ForcedPublish(scene_context)
     robot_meshcat.SetCameraPose(*rs.camera_view(rs.CAMERA))
 
+    if args.hardware == "real" and args.mode == "deploy" and args.grasp_frame != "measured":
+        raise RuntimeError("실물 F/T 프레임과 회귀를 맞추려면 --grasp-frame measured가 필요합니다")
     setup = prepare(spec, hinge, limits, args.safety, args.steps,
                     args.min_distance_mm * rs.MM, scale, prior=args.prior,
                     gripper=args.gripper, view_poses=not args.no_view_poses,
@@ -2719,7 +2848,7 @@ def main():
 
     grasp_sigma_m = (args.grasp_sigma_mm * 1e-3
                      if args.grasp_sigma_mm is not None
-                     else (0.005 if args.mode == "deploy" else 0.0))
+                     else (0.010 if args.mode == "deploy" else 0.0))
     grasp_error_m = None
     if args.grasp_error_mm > 0.0:
         direction = np.random.default_rng(args.seed).normal(size=3)
@@ -2779,6 +2908,25 @@ def main():
                         max_joint_speed_deg=args.max_joint_speed_deg,
                         settle_s=args.settle_s,
                         gripper=gripper)
+
+    def stop_exploration(_signum, _frame):
+        """통합 UI의 중단 요청. 이동 중이면 먼저 제어기에 정지를 보낸다."""
+        halted = driver is None
+        error = None
+        try:
+            if driver is not None:
+                driver.stop()
+                halted = True
+        except Exception as exc:  # noqa: BLE001 - 실패해도 프로세스는 중단한다
+            error = exc
+        if halted:
+            robot.console.stopped("탐색 중단 완료")
+        else:
+            robot.console.moving(
+                f"탐색 중단 명령 실패 ({error}) — 비상정지 버튼을 누르세요")
+        raise ExplorationStopped
+
+    signal.signal(signal.SIGUSR1, stop_exploration)
     if args.skip_grasp:
         robot.await_grasp = lambda: print("[파지] 통합 UI에서 확인 완료 — 중복 단계를 건너뜁니다")
     share = robot.inertial_share(args.move_duration)
@@ -2824,6 +2972,9 @@ def main():
             robot.console.clear()
         robot.console.stopped("초기 자세 이동 완료 · 정보이득 탐색 시작")
     for index in range(1, args.max_rounds + 1):
+        if robot is not None:
+            robot.console.stopped(
+                f"라운드 {index} 다음 정보이득 각도·경로 계산 중")
         try:
             selected = planner.select(index)
         except NoFeasibleAngle as exc:
@@ -2863,6 +3014,9 @@ def main():
                     #   robot_joint_deg  그때 로봇이 어디 있었나
                     "wrench_raw": reply.get("wrench_raw"),
                     "tare_applied": reply.get("tare_applied"),
+                    "tare_required": reply.get("tare_required", False),
+                    "gravity_tare": reply.get("gravity_tare", False),
+                    "measurement_poses": reply.get("measurement_poses"),
                     "robot_joint_deg": reply.get("robot_joint_deg"),
                 },
                 # 추정이 스스로 매긴 점수. 1 에 가까우면 모형이 데이터를
@@ -2870,6 +3024,13 @@ def main():
                 # 렌치가 같이 있어야 사후에 원인을 좁힐 수 있다.
                 "residual_inflation": float(planner.inflate),
                 "grasp_offset_mm": [float(1000 * v) for v in planner.grasp_hat],
+                "uncertainty_assumptions": {
+                    "angle_floor_sigma_deg": planner.angle_floor_deg,
+                    "angle_relative_sigma": planner.angle_rel_error,
+                    "grasp_per_axis_sigma_mm": 1000 * planner.grasp_sigma_m,
+                    "grasp_shared_across_rounds": True,
+                    "source": "user_selected_1sigma_not_measured_accuracy",
+                },
                 "parts": [{"name": row["name"],
                            "label": labels.get(row["name"], row["name"]),
                            "volume_m3": float(row["volume_m3"])}
@@ -2878,6 +3039,19 @@ def main():
                 "densities_kg_m3": [float(v) for v in planner.rho_hat],
                 "relative_half_width": [float(v) for v in
                                         planner.half_width(per_part=True)],
+                "absolute_half_width_kg_m3": planner.absolute_half_width().tolist(),
+                "density_interval_kg_m3": np.column_stack([
+                    planner.rho_hat - planner.absolute_half_width(),
+                    planner.rho_hat + planner.absolute_half_width()]).tolist(),
+                # 정답은 저장 후 평가에만 쓴다. 추정·정지 조건에는 전달하지 않는다.
+                "evaluation": {
+                    "reference_density_kg_m3": planner.rho_gt.tolist(),
+                    "absolute_density_error_kg_m3": np.abs(planner.rho_hat - planner.rho_gt).tolist(),
+                    "relative_density_error": (np.abs(planner.rho_hat - planner.rho_gt)
+                                               / np.maximum(np.abs(planner.rho_gt), 1e-9)).tolist(),
+                    "reference_inside_interval": (np.abs(planner.rho_hat - planner.rho_gt)
+                                                  <= planner.absolute_half_width()).tolist(),
+                },
                 "converged": bool(planner.converged()),
                 "updated_at": time.time(),
             }
@@ -2909,12 +3083,13 @@ def main():
     # ---- URDF 생성은 사용자 승인을 받는다 ----
     print("\n" + "=" * 66)
     print("탐색 결과")
-    for row, gt, est, sd in zip(obj.body_table(spec), planner.rho_gt,
+    for row, gt, est, half in zip(obj.body_table(spec), planner.rho_gt,
                                 planner.rho_hat,
-                                np.sqrt(np.diag(planner.Sigma))):
+                                planner.absolute_half_width()):
         mark = "" if row["kind"] == "part" else "  (힌지, 저울로 앎)"
-        print(f"  {row['name']:<13} 밀도 {est:8.1f} +/-{1.96*sd:6.1f} kg/m^3"
-              f"   [GT {gt:7.0f}  오차 {100*abs(est-gt)/gt:5.2f}%]{mark}")
+        print(f"  {row['name']:<13} 밀도 {est:8.1f} +/-{half:6.1f} kg/m^3"
+              f"   [GT {gt:7.0f}  절대오차 {abs(est-gt):.1f} kg/m^3"
+              f"  상대오차 {100*abs(est-gt)/gt:5.2f}%]{mark}")
     print("=" * 66)
     if robot is not None and robot.grasp_report is not None:
         report = robot.grasp_report
@@ -2941,7 +3116,7 @@ def main():
             density_panel.show(
                 dvw.panel_columns(planner.rho_prior, planner.rho_hat,
                                   planner.rho_gt if show_gt else None),
-                half_width=1.96 * np.sqrt(np.diag(planner.Sigma)))
+                half_width=planner.absolute_half_width())
             print(f"\n  [밀도 비교 화면] {panel_meshcat.web_url()}")
             print("    왼쪽=초기값(저울 총무게만 앎), 가운데=탐색 결과"
                   + (", 오른쪽=정답(채점용)" if show_gt else "")
@@ -2975,4 +3150,9 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except ExplorationStopped:
+        print("[중단] 탐색을 중단했습니다. 화면은 확인할 수 있게 유지합니다.")
+        while True:
+            time.sleep(1.0)

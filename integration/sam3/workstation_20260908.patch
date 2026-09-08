@@ -1,0 +1,18 @@
+diff --git a/sam3/model/sam3_base_predictor.py b/sam3/model/sam3_base_predictor.py
+index 13bd464..21a0dcc 100644
+--- a/sam3/model/sam3_base_predictor.py
++++ b/sam3/model/sam3_base_predictor.py
+@@ -133,7 +133,12 @@ class Sam3BasePredictor:
+             init_kwargs["async_loading_frames"] = self.async_loading_frames
+         if hasattr(self, "video_loader_type"):
+             init_kwargs["video_loader_type"] = self.video_loader_type
+-        inference_state = self.model.init_state(**init_kwargs)
++        import inspect
++
++        valid_params = inspect.signature(self.model.init_state).parameters
++        inference_state = self.model.init_state(
++            **{k: v for k, v in init_kwargs.items() if k in valid_params}
++        )
+ 
+         if not session_id:
+             session_id = str(uuid.uuid4())

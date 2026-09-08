@@ -182,7 +182,9 @@ class Conductor:
             str(TOOLS / "grasp_measure.py"),
             "--pose-file", str(Path(pose_file) / "latest.json"),
             "--session", str(self.session.root),
-            "--part", self.conf.get("FP_GRASP_PART", "support")]
+            "--part", self.conf.get("FP_GRASP_PART", "support"),
+            "--grasp-target", str(HERE / "outputs" /
+                                  f"grasp_target_{self.conf.get('OBJECT', 'desklamp')}.json")]
         host = self.conf.get("ROBOT_HOST")
         if host:
             command += ["--robot-host", host]
@@ -382,7 +384,9 @@ class Conductor:
             "--prior", "water",
             "--target", conf.get("TARGET", "0.05"),
             "--max-rounds", conf.get("MAX_ROUNDS", "8"),
-            "--angle-floor-deg", conf.get("ANGLE_FLOOR_DEG", "2.0"),
+            "--angle-floor-deg", conf.get("ANGLE_FLOOR_DEG", "3.0"),
+            "--angle-error", conf.get("ANGLE_REL_ERROR", "0"),
+            "--grasp-sigma-mm", conf.get("GRASP_SIGMA_MM", "10"),
             "--move-duration", conf.get("MOVE_DURATION", "8"),
             "--dashboard-session", str(self.session.root),
             "--skip-grasp", "--no-gripper",
@@ -390,6 +394,7 @@ class Conductor:
         for flag, key in (("--gripper-port", "GRIPPER_PORT"),
                           ("--gripper-force", "GRIPPER_FORCE"),
                           ("--tare-file", "TARE_FILE"),
+                          ("--tare-mode", "TARE_MODE"),
                           ("--tare-max-age-s", "TARE_MAX_AGE_S"),
                           ("--meshpca-root", "MESHPCA_ROOT"),
                           ("--aft-host", "AFT_HOST"),
@@ -406,11 +411,14 @@ class Conductor:
                 command += [flag, conf[key]]
         if conf.get("FP_OUTPUT"):
             command += ["--pose-file", str(Path(conf["FP_OUTPUT"]) / "latest.json")]
+            command += ["--gripper-status-file", str(Path(conf["FP_OUTPUT"]) / "hardware.json")]
         if conf.get("START_ARM_DEG"):
             command += ["--start-arm-deg", *conf["START_ARM_DEG"].split()]
         print("  탐색을 시작합니다 (dual_view). 창 3·4 가 갱신됩니다.")
-        ok = subprocess.run(command, env=env,
-                            stdin=subprocess.DEVNULL).returncode == 0
+        process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL)
+        if self.dashboard is not None:
+            self.dashboard.set_experiment_process(process)
+        ok = process.wait() == 0
         posterior = self.session.read(f"posterior_round_{self.round}.json")
         if posterior:
             self.show_density_meshes(posterior)
