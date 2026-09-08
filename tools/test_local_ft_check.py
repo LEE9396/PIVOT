@@ -90,6 +90,12 @@ class LocalFTChecks(unittest.TestCase):
         np.testing.assert_allclose(robot.last_measurement_poses[0]['achieved_g_hat'], g)
 
     def test_planner_uses_actual_gravity_shared_grasp_and_three_degree_sigma(self):
+        self.check_planner_mass(None)
+
+    def test_torque_planner_keeps_measured_mass_in_tls_across_rounds(self):
+        self.check_planner_mass(.569)
+
+    def check_planner_mass(self, fixed_mass):
         import angle_aware as aa
         import density_id_drake as alg
         import density_id_objects as obj
@@ -97,17 +103,24 @@ class LocalFTChecks(unittest.TestCase):
         import dual_view
         from pydrake.math import RotationMatrix
 
+        use_force = alg.USE_FORCE_ROWS
+        self.addCleanup(alg.set_torque_only, not use_force)
+        alg.set_torque_only(fixed_mass is not None)
         spec = desk_lamp.build_spec(grasp_at='pinch', grasp_part='link_3')
         obj.bind_object(spec)
         truth = np.linspace(700., 1500., alg.P)
+        if fixed_mass is not None:
+            truth *= fixed_mass / (alg.VOLUMES @ truth)
+            obj.apply_weight_prior(spec, fixed_mass)
         masses = alg.VOLUMES * truth
         grasp = np.array([.004, -.003, .002])
         planner = dual_view.PlannerScreen.__new__(dual_view.PlannerScreen)
         planner.__dict__.update(spec=spec, blocks=[], rounds=[], g_history=[],
             rho_hat=alg.MU0.copy(), Sigma=alg.SIGMA0.copy(), rho_gt=truth,
             grasp_sigma_m=.010, grasp_hat=np.zeros(3), angle_rel_error=0.,
-            grasp_mu_m=np.zeros(3), fixed_mass_kg=None,
-            angle_floor_deg=3., total_mass_kg=float(alg.VOLUMES @ alg.MU0),
+            grasp_mu_m=np.zeros(3), fixed_mass_kg=fixed_mass,
+            angle_floor_deg=3., total_mass_kg=(fixed_mass if fixed_mass is not None
+                                            else float(alg.VOLUMES @ alg.MU0)),
             estimator='tls', stop_rule='residual', bias_cov=None, target=.05,
             show=lambda *args: None)
         with patch.object(dual_view.time, 'sleep'), patch('builtins.print'), \
@@ -131,7 +144,9 @@ class LocalFTChecks(unittest.TestCase):
                 self.assertEqual(solver.call_args.kwargs['floor_deg'], 3.)
                 self.assertEqual(solver.call_args.kwargs['rel_error'], 0.)
                 self.assertEqual(solver.call_args.kwargs['grasp_sigma_m'], .010)
-                self.assertNotIn('total_mass_kg', solver.call_args.kwargs)
+                self.assertEqual(solver.call_args.kwargs['total_mass_kg'], fixed_mass)
+                if fixed_mass is not None:
+                    self.assertEqual(planner.total_mass_kg, fixed_mass)
         self.assertLess(abs(planner.total_mass_kg - masses.sum()), .001)
         # 공통 파지 오차와 부위 밀도는 서로 섞일 수 있다. 정답을 강제하지 않고
         # 불확실성이 합성 입력의 밀도 오차를 포함하는지 확인한다.

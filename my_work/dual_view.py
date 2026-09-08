@@ -857,6 +857,7 @@ class PlannerScreen:
                 rel_error=self.angle_rel_error,
                 floor_deg=self.angle_floor_deg,
                 grasp_sigma_m=self.grasp_sigma_m,
+                total_mass_kg=self.fixed_mass_kg,
                 grasp_init=grasp_init,
                 grasp_mu_m=self.grasp_mu_m)
             self.Sigma = dc.tls_covariance(tls_info, len(alg.MU0))
