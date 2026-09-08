@@ -43,7 +43,7 @@ import sys; m=float(sys.argv[1]); sys.exit(0 if 0.05 <= m <= 5.0 else 1)
 PY
 cd "${ROOT}"
 
-say "[1/6] 코드 — torque-only-given-mass 브랜치"
+say "[1/7] 코드 — torque-only-given-mass 브랜치"
 if ! grep -q '"--prior", "weight"' my_work/pivot_ui.py; then
   echo "  브랜치가 없습니다. LEE9396/PIVOT 에서 가져옵니다."
   git remote add lee https://github.com/LEE9396/PIVOT.git 2>/dev/null || true
@@ -63,7 +63,7 @@ fi
 grep -q -- '--rehearse' my_work/pivot_ui.py || fail "브랜치가 오래됐습니다 (pivot_ui 에 --rehearse 없음). git fetch lee 후 다시"
 echo "  OK  $(git log --oneline -1)"
 
-say "[2/6] 설정 — ${CONF} (키만 고칩니다)"
+say "[2/7] 설정 — ${CONF} (키만 고칩니다)"
 [[ -f "${CONF}" ]] || fail "setup/experiment.conf 가 없습니다. 이 PC 의 경로·IP 가 든 conf 가 먼저 있어야 합니다:
   cp setup/experiment.conf.example setup/experiment.conf  후 PIVOT_ROOT/ROBOT_HOST/GRIPPER_PORT 등을 채우세요"
 "${R}" python tools/conf_set.py "${CONF}" \
@@ -74,12 +74,12 @@ ROBOT_HOST="$("${R}" python tools/conf_set.py "${CONF}" --show ROBOT_HOST)"
 TARE_FILE="$("${R}" python tools/conf_set.py "${CONF}" --show TARE_FILE)"
 echo "  ROBOT_HOST=${ROBOT_HOST}  TARE_FILE=${TARE_FILE:-(없음)}"
 
-say "[3/6] 자산 — 파지점 정의"
+say "[3/7] 자산 — 파지점 정의"
 N="$(grep -c 'geometry\[root\]\["centroid"\]' my_work/desk_lamp.py || true)"
 echo "  desk_lamp.py centroid 줄 = ${N}  ($( [[ "${N}" == "0" ]] && echo '핀치 점' || echo '부피 도심' ) 정의 — measured 모드라 일관되면 됩니다)"
 sha256sum -c setup/lamp-assets.sha256 --quiet 2>/dev/null && echo "  자산 sha256 OK" || echo "  [주의] 자산 sha256 불일치 — 메시가 다른 빌드일 수 있습니다 (TEAMMATE_CHECKLIST §2)"
 
-say "[4/6] 장애물 파일 — 타어와 실험의 충돌 장면에 둘 다 필요"
+say "[4/7] 장애물 파일 — 타어와 실험의 충돌 장면에 둘 다 필요"
 OBST="${ROOT}/calibration/workspace_obstacles_current.json"
 if [[ ! -f "${OBST}" ]]; then
   echo "  [필요] ${OBST} 가 없습니다 — 받침대·단차 같은 추가 장애물을 한 번 재서 적어야 합니다."
@@ -93,7 +93,7 @@ d=w.load('${OBST}'); print(d['status'], len(d['boxes']), '|', ', '.join(d['unres
 echo "  ${OBST_STATUS}"
 [[ "${OBST_STATUS}" == validated* ]] || fail "장애물 파일이 validated 가 아닙니다 (${OBST_STATUS}). 실측을 채우고 status 를 validated 로, unresolved 를 [] 로 바꾸세요. 장애물이 없으면 boxes 도 []"
 
-say "[5/6] 타어 — 빈 그리퍼 영점 (이 PC·이 배선)"
+say "[5/7] 타어 — 빈 그리퍼 영점 (이 PC·이 배선)"
 tare_ok=0
 if [[ -n "${TARE_FILE}" && -f "${TARE_FILE}" ]]; then
   if "${R}" python my_work/tare_check.py "${TARE_FILE}" >/tmp/pivot_tare_check.log 2>&1; then
