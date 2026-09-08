@@ -224,6 +224,7 @@ robot_learning/scripts/run_drake_env.sh python -m unittest discover -s tools -p 
 
 dry-run은 단계 상태 전이 검사이며 실제 대시보드/로봇 시험은 아니다.
 `launch_experiment.sh --rehearse`는 기존 dual_view 모의 장비 리허설이다.
+통합 UI(대시보드)까지 장비 없이 보려면 `./setup/quickstart_sim.sh` (`--auto` 로 무인).
 
 장비·보정 준비 후:
 

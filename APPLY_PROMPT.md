@@ -1,8 +1,18 @@
 # Yuseong-Cheon/PIVOT 에 반영하는 프롬프트
 
 Yuseong-Cheon/PIVOT 은 LEE9396/PIVOT 의 **fork** 라 같은 네트워크입니다.
-아래 프롬프트를 Yuseong-Cheon/PIVOT 체크아웃(`~/Desktop/PIVOT`)에서 Claude Code 에
-그대로 붙여넣으면 됩니다.
+
+## 어느 PC 에서 무엇을 하나
+
+| PC | 하는 일 | 로봇 명령 |
+|---|---|---|
+| **로봇 PC** (RB5·AFT200·D456 연결) | 아래 프롬프트로 브랜치 적용 → 보정·타어 → `launch_experiment.sh` 로 **실물 세션** | 있음 |
+| 아무 PC (개발용) | `./setup/quickstart_sim.sh` 로 통합 UI 리허설 (모의 장비) | 없음 |
+
+**아래 프롬프트는 로봇 PC 의 Yuseong-Cheon/PIVOT 체크아웃(`~/Desktop/PIVOT`)에서**
+Claude Code 에 그대로 붙여넣습니다. 개발 PC 에서 미리 해 봐도 되지만, 보정 파일
+(`calibration/*.json`)과 타어는 **로봇 PC 에서 새로** 만들어야 하고 절대 복사하지
+않습니다.
 
 ---
 
@@ -127,6 +137,32 @@ SIGMA_F = 0.10 N 로 백색화해서 500 배 과신하고 있었어.
 - 하드웨어·타어·전송 경로에서 렌치를 3축으로 줄이지 마 (원시 렌치 보존, |F| ~ M g 검산).
 - SIGMA_F / SIGMA_T 값 자체는 건드리지 마.
 - GRASP_FRAME=measured 에서 GRASP_MU_MM 에 173.9 mm 벡터를 넣지 마 (이중 계산).
+```
+
+---
+
+## 장비 없이 통합 UI 로 먼저 한 번 (5~15분) — 아무 PC 에서
+
+브랜치를 가져온 뒤, 로봇·카메라·센서 없이 **같은 통합 UI** 로 데스크 램프 실험을
+끝까지 돌려볼 수 있습니다. 로봇 PC 가 아니어도 되고, 로봇 PC 에서 해도 로봇에
+아무 명령도 보내지 않습니다 (`ROBOT_HOST` 가 비어 있어야만 뜹니다). 렌치·자세·타어는 모의, 파지는 자산의 짐작값입니다.
+
+```bash
+./setup/quickstart_sim.sh --check    # 브랜치·Drake 환경·conf·dry-run 만
+./setup/quickstart_sim.sh            # 대시보드 http://localhost:8080 — 버튼은 사람이
+./setup/quickstart_sim.sh --auto     # 버튼까지 자동, 끝까지 혼자 돈다
+```
+
+`setup/experiment.sim.conf` 는 첫 실행 때 예시에서 만들어집니다. `ROBOT_HOST` 가
+비어 있어야만 뜹니다 — 값이 있으면 실물로 갈 뻔한 것이라 멈춥니다.
+
+Claude Code 에 시킬 때:
+
+```
+./setup/quickstart_sim.sh --auto 를 돌리고, 대시보드 주소와 세션 폴더를 알려줘.
+끝나면 sessions/<세션>/experiment_results.json 의 converged, 라운드 수,
+부위 질량(link_3/link_1/link_2)을 GT 85/399/87 g 와 나란히 보여줘.
+실패하면 어느 단계(0~5)에서 멈췄는지와 터미널 마지막 30줄을 보여줘.
 ```
 
 ---

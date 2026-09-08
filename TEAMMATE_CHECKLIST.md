@@ -80,6 +80,13 @@
 - [ ] `$R python tools/preflight.py --conf setup/experiment.conf`
       캘리브레이션 항목은 4번 뒤에 통과한다
 - [ ] `$R python my_work/pivot_ui.py --dry-run`
+- [ ] **통합 UI 리허설** — 장비 없이 대시보드까지 그대로 띄워 끝까지 한 번
+      ```bash
+      ./setup/quickstart_sim.sh --auto        # http://localhost:8080
+      ```
+      통과 기준: `sessions/<세션>/experiment_results.json` 이 생기고
+      `exploration_round_1.json` 에 `wrench_raw` 18개가 있음. 실물 세션에서
+      보게 될 화면·파일이 전부 같은 자리에 생긴다
 - [ ] `$R python my_work/hardware_real.py --check` (10/10)
 - [ ] `$R python my_work/gripper_hw.py --check` (9/9)
 - [ ] `$R python my_work/grasp_overlay.py --check` (7/7)
@@ -172,6 +179,9 @@
       값이 1° 안이면 정상, 90° 근처면 프레임 규약이 어긋난 것이다
 
 ## 6-0. session_20260904_1736 재발 방지 — 실험 전에 순서대로
+
+> 이 절부터는 **로봇 PC** 에서 한다. 개발 PC 에서 할 수 있는 것은 §3 의 리허설
+> (`quickstart_sim.sh`) 까지다. 보정·타어 파일은 로봇 PC 에서 새로 만들고 복사하지 않는다.
 
 원인과 숫자는 `SESSION_20260904_ROOT_CAUSE.md`, 코드 변경은 `TORQUE_ONLY.md`.
 

@@ -61,13 +61,19 @@ class Conductor:
     """단계 기계. 창 1 이 이걸 돌린다."""
 
     def __init__(self, conf_path, session, console=None, auto=False,
-                 dashboard=None):
+                 dashboard=None, rehearse=False):
         self.conf_path = Path(conf_path)
         self.conf = self._read_conf()
         self.session = session
         self.console = console
         self.dashboard = dashboard
         self.auto = auto
+        # 리허설: 장비·추적기 없이 **같은 단계 기계**를 끝까지 밟는다.
+        #   - 0단계: preflight 를 돌리되 FAIL 에 멈추지 않는다 (목록만 보여 준다)
+        #   - 1단계: FoundationPose 로 파지를 재는 대신 자산의 짐작 파지로 간다
+        #   - 4단계: dual_view 는 conf 의 ROBOT_HOST 가 비어 있으면 --hardware sim
+        # 실물 세션과 다른 길은 위 둘뿐이고, 화면(창 1·대시보드)은 같다.
+        self.rehearse = bool(rehearse)
         self.round = 0
 
     # -- 설정 -------------------------------------------------------------
@@ -155,6 +161,13 @@ class Conductor:
                                  "--json", str(out)])
             data = self.session.read("preflight.json", {})
             verdict = data.get("verdict", "FAIL")
+            if self.rehearse:
+                failed = [r["name"] for r in data.get("rows", []) if r.get("level") == "FAIL"]
+                print("\n  [리허설] 준비 점검 결과를 보기만 하고 넘어갑니다."
+                      + (f" 실물이라면 막혔을 항목: {', '.join(failed)}" if failed else ""))
+                if self.dashboard is not None:
+                    self.dashboard.set_status("[0 준비] 리허설 — 장비 없이 진행")
+                return True
             if tracker_ready and verdict != "FAIL" and result.returncode == 0:
                 if verdict == "WARN":
                     print("\n  주의 항목이 있습니다. 결과가 조용히 나빠질 수 있습니다.")
@@ -176,6 +189,10 @@ class Conductor:
         self.show_object_only()
         self.ask("파지 완료 — 물체를 물렸고 손을 뗐습니다")
 
+        if self.rehearse:
+            print("\n  [리허설] 카메라가 없어 파지 변환을 재지 않습니다 —"
+                  " 자산에 적힌 짐작 파지로 갑니다 (3단계에 [주의]로 표시됩니다).")
+            return True
         print("\n  파지 변환을 **잽니다** (짐작하지 않습니다)")
         pose_file = self.conf.get("FP_OUTPUT", "")
         command = self.python() + [
@@ -412,6 +429,11 @@ class Conductor:
                           # 저울로 잰 총질량 [kg]. 토크만 쓰는 설정에서는
                           # 규모를 정하는 유일한 값이라 반드시 있어야 한다.
                           ("--total-mass-kg", "TOTAL_MASS_KG"),
+                          # 탐색 속도. 리허설에서 STEPS=3 SELECT=grid 로 두면
+                          # 램프도 몇 분 안에 끝난다 (연속 탐색은 수십 분).
+                          ("--steps", "STEPS"),
+                          ("--select", "SELECT"),
+                          ("--plan-iters", "PLAN_ITERS"),
                           ("--robot-host", "ROBOT_HOST")):
             if conf.get(key):
                 command += [flag, conf[key]]
@@ -486,6 +508,10 @@ def main():
                     help="이어서 할 세션 폴더 (없으면 새로 만든다)")
     ap.add_argument("--auto", action="store_true",
                     help="사람 확인을 건너뛴다 (리허설용)")
+    ap.add_argument("--rehearse", action="store_true",
+                    help="장비·추적기 없이 통합 UI 를 끝까지 돌린다."
+                         " preflight FAIL 에 멈추지 않고, 파지는 짐작값을 쓴다."
+                         " conf 의 ROBOT_HOST 가 비어 있어야 한다 (--hardware sim)")
     ap.add_argument("--dry-run", action="store_true",
                     help="단계 기계만 돌려 본다 (Drake·장비 불필요)")
     args = ap.parse_args()
@@ -515,7 +541,14 @@ def main():
         console = Console(StartMeshcat(), auto=args.auto)
     except Exception as exc:                                    # noqa: BLE001
         print(f"[주의] Meshcat 콘솔을 못 띄웁니다 ({exc}) — 터미널로 갑니다")
-    conductor = Conductor(args.conf, session, console, args.auto)
+    if args.rehearse:
+        probe = Conductor(args.conf, session, None, args.auto)
+        if probe.conf.get("ROBOT_HOST"):
+            print("[중단] --rehearse 인데 conf 에 ROBOT_HOST 가 있습니다. 실물로 갈 뻔했습니다."
+                  " setup/experiment.sim.conf 처럼 ROBOT_HOST 를 비운 conf 를 쓰세요.")
+            return 2
+    conductor = Conductor(args.conf, session, console, args.auto,
+                          rehearse=args.rehearse)
     if console is not None:
         from pivot_dashboard import Dashboard
         dashboard = Dashboard(session, conductor.conf,

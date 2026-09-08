@@ -270,7 +270,7 @@ if [[ "${MODE}" == "--rehearse" ]]; then
   cd "${WORK}" || exit 1
   exec "${R}" python dual_view.py \
     --mode deploy --bus local --hardware sim \
-    --object "${OBJECT}" --prior water \
+    --object "${OBJECT}" --prior weight \
     --target "${TARGET}" --max-rounds "${MAX_ROUNDS}" \
     --steps 3 --move-duration 1
 fi

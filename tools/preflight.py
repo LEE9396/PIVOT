@@ -397,12 +397,18 @@ def check_estimator_conf(report, conf):
     3) measured 인데 GRASP_MU_MM 있음 -> 173.9 mm 를 기하와 사전평균에
        두 번 넣게 된다.
     """
+    # ROBOT_HOST 가 없으면 dual_view 가 --hardware sim 으로 돈다. 그때는 모의
+    # 렌치가 회귀행렬과 같은 점에서 나오므로 아래 셋이 틀려도 결과가 안 틀린다.
+    # 실물에서만 FAIL 로 막고, 시뮬에서는 WARN 으로 알려만 준다.
+    real = bool(str(conf.get("ROBOT_HOST", "")).strip())
+    block = FAIL if real else WARN
     frame = str(conf.get("GRASP_FRAME", "legacy")).strip()
     if frame == "measured":
         report.add(OK, "토크 기준점", "GRASP_FRAME=measured (AFT200 몸체 원점)")
     else:
-        report.add(FAIL, "토크 기준점",
-                   f"GRASP_FRAME={frame or '(없음)'} — 파지점 기준이라 AFT200 과 어긋납니다",
+        report.add(block, "토크 기준점",
+                   f"GRASP_FRAME={frame or '(없음)'} — 파지점 기준이라 AFT200 과 어긋납니다"
+                   + ("" if real else " (시뮬이라 무해)"),
                    "setup/experiment.conf 에 GRASP_FRAME=measured")
     mass = str(conf.get("TOTAL_MASS_KG", "")).strip()
     try:
@@ -411,13 +417,14 @@ def check_estimator_conf(report, conf):
             raise ValueError
         report.add(OK, "저울 총질량", f"{1000*value:.1f} g (힌지 포함)")
     except ValueError:
-        report.add(FAIL, "저울 총질량",
-                   "TOTAL_MASS_KG 가 없거나 양수가 아닙니다",
+        report.add(block, "저울 총질량",
+                   "TOTAL_MASS_KG 가 없거나 양수가 아닙니다"
+                   + ("" if real else " (시뮬은 자산 GT 로 만듭니다)"),
                    "물체를 힌지까지 붙은 채로 저울에 올려 kg 으로 적으세요:"
                    " TOTAL_MASS_KG=0.571")
     mu = str(conf.get("GRASP_MU_MM", "")).strip()
     if frame == "measured" and mu:
-        report.add(FAIL, "파지 사전평균",
+        report.add(block, "파지 사전평균",
                    f"GRASP_MU_MM={mu} — measured 모드에서는 이중 계산입니다",
                    "GRASP_MU_MM 을 비우세요 (실측 파지가 이미 기하에 들어갑니다)")
     else:
