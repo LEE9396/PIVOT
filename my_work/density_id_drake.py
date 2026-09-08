@@ -94,6 +94,74 @@ SIGMA_F, SIGMA_T = 0.10, 0.003          # [N], [N m]
 AFT200_DATASHEET_SIGMA = (0.40, 0.025)
 R_EPS_DIAG = np.array([SIGMA_F**2] * 3 + [SIGMA_T**2] * 3)
 
+# ---------------------------------------------------------------------------
+# 토크만 쓰기 — 실물 기본값
+# ---------------------------------------------------------------------------
+# 힘 3행이 밀도에 대해 알려주는 것은 정확히 **한 개**, 총질량뿐이다.
+#
+#     force_rows = G_ACC * outer(g_hat, VOLUMES)
+#
+# 세 행이 전부 VOLUMES 의 상수배라 계수(rank)가 1이고, 중력 방향을 아무리
+# 늘려도 1 그대로다. 담고 있는 정보는 sum(V_i rho_i) 하나다.
+#
+# 그 하나를 저울에서 받으면 (--total-mass-kg) 힘 행이 더 줄 것이 없다.
+# 반면 실물 힘 채널에는 세션 20260904_1736 에서 자세의존 오프셋 |b| = 58.7 N
+# 이 실렸다 — 램프 전체 무게 5.60 N 의 10 배다. 그런데 SIGMA_F = 0.10 N 로
+# 백색화하면 그 채널을 실제보다 500 배 믿게 된다.
+#
+# 그래서 실물에서는 힘 행을 **추정에서만** 뺀다. 측정·전송·기록은 6축 그대로
+# 둔다 (원시 렌치 보존, |F| ~ M g 검산 가능). 자르는 자리는 회귀행렬을 만드는
+# 곳 한 군데뿐이다.
+USE_FORCE_ROWS = True
+ROWS_PER_DIR = 6
+
+# 저울로 잰 총질량 [kg]. dual_view 가 --total-mass-kg 를 받으면 채운다.
+# 보고·검산용 기록이다 — 실제 구속은 apply_weight_prior 의 비등방 사전분포가
+# 건다 (총질량 방향 0.2 %, 재분배 방향은 넓게).
+TOTAL_MASS_KG = None
+
+
+def noise_diag(sigma_f=None, sigma_t=None, use_force=None):
+    """중력 방향 하나에 대한 측정 잡음 분산 벡터.
+
+    행 구성이 USE_FORCE_ROWS 에 달려 있으므로 **여기 한 곳에서만** 만든다.
+    예전에는 density_id_objects 와 dual_view 가 각자 [f]*3 + [t]*3 을 다시
+    썼는데, 토크 전용으로 바꾸면 그 자리들이 6축으로 되돌려 놓아서
+    sensor_cov 가 (18,18), 야코비안이 (9,9) 로 어긋나 터졌다.
+    """
+    sf = SIGMA_F if sigma_f is None else float(sigma_f)
+    st = SIGMA_T if sigma_t is None else float(sigma_t)
+    uf = USE_FORCE_ROWS if use_force is None else bool(use_force)
+    return (np.array([sf**2] * 3 + [st**2] * 3) if uf
+            else np.array([st**2] * 3))
+
+
+def rebuild_noise(sigma_f=None, sigma_t=None):
+    """SIGMA_F/SIGMA_T 를 바꾼 뒤 파생 전역을 한꺼번에 다시 만든다.
+
+    R_EPS_DIAG / R_STACK_DIAG / W_HALF 는 임포트 때 한 번 계산되므로, 셋 중
+    하나만 갱신하면 백색화 가중치와 회귀행렬의 행 수가 어긋나 **조용히**
+    틀린 답이 나온다. 그래서 항상 셋을 같이 만든다.
+    """
+    global SIGMA_F, SIGMA_T, R_EPS_DIAG, R_STACK_DIAG, W_HALF
+    if sigma_f is not None:
+        SIGMA_F = float(sigma_f)
+    if sigma_t is not None:
+        SIGMA_T = float(sigma_t)
+    R_EPS_DIAG = noise_diag()
+    R_STACK_DIAG = np.tile(R_EPS_DIAG, len(G_DIRS))
+    W_HALF = 1.0 / np.sqrt(R_STACK_DIAG)
+    return R_EPS_DIAG
+
+
+def set_torque_only(enabled=True):
+    """토크 3행만 쓰도록 모듈 상태를 한 번에 바꾼다."""
+    global USE_FORCE_ROWS, ROWS_PER_DIR
+    USE_FORCE_ROWS = not bool(enabled)
+    ROWS_PER_DIR = 6 if USE_FORCE_ROWS else 3
+    rebuild_noise()
+    return ROWS_PER_DIR
+
 # Prior: uniform-density heuristic, deliberately wrong and broad
 MU0 = np.full(P, 1000.0)
 SIGMA0 = np.diag(np.full(P, 3000.0**2))
@@ -212,7 +280,8 @@ def regressor(theta, g_dirs=G_DIRS):
         # y 와 A*rho 의 부호가 어긋나 밀도가 음수로 나온다.
         force_rows = FORCE_SIGN * G_ACC * np.outer(g_hat, VOLUMES)    # (3, P)
         torque_rows = FORCE_SIGN * G_ACC * (np.cross(c, g_hat).T * VOLUMES)
-        blocks.append(np.vstack([force_rows, torque_rows]))
+        blocks.append(np.vstack([force_rows, torque_rows]) if USE_FORCE_ROWS
+                      else torque_rows)
     return np.vstack(blocks)
 
 
@@ -229,7 +298,8 @@ def measure(theta, g_dirs=G_DIRS, rng=RNG):
         f = FORCE_SIGN * m * G_ACC * g_hat
         tau = np.cross(p_com, f)
         noise = rng.normal(0.0, np.sqrt(R_EPS_DIAG))
-        ys.append(np.concatenate([f, tau]) + noise)
+        full = np.concatenate([f, tau]) if USE_FORCE_ROWS else tau
+        ys.append(full + noise)
     return np.concatenate(ys)
 
 
@@ -254,7 +324,7 @@ def posterior_covariance(Sigma_prev, A):
 
 def constrained_map(A_all, y_all):
     """Box-constrained MAP over all accumulated data + Gaussian prior."""
-    w = 1.0 / np.sqrt(np.tile(R_EPS_DIAG, A_all.shape[0] // 6))
+    w = 1.0 / np.sqrt(np.tile(R_EPS_DIAG, A_all.shape[0] // ROWS_PER_DIR))
     A_stack = np.vstack([A_all * w[:, None], np.linalg.cholesky(np.linalg.inv(SIGMA0)).T])
     b_stack = np.concatenate([y_all * w, np.linalg.cholesky(np.linalg.inv(SIGMA0)).T @ MU0])
     if HAVE_SCIPY:

@@ -381,7 +381,10 @@ class Conductor:
             "--hardware", "real" if conf.get("ROBOT_HOST") else "sim",
             "--object", conf.get("OBJECT", "desklamp"),
             "--grasp", "pinch", "--grasp-part", conf.get("GRASP_PART", "link_3"),
-            "--prior", "water",
+            # 저울 총무게를 실제로 쓰는 사전분포. water 는 등방이라
+            # 총질량을 전혀 안 묶고, 그래서 부위가 하한(50)에 붙어도
+            # 막지 못한다 (session_20260904_1736: 416.9 g vs 저울 571.0 g).
+            "--prior", "weight",
             "--target", conf.get("TARGET", "0.05"),
             "--max-rounds", conf.get("MAX_ROUNDS", "8"),
             "--angle-floor-deg", conf.get("ANGLE_FLOOR_DEG", "3.0"),
@@ -406,9 +409,18 @@ class Conductor:
                           # 밀도 계산만 짐작값을 쓰고 있었다. 설정으로 켤
                           # 방법조차 없어서 코드를 고쳐야 했다.
                           ("--grasp-frame", "GRASP_FRAME"),
+                          # 저울로 잰 총질량 [kg]. 토크만 쓰는 설정에서는
+                          # 규모를 정하는 유일한 값이라 반드시 있어야 한다.
+                          ("--total-mass-kg", "TOTAL_MASS_KG"),
                           ("--robot-host", "ROBOT_HOST")):
             if conf.get(key):
                 command += [flag, conf[key]]
+        # FoundationPose 가 잰 파지점 어긋남 명목값 [mm] (예: "-49.2 82.0 -145.2")
+        if conf.get("GRASP_MU_MM"):
+            command += ["--grasp-mu-mm", *conf["GRASP_MU_MM"].split()]
+        # 힘 3축을 추정에 다시 넣고 싶을 때만 켠다. 기본은 토크 전용이다.
+        if str(conf.get("USE_FORCE", "")).strip().lower() in ("1", "true", "yes"):
+            command += ["--use-force"]
         if conf.get("FP_OUTPUT"):
             command += ["--pose-file", str(Path(conf["FP_OUTPUT"]) / "latest.json")]
             command += ["--gripper-status-file", str(Path(conf["FP_OUTPUT"]) / "hardware.json")]

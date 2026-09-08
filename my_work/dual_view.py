@@ -129,7 +129,7 @@ def report_reachable_target(spec, joint_limits_rad, args):
     try:
         for label, sigma_f, sigma_t in rows:
             alg.SIGMA_F, alg.SIGMA_T = sigma_f, sigma_t
-            alg.R_EPS_DIAG = np.array([sigma_f ** 2] * 3 + [sigma_t ** 2] * 3)
+            alg.R_EPS_DIAG = alg.noise_diag(sigma_f, sigma_t)
             curve = dc.achievable_half_width(
                 bounds, alg.MU0, alg.SIGMA0, dc.CANONICAL_TRIAD,
                 max_rounds=args.max_rounds, feasible=alg.is_feasible,
@@ -146,6 +146,7 @@ def report_reachable_target(spec, joint_limits_rad, args):
         print(f"    [주의] 예보를 못 냈습니다: {exc}")
     finally:
         alg.SIGMA_F, alg.SIGMA_T, alg.R_EPS_DIAG = saved
+        alg.rebuild_noise()          # R_STACK_DIAG / W_HALF 까지 일관되게
 
     print("    자료값 쪽이 도달 불가면, 목표를 올리거나 더 무거운 물체를"
           " 쓰거나 센서를 바꿔야 합니다.")
@@ -156,7 +157,7 @@ def report_reachable_target(spec, joint_limits_rad, args):
 def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
             density_scale, prior="weight", gripper="robotiq2f85",
             view_poses=True, start_arm_q=None, start_theta=None,
-            grasp_frame="legacy"):
+            grasp_frame="legacy", total_mass_kg=None):
     """hinge=None 이면 관절이 절대 움직이지 않는다고 보고 토크 필터를 건너뛴다.
 
     이 연구는 노트북·스탠드·폴더블처럼 사용자가 각도를 맞춰 두면 그대로
@@ -198,10 +199,22 @@ def prepare(spec, hinge, joint_limits_rad, safety, steps, min_distance_m,
         print(f"  초기값: 모든 부위를 물 밀도 {mu[0]:.0f} kg/m^3 로 시작")
     elif prior == "weight":
         # 저울에는 힌지까지 붙은 채로 올라간다.
-        total = obj.assembled_mass_kg(spec, rho_gt)
+        #
+        # 실물에서는 --total-mass-kg 로 **저울에서 읽은 값**을 받는다. 그 값이
+        # 없을 때만 자산 GT 로 계산한다 (시뮬레이션 전용). 실물 세션에서 GT 로
+        # 떨어지면 "정답을 넣고 정답을 맞히는" 것이 되므로 아래에서 막는다.
+        if total_mass_kg is not None:
+            total = float(total_mass_kg)
+            source = "저울 실측"
+        else:
+            total = obj.assembled_mass_kg(spec, rho_gt)
+            source = "자산 GT (시뮬레이션)"
         mu, _, mean_density = obj.apply_weight_prior(spec, total)
-        print(f"  초기값: 저울 총무게 {1000*total:.1f} g"
+        alg.TOTAL_MASS_KG = total
+        print(f"  초기값: {source} 총무게 {1000*total:.1f} g"
               f" -> 모든 부위를 평균 밀도 {mean_density:.0f} kg/m^3 로 시작")
+        print(f"         총질량 방향은 {100*obj.DEFAULT_SCALE_REL_ERROR:.1f} %"
+              f" 로 묶입니다 — 이후 라운드가 이 값을 바꾸지 않습니다")
     else:
         mu, Sigma0, lows, highs = obj.apply_mesh_prior(spec)
         print(f"  초기값: 메시 외형 부피만 앎"
@@ -415,7 +428,8 @@ class PlannerScreen:
                  select_mode="continuous", criterion="D", estimator="tls",
                  stop_rule="residual", systematic=0.3, search_attempts=12,
                  block_radius_deg=15.0, probe_side=5, grasp_sigma_m=0.0,
-                 display_rotation=None):
+                 display_rotation=None, total_mass_kg=None,
+                 grasp_mu_m=None):
         self.spec = spec
         self.setup = setup
         self.meshcat = meshcat
@@ -444,8 +458,18 @@ class PlannerScreen:
         # 파지점이 얼마나 어긋날 수 있는지 [m]. 0 이면 파지점을 정확히 안다고
         # 본다 (시뮬레이션). 실물에서는 지그를 대도 몇 mm 는 어긋나므로 켠다.
         self.grasp_sigma_m = float(grasp_sigma_m)
-        self.grasp_hat = np.zeros(3)
-        self.total_mass_kg = float(alg.VOLUMES @ alg.MU0)
+        # 파지점 사전평균 — FoundationPose 가 잰 값. 0 이 아니다.
+        self.grasp_mu_m = (np.zeros(3) if grasp_mu_m is None
+                           else np.asarray(grasp_mu_m, dtype=float).reshape(3))
+        self.grasp_hat = self.grasp_mu_m.copy()
+        # 저울 총질량을 받았으면 **고정한다**. 라운드마다 다시 계산하면
+        # (V @ rho_hat) 추정 오차가 파지점 열의 계수로 되먹임되어 두 미지수가
+        # 서로를 흉내낸다. 토크만 쓰는 설정에서는 총질량이 유일한 규모 기준이라
+        # 특히 그렇다.
+        self.fixed_mass_kg = (None if total_mass_kg is None
+                              else float(total_mass_kg))
+        self.total_mass_kg = (self.fixed_mass_kg if self.fixed_mass_kg is not None
+                              else float(alg.VOLUMES @ alg.MU0))
         self.rho_gt = setup["rho_gt"]
 
         builder = DiagramBuilder()
@@ -816,7 +840,8 @@ class PlannerScreen:
             rho_lin, grasp_init, Sigma_full = dc.grasp_map(
                 self.blocks, alg.MU0, alg.SIGMA0, alg.RHO_BOUNDS,
                 self.g_history, self.total_mass_kg,
-                grasp_sigma_m=self.grasp_sigma_m)
+                grasp_sigma_m=self.grasp_sigma_m,
+                grasp_mu_m=self.grasp_mu_m)
             self.grasp_hat = grasp_init
             self.Sigma = Sigma_full[:len(alg.MU0), :len(alg.MU0)]
 
@@ -832,16 +857,21 @@ class PlannerScreen:
                 rel_error=self.angle_rel_error,
                 floor_deg=self.angle_floor_deg,
                 grasp_sigma_m=self.grasp_sigma_m,
-                grasp_init=grasp_init)
+                grasp_init=grasp_init,
+                grasp_mu_m=self.grasp_mu_m)
             self.Sigma = dc.tls_covariance(tls_info, len(alg.MU0))
             if self.grasp_sigma_m > 0.0 and len(tls_info.get("grasp", ())) == 3:
                 self.grasp_hat = np.asarray(tls_info["grasp"], dtype=float)
         else:
             self.rho_hat, tls_info = rho_wls, None
 
-        self.total_mass_kg = float(alg.VOLUMES @ self.rho_hat)
-        if self.estimator == "tls":
-            grasp_mass = self.total_mass_kg
+        # 저울 값을 받았으면 그대로 둔다. 못 받았을 때만 추정에서 되유도한다.
+        if self.fixed_mass_kg is None:
+            self.total_mass_kg = float(alg.VOLUMES @ self.rho_hat)
+            if self.estimator == "tls":
+                grasp_mass = self.total_mass_kg
+        else:
+            grasp_mass = self.fixed_mass_kg
 
         # 미지수로 함께 푼 것은 **무엇이든** 잔차를 잴 때 반영해야 한다.
         # 파지점 몫은 예측에 더하고, 각도 보정량은 회귀행렬에 넣는다. 후자를
@@ -2197,7 +2227,9 @@ class RobotScreen:
                 #     tau_true = tau_model + M G (g x delta)
                 mass = alg.TRUTH_PLANT.CalcTotalMass(alg.TRUTH_CTX)
                 wrench = wrench.copy()
-                wrench[3:6] += mass * alg.G_ACC * np.cross(
+                # 토크 전용이면 렌치가 3개짜리라 토크가 [0:3] 에 있다.
+                base = 3 if alg.USE_FORCE_ROWS else 0
+                wrench[base:base + 3] += mass * alg.G_ACC * np.cross(
                     np.asarray(g_hat, float), self.grasp_error_m)
             return wrench
         if self.tare is None:
@@ -2601,6 +2633,24 @@ def main():
                         default="weight",
                         help="초기값: weight=저울로 총무게만 잼, mesh=메시만 앎,"
                              " water=모든 부위를 물 밀도(1000)로 시작")
+    parser.add_argument("--total-mass-kg", type=float, default=None,
+                        help="저울로 잰 물체 총질량 [kg]. 힌지까지 붙은 채로"
+                             " 올린 값. 주면 이 값이 총질량 방향을 0.2 %%로"
+                             " 묶고 라운드가 지나도 바뀌지 않는다."
+                             " 실물(--hardware real)에서는 필수")
+    parser.add_argument("--torque-only", dest="torque_only",
+                        action="store_true", default=None,
+                        help="추정에 토크 3축만 쓴다. 힘 3행은 총질량 하나만"
+                             " 알려주는데 그 하나는 저울이 훨씬 정확히 준다."
+                             " 실물 기본값 (--use-force 로 끔)")
+    parser.add_argument("--use-force", dest="torque_only",
+                        action="store_false",
+                        help="힘 3축도 추정에 쓴다 (예전 동작)")
+    parser.add_argument("--grasp-mu-mm", type=float, nargs=3, default=None,
+                        metavar=("X", "Y", "Z"),
+                        help="FoundationPose 가 잰 파지점 어긋남의 명목값 [mm],"
+                             " 센서 프레임 기준. 사전분포의 중심이 된다."
+                             " 안 주면 0 (예전 동작)")
     parser.add_argument("--urdf-out", default=None)
     parser.add_argument("--plan-iters", type=int, default=20000,
                         help="RRT-Connect 최대 반복")
@@ -2741,6 +2791,31 @@ def main():
                         help="자세 도착 후 렌치를 읽기 전 대기 [s]")
     args = parser.parse_args()
 
+    # ----- 토크 전용 / 저울 총질량 -------------------------------------
+    # 여기서 정해야 한다. 아래 어디서든 regressor() 가 한 번 불리면 행 수가
+    # 굳어지고, 그 뒤에 바꾸면 백색화 가중치와 어긋난다.
+    if args.torque_only is None:
+        args.torque_only = (args.hardware == "real")
+    alg.set_torque_only(args.torque_only)
+    if args.torque_only:
+        print("  추정에 **토크 3축만** 씁니다 (힘은 기록·검산용으로 계속 읽습니다)")
+        if args.total_mass_kg is None and args.hardware == "real":
+            parser.error(
+                "토크만 쓰면 총질량을 데이터에서 얻을 길이 없습니다. "
+                "저울로 재서 --total-mass-kg 로 주세요 "
+                "(끄려면 --use-force).")
+    if args.total_mass_kg is not None and args.total_mass_kg <= 0:
+        parser.error("--total-mass-kg 는 양수여야 합니다")
+    if args.hardware == "real" and args.total_mass_kg is None:
+        parser.error(
+            "실물 세션에는 --total-mass-kg 가 필요합니다. 없으면 자산 GT 로 "
+            "총질량을 만들게 되어 '정답을 넣고 정답을 맞히는' 실험이 됩니다.")
+    grasp_mu_m = (None if args.grasp_mu_mm is None
+                  else np.asarray(args.grasp_mu_mm, dtype=float) * 1e-3)
+    if grasp_mu_m is not None:
+        print(f"  파지점 어긋남 명목값 {np.round(args.grasp_mu_mm, 1)} mm"
+              f" (FoundationPose) — 사전분포를 이 둘레로 둡니다")
+
     if args.object == "desklamp":
         import desk_lamp as lamp
         spec = lamp.build_spec(grasp_at=args.grasp,
@@ -2830,7 +2905,8 @@ def main():
                     args.min_distance_mm * rs.MM, scale, prior=args.prior,
                     gripper=args.gripper, view_poses=not args.no_view_poses,
                     start_arm_q=start_arm_q, start_theta=start_theta,
-                    grasp_frame=args.grasp_frame)
+                    grasp_frame=args.grasp_frame,
+                    total_mass_kg=args.total_mass_kg)
     print(f"  사용 가능한 자세 {len(setup['feasible'])}/{setup['n_grid']}")
     report_reachable_target(spec, limits, args)
     print(f"  시작 자세 제시 위치 {np.round(setup['presentation'], 3)} m")
@@ -2873,7 +2949,9 @@ def main():
                             block_radius_deg=args.block_radius_deg,
                             probe_side=args.probe_side,
                             grasp_sigma_m=grasp_sigma_m,
-                            display_rotation=display_rotation)
+                            display_rotation=display_rotation,
+                            total_mass_kg=args.total_mass_kg,
+                            grasp_mu_m=grasp_mu_m)
     print(f"  설정: 후보={args.select}  기준={args.criterion}-최적"
           f"  추정기={args.estimator.upper()}  정지={args.stop_rule}")
     if args.bus == "tcp":

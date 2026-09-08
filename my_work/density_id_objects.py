@@ -97,11 +97,8 @@ def set_measurement_averaging(n_samples=DEFAULT_SAMPLES_PER_HOLD,
     """
     scale = np.sqrt(bias_fraction ** 2
                     + (1.0 - bias_fraction ** 2) / max(n_samples, 1))
-    alg.SIGMA_F = _BASE_SIGMA_F * scale
-    alg.SIGMA_T = _BASE_SIGMA_T * scale
-    alg.R_EPS_DIAG = np.array([alg.SIGMA_F ** 2] * 3 + [alg.SIGMA_T ** 2] * 3)
-    alg.R_STACK_DIAG = np.tile(alg.R_EPS_DIAG, len(alg.G_DIRS))
-    alg.W_HALF = 1.0 / np.sqrt(alg.R_STACK_DIAG)
+    # 행 구성(6축 / 토크만)은 alg 가 안다. 여기서 다시 만들지 않는다.
+    alg.rebuild_noise(_BASE_SIGMA_F * scale, _BASE_SIGMA_T * scale)
     return dict(n_samples=n_samples, bias_fraction=bias_fraction,
                 sigma_f_n=alg.SIGMA_F, sigma_t_nm=alg.SIGMA_T)
 

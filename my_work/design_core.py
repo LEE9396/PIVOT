@@ -48,6 +48,22 @@ def regressor(theta, g_dirs):
     return alg.regressor(np.atleast_1d(theta), [np.asarray(g) for g in g_dirs])
 
 
+def torque_rows_only(value, n_dir):
+    """6축 렌치 묶음에서 토크 3축만 뽑는다.
+
+    측정·전송·기록은 6축 그대로 두고 **회귀에 들어가는 이 자리에서만** 자른다.
+    그래야 원시 렌치가 보존되고 |F| ~ M g 검산도 계속 가능하다.
+    """
+    v = np.asarray(value, dtype=float).reshape(-1)
+    if v.size == 3 * n_dir:
+        return v                                   # 이미 토크만 들어왔다
+    if v.size != 6 * n_dir:
+        raise ValueError(
+            f"중력 방향 {n_dir}개에는 6축({6*n_dir}) 또는 토크만({3*n_dir}) 렌치가"
+            f" 필요합니다 — 받은 크기 {v.size}")
+    return v.reshape(n_dir, 6)[:, 3:].reshape(-1)
+
+
 def measurement_equation(theta, reply, g_dirs):
     """y_raw = A*rho + b 에서 알려진 6축 영점 b를 한 번만 제거한다.
 
@@ -55,9 +71,11 @@ def measurement_equation(theta, reply, g_dirs):
     이미 차감된 값이므로 다시 빼지 않고 전송 경로의 누락/이중 차감을 검산한다.
     """
     A = regressor(theta, g_dirs)
+    n_dir = len(list(g_dirs))
 
     def vector(value):
-        v = np.asarray(value, dtype=float)
+        v = (np.asarray(value, dtype=float).reshape(-1) if alg.USE_FORCE_ROWS
+             else torque_rows_only(value, n_dir))
         if v.shape != (A.shape[0],) or not np.all(np.isfinite(v)):
             raise ValueError("추정 행렬과 일치하는 유한한 6축 렌치 배열이 필요합니다")
         return v
@@ -246,7 +264,8 @@ def wls_map(blocks, mu0, Sigma0, bounds):
 def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
             rel_error=aa.DEFAULT_ANGLE_REL_ERROR,
             floor_deg=aa.DEFAULT_ANGLE_FLOOR_DEG, max_nfev=None,
-            grasp_sigma_m=0.0, total_mass_kg=None, grasp_init=None):
+            grasp_sigma_m=0.0, total_mass_kg=None, grasp_init=None,
+            grasp_mu_m=None):
     """총최소제곱(구조화 TLS = 오차변수 최대우도).
 
     rounds = [(theta_measured_i, y_i), ...]
@@ -288,17 +307,19 @@ def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
 
     lo, hi = bounds
     n_angle = R * n_joint
+    grasp_mu = (np.zeros(3) if grasp_mu_m is None
+                else np.asarray(grasp_mu_m, dtype=float).reshape(3))
     rho0 = np.asarray(rho_init if rho_init is not None else mu0, dtype=float)
-    grasp0 = (np.zeros(3) if grasp_init is None
+    grasp0 = (grasp_mu if grasp_init is None
               else np.asarray(grasp_init, dtype=float))
     x0 = np.concatenate([np.clip(rho0, lo, hi), np.zeros(n_angle),
                          grasp0[:n_grasp]])
     x_lo = np.concatenate([np.full(n_part, lo),
                            np.full(n_angle, -np.inf),
-                           np.full(n_grasp, -0.05)])
+                           (grasp_mu - 0.05)[:n_grasp]])
     x_hi = np.concatenate([np.full(n_part, hi),
                            np.full(n_angle, np.inf),
-                           np.full(n_grasp, 0.05)])
+                           (grasp_mu + 0.05)[:n_grasp]])
 
     def residual(x):
         rho = x[:n_part]
@@ -316,7 +337,7 @@ def tls_map(rounds, mu0, Sigma0, bounds, g_dirs, rho_init=None,
             parts.append(delta / sig)
         parts.append(L0 @ (rho - mu0))
         if n_grasp:
-            parts.append(grasp / grasp_sigma_m)
+            parts.append((grasp - grasp_mu[:n_grasp]) / grasp_sigma_m)
         return np.concatenate(parts)
 
     # max_nfev 를 고정하면 안 된다. 미지수가 P + R*J 로 라운드에 비례해 늘어나고,
@@ -359,8 +380,9 @@ def grasp_columns(g_dirs, total_mass_kg):
         skew = np.array([[0.0, -g_hat[2], g_hat[1]],
                          [g_hat[2], 0.0, -g_hat[0]],
                          [-g_hat[1], g_hat[0], 0.0]])
-        blocks.append(np.vstack([np.zeros((3, 3)),
-                                 alg.FORCE_SIGN * total_mass_kg * alg.G_ACC * skew]))
+        rows = alg.FORCE_SIGN * total_mass_kg * alg.G_ACC * skew
+        blocks.append(np.vstack([np.zeros((3, 3)), rows])
+                      if alg.USE_FORCE_ROWS else rows)
     return np.vstack(blocks)
 
 
@@ -370,7 +392,8 @@ def augmented(A, g_dirs, total_mass_kg):
 
 
 def grasp_map(blocks, mu0, Sigma0, bounds, g_dirs, total_mass_kg,
-              grasp_sigma_m=GRASP_SIGMA_M, grasp_bound_m=0.05):
+              grasp_sigma_m=GRASP_SIGMA_M, grasp_bound_m=0.05,
+              grasp_mu_m=None):
     """밀도와 파지점 어긋남을 **함께** 푼다.
 
     blocks = [(A_i, y_i, R_i), ...]  — 기존 WLS 와 같은 입력.
@@ -392,14 +415,20 @@ def grasp_map(blocks, mu0, Sigma0, bounds, g_dirs, total_mass_kg,
     L0 = np.linalg.cholesky(np.linalg.inv(Sigma0)).T
     prior_rows = np.hstack([L0, np.zeros((n_part, 3))])
     prior_y = L0 @ mu0
+    # 파지점 사전평균. 0 이 아니다 — FoundationPose 가 잰 값이 들어온다.
+    # 0 으로 두면 실제 어긋남(세션 20260904_1736 에서 173.9 mm)이 사전분포
+    # 폭(5 mm)의 35 시그마라 MAP 이 정답을 강하게 벌주고, 상자 한계에 붙는다.
+    grasp_mu = (np.zeros(3) if grasp_mu_m is None
+                else np.asarray(grasp_mu_m, dtype=float).reshape(3))
     grasp_rows = np.hstack([np.zeros((3, n_part)), np.eye(3) / grasp_sigma_m])
     rows += [prior_rows, grasp_rows]
-    ys += [prior_y, np.zeros(3)]
+    ys += [prior_y, grasp_mu / grasp_sigma_m]
 
     M = np.vstack(rows)
     b = np.concatenate(ys)
-    x_lo = np.concatenate([np.full(n_part, lo), np.full(3, -grasp_bound_m)])
-    x_hi = np.concatenate([np.full(n_part, hi), np.full(3, grasp_bound_m)])
+    # 상자도 사전평균 둘레로 옮긴다. 0 둘레에 두면 같은 이유로 railing 한다.
+    x_lo = np.concatenate([np.full(n_part, lo), grasp_mu - grasp_bound_m])
+    x_hi = np.concatenate([np.full(n_part, hi), grasp_mu + grasp_bound_m])
 
     from scipy.optimize import lsq_linear
     result = lsq_linear(M, b, bounds=(x_lo, x_hi))
