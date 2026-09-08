@@ -234,9 +234,21 @@ def inject_into_source(source, spec, rho_hat, out, Sigma=None):
     root = tree.getroot()
 
     extras = hinge_extras(spec, rho_hat)
-    wanted = {}
+    # 배달물 URDF 의 링크 이름은 spec 이름과 다를 수 있다. 저장소 램프 URDF 는
+    # base/support/head 인데 spec 은 link_1/2/3 이다 (desk_lamp.FINAL_PART).
+    # spec 이름이 URDF 에 그대로 있으면 그것을, 없으면 대응표로 바꿔 찾는다.
+    # 리허설에서 추정이 끝난 직후 여기서 KeyError 로 죽었다 — 실물에서도 5단계에서
+    # 똑같이 터질 자리였다 (09-04 세션은 그 전에 중단돼 드러나지 않았다).
+    urdf_links = {link.get("name") for link in root.iter("link")}
+    alias = {}
+    if spec.key == "desklamp":
+        import desk_lamp
+        alias = dict(desk_lamp.FINAL_PART)
+    wanted, label_of = {}, {}
     for part, rho in zip(spec.parts, rho_hat):
-        wanted[part.name] = part_inertial(part, rho, extras[part.name])
+        link = part.name if part.name in urdf_links else alias.get(part.name, part.name)
+        wanted[link] = part_inertial(part, rho, extras[part.name])
+        label_of[link] = part.name
 
     std = np.sqrt(np.diag(Sigma)) if Sigma is not None else None
     header = ["로봇이 물체를 잡고 손목 F/T 를 재서 추정한 물성을 채워 넣었다.",
@@ -261,13 +273,14 @@ def inject_into_source(source, spec, rho_hat, out, Sigma=None):
             np.array([float(v) for v in before.get("xyz").split()]) - com)
             if before is not None and before.get("xyz") else float("nan"))
         _set_inertial(link, mass, com, inertia)
-        rows.append(dict(name=name, mass=mass, origin_shift_m=moved))
+        rows.append(dict(name=name, part=label_of[name], mass=mass, origin_shift_m=moved))
         seen.add(name)
 
     missing = set(wanted) - seen
     if missing:
         raise KeyError(f"원본 URDF 에 없는 링크: {sorted(missing)}. "
-                       "배달물과 spec 의 링크 이름이 어긋났다.")
+                       f"URDF 의 링크는 {sorted(urdf_links)} 이고 spec 은 "
+                       f"{[p.name for p in spec.parts]} 다. desk_lamp.FINAL_PART 를 보라.")
     n_mesh = _rewrite_mesh_paths(root, source, out)
     write_urdf(root, out)
     return rows, n_mesh
@@ -306,7 +319,8 @@ def export(spec, rho_hat, out, Sigma=None, log=print):
         # origin 차이가 크면 배달물과 우리 도심 계산이 어긋났다는 뜻이다.
         note = ("" if not (row["origin_shift_m"] > 1e-6)
                 else f"   [주의] 무게중심이 원본과 {1000*row['origin_shift_m']:.2f} mm 다름")
-        log(f"    {row['name']:<8} 질량 {1000*row['mass']:7.2f} g{note}")
+        shown = row['name'] if row.get('part', row['name']) == row['name'] else f"{row['name']}({row['part']})"
+        log(f"    {shown:<16} 질량 {1000*row['mass']:7.2f} g{note}")
     return rows
 
 
