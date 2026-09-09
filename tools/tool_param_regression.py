@@ -79,8 +79,13 @@ def fit_static(rows, solve_scale=True):
         b, M = x[:3], x[3:].reshape(3, 3)
         res = y - A @ x
         return b, M, res, A
-    W_guess = None
-    for _ in range(20):                                   # W 를 반복 갱신 (추 데이터 없으면 1회)
+    # 초기 W: 빈 손 자세만으로 M 을 맞춘 뒤 평균 gain. (k=1 로 전부 넣고 시작하면 추 하중이
+    # M 에 흡수돼 W 가 발산한다 — 자체 테스트에서 추 자세 잔차 2 N 으로 드러났다.)
+    empty = m_load <= 0
+    A0 = np.vstack([np.hstack([np.eye(3), np.kron(g[None, :], np.eye(3))]) for g in Gm[empty]])
+    x0, *_ = np.linalg.lstsq(A0, F[empty].reshape(-1), rcond=None)
+    W_guess = float(np.linalg.svd(x0[3:].reshape(3, 3), compute_uv=False).mean())
+    for _ in range(50):                                   # W 를 반복 갱신 (추 데이터 없으면 1회)
         b_f, M, res_f, A_f = solve_force(W_guess)
         U, S, Vt = np.linalg.svd(M); R = U @ Vt
         # 절대 배율: 추가 있으면 M 은 S_f·W 인데 S_f 의 크기(평균 배율)는 추 항에서 나온다:
@@ -91,9 +96,9 @@ def fit_static(rows, solve_scale=True):
             mask = m_load > 0
             k_obs = np.array([np.linalg.norm(np.linalg.inv(M) @ (F[i] - b_f)) for i in np.where(mask)[0]])
             W_new = float(np.mean(m_load[mask] * G / np.maximum(k_obs - 1.0, 1e-6)))
-        if W_guess is not None and abs(W_new - W_guess) < 1e-6:
+        if abs(W_new - W_guess) < 1e-6:
             break
-        W_guess = W_new
+        W_guess = 0.5 * (W_guess + W_new)               # 감쇠로 안정화
     W_tool = W_guess
     S_f = M / W_tool                                      # 읽기 = S_f · 진짜  →  진짜 = S_f^-1 · 읽기
     C_f = np.linalg.inv(S_f)
@@ -105,10 +110,12 @@ def fit_static(rows, solve_scale=True):
     A, y = [], []
     for g, t, m in zip(Gm, Tc, m_load):
         blk = [np.eye(3), -skew(g) * G]                                        # b_t(3), (m r)_tool(3)
-        blk.append(-skew(g) * G * m if has_load else np.zeros((3, 3)))          # r_load(3) (추 있을 때)
+        if has_load:
+            blk.append(-skew(g) * G * m)                                        # r_load(3)
         A.append(np.hstack(blk)); y.append(t)
     A = np.vstack(A); y = np.concatenate(y); x, *_ = np.linalg.lstsq(A, y, rcond=None)
-    b_t, mr_tool, r_load = x[:3], x[3:6], x[6:9]
+    b_t, mr_tool = x[:3], x[3:6]
+    r_load = x[6:9] if has_load else np.zeros(3)
     res_t = y - A @ x
 
     # 품질: 자세별 잔차, 파라미터 표준편차(잔차 분산 기반), 조건수
@@ -121,7 +128,7 @@ def fit_static(rows, solve_scale=True):
     per_pose = np.array(per_pose)
     sig_f = np.sqrt(np.sum(per_pose[:, 0] ** 2) / max(3 * n - 12, 1))
     sig_t = np.sqrt(np.sum(per_pose[:, 1] ** 2) / max(3 * n - 9, 1))
-    cov_t = sig_t ** 2 * np.linalg.inv(A.T @ A)
+    cov_t = sig_t ** 2 * np.linalg.pinv(A.T @ A)
     design = np.column_stack([np.ones(n), Gm]); cond = float(np.linalg.cond(design))
     return dict(n=n, has_load=bool(has_load), W_tool_n=float(W_tool), mass_tool_kg=float(W_tool / G),
                 b_f=(C_f @ b_f).tolist(), b_t=b_t.tolist(), mr_tool=mr_tool.tolist(),
