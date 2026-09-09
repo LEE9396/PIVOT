@@ -73,7 +73,9 @@ def fit_static(rows, solve_scale=True):
         A, y = [], []
         for g, f, m in zip(Gm, F, m_load):
             k = 1.0 + (m * G / W_guess if W_guess else 0.0)
-            A.append(np.hstack([np.eye(3), k * np.kron(g[None, :], np.eye(3))]))   # b(3) + M(9)
+            # (M g)_i = Σ_j M_ij g_j  ->  행 i 의 열 3i+j 가 g_j : kron(I3, gᵀ). (kron(g, I) 는 Mᵀ g 가
+            # 되어 회전 부호가 뒤집힌다 — 자체 테스트에서 C_f·S_f 가 6° 회전으로 드러났다.)
+            A.append(np.hstack([np.eye(3), k * np.kron(np.eye(3), g[None, :])]))   # b(3) + M(9)
             y.append(f)
         A = np.vstack(A); y = np.concatenate(y); x, *_ = np.linalg.lstsq(A, y, rcond=None)
         b, M = x[:3], x[3:].reshape(3, 3)
@@ -82,7 +84,7 @@ def fit_static(rows, solve_scale=True):
     # 초기 W: 빈 손 자세만으로 M 을 맞춘 뒤 평균 gain. (k=1 로 전부 넣고 시작하면 추 하중이
     # M 에 흡수돼 W 가 발산한다 — 자체 테스트에서 추 자세 잔차 2 N 으로 드러났다.)
     empty = m_load <= 0
-    A0 = np.vstack([np.hstack([np.eye(3), np.kron(g[None, :], np.eye(3))]) for g in Gm[empty]])
+    A0 = np.vstack([np.hstack([np.eye(3), np.kron(np.eye(3), g[None, :])]) for g in Gm[empty]])
     x0, *_ = np.linalg.lstsq(A0, F[empty].reshape(-1), rcond=None)
     W_guess = float(np.linalg.svd(x0[3:].reshape(3, 3), compute_uv=False).mean())
     for _ in range(50):                                   # W 를 반복 갱신 (추 데이터 없으면 1회)
