@@ -1,0 +1,69 @@
+% Table 3 (main) — per-part density identification.
+%   GT V/M/rho: gt.json (권위 있는 정본).  vision 열: tables/table_main_v2.tex 의
+%   frozen 값을 그대로 옮김 (재채점 금지).  uniform/single/WLS/ours:
+%   my_work/figures/v2/main_real.json (seeds=8, rel=5%), part별 상대 밀도오차 중앙값.
+%   coverage 블록: 같은 JSON 의 95% 구간 경험적 커버리지.
+%   laptop: 자산 준비 중 → 8-페이지 압축에서 행 2개를 각주 한 문장으로 이전
+%   (GT·vision 수치 전부 각주에 보존, 원행은 CUTS.md).
+\begin{table*}[!t]
+\caption{Part-wise density identification (simulation). Ground-truth $V$, $M$,
+$\rho=M/V$; method columns give the relative per-part density error [\%] (median
+over eight seeds for interaction methods), lowest per row in bold.}
+% [번역] 부위별 밀도 식별(시뮬레이션). 참값 V, M, rho = M/V. 방법 열은 부위별
+%   상대 밀도오차 [%](상호작용 방법은 8시드 중앙값), 행별 최저는 굵게.
+%   (밀도오차=질량오차 1.7e-16 불변성과 커버리지 블록 설명은 각주로 이동.)
+\label{tab:main}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llrrrrrrrrrr}
+\toprule
+& & \multicolumn{3}{c}{Ground truth} & \multicolumn{3}{c}{Vision baselines} & \multicolumn{4}{c}{Interaction (median over 8 seeds)} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(lr){9-12}
+Object & Part & $V$ [cm$^3$] & $M$ [g] & $\rho$ [g/cm$^3$] & PUGS$^{\mathrm S}$ & SiPhy & \shortstack{PhysX-\\Omni} & Uniform & Single & WLS & Ours \\
+\midrule
+\multirow{3}{*}{Stand lamp}
+ & Base    & 273.00 & 399.00 & 1.462 & 164.1 & 38.3 & 69.1  & 7.33  & 0.12 & 0.12 & \textbf{0.01} \\
+ & Support &  84.50 &  85.00 & 1.006 & 10.7  & 27.3 & 183.1 & 34.64 & 1.49 & 1.27 & \textbf{0.23} \\
+ & Head    &  64.10 &  87.00 & 1.357 & 36.4  & 48.5 & 58.0  & 0.21  & 0.73 & 0.55 & \textbf{0.08} \\
+\midrule
+\multirow{3}{*}{2-link$^{*}$}
+ & Long                    & 135.72 & 49.00 & 0.361 & 7887.4 & 593.4 & \NA & 49.14 & \textbf{0.18} & 0.21 & \textbf{0.18} \\
+ & Short                   & 108.12 & 42.00 & 0.389 & 7323.6 & 544.5 & \NA & 25.43 & \textbf{0.06} & 0.10 & \textbf{0.06} \\
+ & Hinge$^{\mathrm h}$     &   7.45 & 41.00 & 5.506 & 423.8  & 54.5  & \NA & 51.22 & \textbf{0.34} & 0.35 & \textbf{0.34} \\
+\midrule
+\multirow{5}{*}{3-link$^{*}$}
+ & Link 0                  & 288.12 & 100.00 & 0.347 & 4312.5 & 349.6 & \NA & 43.32  & 0.11 & \textbf{0.01} & \textbf{0.01} \\
+ & Link 1                  & 208.40 &  92.00 & 0.442 & 3369.1 & 253.5 & \NA & 110.52 & 1.14 & 0.31 & \textbf{0.06} \\
+ & Link 2                  & 162.28 &  69.00 & 0.425 & 3501.8 & 267.0 & \NA & 321.04 & 1.58 & 0.48 & \textbf{0.10} \\
+ & Hinge 1$^{\mathrm h}$   &   7.45 &  41.00 & 5.506 & \multirow{2}{*}{178.2$^{\ddagger}$} & \multirow{2}{*}{71.7$^{\ddagger}$} & \NA & 46.45 & 0.08 & \textbf{0.04} & \textbf{0.04} \\
+ & Hinge 2$^{\mathrm h}$   &   7.45 &  41.00 & 5.506 &  &  & \NA & 46.45 & 0.08 & \textbf{0.05} & 0.06 \\
+\midrule
+\multicolumn{5}{l}{\emph{Coverage of the reported $95\%$ interval}} & & & & & & & \\
+\multicolumn{5}{l}{\quad Stand lamp} & \NA & \NA & \NA & \NA & 24/24 & 4/24  & 22/24 \\
+\multicolumn{5}{l}{\quad 2-link}     & \NA & \NA & \NA & \NA & 16/16 & 14/16 & 16/16 \\
+\multicolumn{5}{l}{\quad 3-link}     & \NA & \NA & \NA & \NA & 24/24 & 15/24 & 24/24 \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+\parbox{\textwidth}{\scriptsize \textit{All methods share the same fixed part
+volumes, so density error and mass error are the same number (maximum observed
+difference $1.7\times10^{-16}$) and a single column reports both. The bottom block
+counts, over all part--seed pairs, how often each method's reported $95\%$ interval
+covers the truth. $^{\mathrm h}$ hinge modelled as its own
+unknown. $^{\mathrm S}$ Stand-lamp PUGS masses integrate its frozen SAM-partitioned
+Gaussian volume and point-wise density, scored at the midpoint of its predicted mass
+range; other PUGS rows and all SiPhy rows distribute each object-level prediction
+using ground-truth volume fractions (Sec.~\ref{sec:setup}). PhysX-Omni is N/A where
+its generated shape admits no canonical part mapping. $^{\ddagger}$ vision baselines
+were scored on the two hinges jointly. $^{*}$ preliminary pre-ballast custom-object
+masses and densities; CAD volumes are fixed. On the 2-link object Ours and Single
+are byte-identical (Sec.~\ref{sec:sim}). Single's intervals
+cover only because they are wide (Sec.~\ref{sec:sim}), and its convergence flag
+never consults the stopping rule.
+The fourth object, the laptop (display\,/\,base: $V=354.10/798.60\,
+\mathrm{cm^3}$, $M=379.25/1137.75\,\mathrm{g}$, $\rho=1.071/1.425\,\mathrm{g/cm^3}$;
+vision errors PUGS $76.7/30.1$, SiPhy $182.5/108.0$, PhysX-Omni $417.3/611.8\,\%$),
+contributes ground-truth and vision-baseline data only: \rev{its mesh and URDF are
+in preparation, so all its interaction columns are pending}.}}
+\end{table*}

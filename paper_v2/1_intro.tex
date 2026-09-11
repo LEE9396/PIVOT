@@ -1,0 +1,109 @@
+\section{Introduction}
+
+Physics simulation has become a driving force in robotic manipulation, letting policies be trained and evaluated before real-world deployment. The real world is full of portable articulated objects---laptops, foldable phones, desk lamp stands---whose friction-holding joints keep their configuration unless a force is deliberately applied. For simulation with such objects to transfer, sim-ready assets must be dynamically as well as visually and kinematically faithful; hand-building them does not scale \cite{pfaff2025scalable}, motivating real-to-sim pipelines that construct them from real observations.
+% [번역] 물리 시뮬레이션은 로봇 조작 연구의 핵심 동력이 되어, 정책을 실기
+%   배포 전에 학습·평가할 수 있게 한다. 실세계에는 노트북, 폴더블폰, 책상용
+%   스탠드처럼 마찰 유지 관절 덕분에 힘을 일부러 주지 않는 한 형상이
+%   보존되는 휴대용 관절 물체가 많다. 이런 물체의 시뮬레이션 결과가
+%   전이되려면 sim-ready asset 이 외형·운동학뿐 아니라 동역학까지 충실해야
+%   하는데, 손으로 만드는 일은 느리고 확장되지 않아 실세계 관측에서 asset 을
+%   직접 구축하는 real-to-sim 파이프라인이 이어져 왔다.
+
+% ---------------------------------------------------------------------------
+% ---------------------------------------------------------------------------
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{fig1.png}
+\caption{PIVoT overview. (1)~Video of a static object yields an articulated
+reconstruction; (2)~robot reorientation under different gravity directions
+adds per-part mass and density; (3)~the asset reproduces the object's behavior
+in simulation.}
+% [번역] PIVoT 개관. (1) 정적 물체 영상에서 관절 재구성을 얻고, (2) 서로 다른 중력 방향의 로봇 재배향이 part 별 질량·
+%   밀도를 더하며, (3) asset 은 물체의 거동을 시뮬레이션에서 재현한다.
+%   ("사용자는 제시된 joint configuration 조정만" 은 초록·III·IV-E 산문에.)
+% [메모] Fig. 1 — Teaser. fig1.png 은 자리표시용이다. v2 사양(가이드라인
+%   [Figure 1: Conceptual Overview], 번호형 콜라주 3단계):
+%   1. Video recording of a static object — 비디오 입력. RORA 결과물
+%      (articulated GS + Mesh)을 작은 중간 결과로 표시하여 출발점임을 보여줌.
+%   2. Active robot exploration for physical properties — 로봇 팔이 물체를
+%      서로 다른 방향으로 기울여 들고 있는 장면 + 사용자가 joint
+%      configuration 을 바꾸는 작은 아이콘. 화살표 라벨:
+%      "Articulated GS + Mesh -> + Mass / Density per part".
+%   3. Physically accurate simulation — 무게중심·관성에 따른 물체 거동
+%      (기울어짐, 낙하 등)이 실제와 일치하는 장면.
+\label{fig:teaser}
+\end{figure}
+
+Recent 3D Gaussian Splatting (3DGS) pipelines recover an articulated object's appearance, part-level meshes, and joint structure up to a URDF \cite{lee2026rora}. Dynamically faithful simulation additionally requires each part's mass, center of mass, and rotational inertia, all of which follow from per-part geometry and density. Reconstruction supplies the geometry; density is precisely what a camera cannot observe, since identical-looking parts can hide entirely different mass distributions. Existing pipelines therefore guess density---from appearance, material priors, or a generative model \cite{shuai2025pugs,chopra2026physgs,cao2026physxomni}---while methods that measure mass through real interaction keep the object rigid \cite{pfaff2025scalable,nadeau2023sum}. To our knowledge, no prior work has identified, from wrist force/torque measurements, the density of the links themselves for an articulated object in which two or more links carry independently unknown mass: interaction-based attempts on articulated objects have estimated link masses from vision rather than force sensing, and force-based identification has been demonstrated only on mechanisms with a single movable link \cite{he2027rigpi}.
+% [번역] 최근의 3D Gaussian Splatting(3DGS) 파이프라인은 관절 물체의 외형,
+%   part 단위 mesh, 관절 구조를 URDF 수준까지 복원한다. 동역학까지 충실한
+%   시뮬레이션에는 각 part 의 질량·무게중심·회전관성이 추가로 필요한데, 이
+%   셋은 모두 part 별 형상과 밀도에서 따라 나온다. 형상은 재구성이 주지만,
+%   밀도는 정확히 카메라가 볼 수 없는 것이다. 겉모습이 같은 부위가 전혀 다른
+%   질량 분포를 숨길 수 있기 때문이다. 그래서 기존 파이프라인은 밀도를
+%   외형·재질 사전지식·생성 모델로 추측하고, 실제 상호작용으로 질량을 재는
+%   방법들은 물체를 강체로 두어 왔다. 우리가 아는 한, 손목 force/torque
+%   측정에 근거하여, 독립적으로 미지인 질량을 가진 링크가 2개 이상인 관절체의
+%   링크 자체 밀도를 식별한 연구는 없다. 관절체를 다룬 상호작용 기반 시도는
+%   힘이 아니라 비전으로 링크 질량을 추정했고, 힘 기반 식별은 움직이는 링크가
+%   하나뿐인 기구에서만 실증되었다.
+
+The gap persists not because the rigid-body methods are weak, but because the measurement they rely on saturates. A quasi-static wrench constrains only the zeroth and first mass moments: for an object with $P$ parts a single joint configuration determines at most $1+\min(3,P)$ independent density combinations---at most four---however the wrist reorients the object. Changing the object's own joint configuration is therefore the only mechanism that brings the remaining combinations into view, and the same analysis yields a lower bound on the number of configurations required, computable from geometry alone, before any wrench is measured.
+% [번역] 이 공백이 남은 것은 강체 방법들이 약해서가 아니라, 그들이 의존하는
+%   측정 자체가 포화하기 때문이다. 준정적 렌치는 0차·1차 질량 모멘트만
+%   구속하므로, part 가 P 개인 물체에서 단일 관절 형상은 손목이 물체를 어떻게
+%   재배향하든 최대 1+min(3,P) 개, 즉 많아야 네 개의 독립 밀도 조합만
+%   결정한다. 따라서 나머지 조합을 보이게 만드는 유일한 수단은 물체 자신의
+%   관절 형상을 바꾸는 것이고, 같은 분석에서 필요한 관절 형상 개수의 하한이
+%   나온다 — 렌치를 하나도 재기 전에 물체의 형상 정보만으로 계산된다.
+
+Turning this into a working system requires two ingredients the rigid-body literature never needed. The first is choosing \emph{which} configurations to measure: only a handful are affordable, so each should maximize expected information gain about the per-part densities. The second is physically \emph{reaching} the measurement poses: each configuration is measured under three gravity directions, and the robot must carry the grasped object between poses without collision and without overloading its joints, across topologies whose geometry---hence collision constraints---differ. Moreover, the joint configuration is read by a camera rather than commanded, so the design variable itself carries error; a total-least-squares formulation absorbs it, and conditioning---not the rank condition---sets the practical limit.
+% [번역] 이를 동작하는 시스템으로 만들려면 강체 식별 문헌에는 필요 없던 두
+%   요소가 필요하다. 첫째는 '어느' 형상을 측정할지 고르는 일이다. 감당할 수
+%   있는 형상 수가 몇 개뿐이므로, 각 형상은 part 별 밀도에 대한 기대
+%   정보이득을 최대화해야 한다. 둘째는 측정 자세에 물리적으로 '도달'하는
+%   일이다. 각 형상은 중력 방향 3개에서 측정하고, 로봇은 잡은 물체를 자세
+%   사이로 옮기는 동안 자기 자신·환경과 충돌하지 않고 물체의 관절에 무리를
+%   주지 않아야 한다 — 기하 형상이, 따라서 충돌 제약이 달라지는 topology 들에
+%   걸쳐서. 나아가 관절 형상은 명령한 값이 아니라 카메라가 읽은 값이므로 설계
+%   변수 자체가 오차를 갖는다. 총최소제곱 정식화가 이를 흡수하며, 실질적
+%   한계를 정하는 것은 rank 조건이 아니라 조건수다.
+
+We therefore propose PIVoT (Fig.~\ref{fig:teaser}), a closed-loop pipeline that identifies the per-part density of portable articulated objects through active robot interaction, turning the part-level reconstruction of \cite{lee2026rora} into a sim-ready asset faithful in appearance, geometry, and physics. The reconstruction-stage intervention is inherited from \cite{lee2026rora}; the additional intervention for physics estimation is one adjustment of the object to the suggested joint configuration. Our contributions are:
+% [번역] 그래서 우리는 active robot interaction 으로 휴대용 관절 물체의
+%   part 별 밀도를 식별하여, [RORA] 의 part 단위 재구성을 외형·기하·물성에
+%   모두 충실한 sim-ready asset 으로 만드는 폐루프 파이프라인 PIVoT 를
+%   제안한다(그림 1). 재구성 단계의 개입은 [RORA] 와 동일하게 상속되며, 물성
+%   추정을 위해 추가되는 개입은 제시된 관절 형상으로 물체를 조정하는 한
+%   번뿐이다. 본 논문의 기여는 다음과 같다.
+
+\begin{itemize}
+    \item \textbf{Information-theoretic part-wise density identification:} a
+    lower bound on the number of joint configurations as a function of the part
+    count, selection by expected information gain, and an uncertainty-aware
+    per-part density update.
+% [번역] (1) 정보이론적 part 별 밀도 식별 — part 수의 함수인 관절 형상 개수의
+%   이론적 하한, 기대 정보이득에 의한 형상 선택, 상호작용 데이터로부터의
+%   불확실성 기반 part 별 밀도 갱신.
+
+    \item \textbf{Multi-topology measurement path design:} three measurement
+    poses under different gravity directions per configuration, linked by
+    RRT-planned collision-free paths that account for object geometry,
+    self-collision, and obstacles across topologies.
+% [번역] (2) multi-topology 측정 경로 설계 — 관절 형상마다 서로 다른 중력
+%   방향의 측정 자세 3개를 정의하고, topology 에 걸쳐 물체 기하·self-collision·
+%   장애물을 고려하는 RRT 기반 planner 로 그 사이 collision-free 경로를 생성.
+
+    \item \textbf{Closed-loop sim-ready asset pipeline:} mesh refinement
+    and per-part scaling reduce volume error, and the components above integrate
+    into a pipeline limiting additional user intervention to one
+    joint-configuration adjustment, validated in
+    simulation on three articulated objects, two with per-part ground-truth
+    density\rev{; validation on a fourth object (laptop) and on the physical
+    robot is in preparation}.
+% [번역] (3) 폐루프 sim-ready asset 파이프라인 — part 별 부피 오차를 줄이는
+%   mesh refinement 와 scaling 위에 위 요소들을 통합하여 추가 사용자 개입을
+%   관절 형상 조정 한 번으로 제한하며, part 별 GT 밀도를 가진 커스텀 물체 둘을
+%   포함한 관절체 3종의 시뮬레이션으로 검증한다(4번째 물체(노트북)와 실물
+%   로봇 검증은 준비 중 — \rev{} 표시).
+\end{itemize}

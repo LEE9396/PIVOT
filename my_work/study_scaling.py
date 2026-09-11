@@ -42,6 +42,15 @@ import nlink
 DEFAULT_RELS = (0.01, 0.02, 0.05, 0.10)
 
 
+def target_for(n_part, per_link=0.005):
+    """목표 상대 반폭은 링크 수에 비례한다: tau(p) = per_link * p.
+    링크마다 미지수가 둘씩 늘고 달성 가능한 정밀도는 곱셈으로 나빠지므로,
+    모든 물체를 하나의 절대값으로 묶으면 긴 사슬에서만 도달 불가가 된다.
+    부위 개수에 비례하는 예산은 복잡도가 다른 물체를 같은 '부위당' 기준으로
+    잰다. 8/27 사용자 결정 (안 가)."""
+    return per_link * n_part
+
+
 def run_cell(n_part, rho_gt, rel, seeds, target, max_rounds, n_starts,
              fixed_spec=None):
     """한 (P, rel) 칸을 seeds 번 돌린다. GT 는 채점에만 쓴다.
@@ -78,7 +87,8 @@ def main():
     ap.add_argument("--parts", type=int, nargs="+", default=[2, 3, 4, 5, 6, 7, 8])
     ap.add_argument("--rel", type=float, nargs="+", default=list(DEFAULT_RELS))
     ap.add_argument("--seeds", type=int, default=4)
-    ap.add_argument("--target", type=float, default=0.01)
+    ap.add_argument("--per-link-target", type=float, default=0.005,
+                    help="목표 반폭 = per_link_target * p (기본 0.5%%/링크)")
     ap.add_argument("--max-rounds", type=int, default=12)
     ap.add_argument("--starts", type=int, default=6)
     ap.add_argument("--fixed-lengths", action="store_true",
@@ -87,7 +97,8 @@ def main():
     ap.add_argument("--plot", default="figures/study_scaling.png")
     args = ap.parse_args()
 
-    print(f"목표 반폭 {100*args.target:.1f}%   최대 {args.max_rounds}라운드   "
+    print(f"목표 반폭 {100*args.per_link_target:.1f}%/링크 (tau=0.5%%xp)   "
+          f"최대 {args.max_rounds}라운드   "
           f"seed {args.seeds}개   연속최적화 시작점 {args.starts}개")
     print("물체: nlink (관절마다 실측 힌지 41 g). 미지수 = 2P-1.")
     print("링크 길이: " + ("고정 (단조 감소)" if args.fixed_lengths else
@@ -106,7 +117,8 @@ def main():
 
         cells = []
         for rel in args.rel:
-            cell = run_cell(n_part, rho_gt, rel, args.seeds, args.target,
+            cell = run_cell(n_part, rho_gt, rel, args.seeds,
+                            target_for(n_part, args.per_link_target),
                             args.max_rounds, args.starts,
                             fixed_spec=spec if args.fixed_lengths else None)
             table[f"{n_part}|{rel}"] = cell
@@ -126,7 +138,10 @@ def main():
     print("  센싱이라는 뜻이다. 이것이 이 실험이 가르려는 단 하나의 질문이다.")
 
     payload = dict(parts=args.parts, rel=args.rel, seeds=args.seeds,
-                   target=args.target, max_rounds=args.max_rounds,
+                   target={str(q): target_for(q, args.per_link_target)
+                           for q in args.parts},
+                   per_link_target=args.per_link_target,
+                   max_rounds=args.max_rounds,
                    unknowns={p: nlink.n_unknowns(p) for p in args.parts},
                    bound={p: nlink.round_lower_bound(p) for p in args.parts},
                    cells=table)
@@ -153,7 +168,7 @@ def main():
         ax.plot(args.parts, ys, style, label=f"angle err {100*rel:g}%")
     ax.step(args.parts, [nlink.round_lower_bound(p) for p in args.parts],
             "k--", where="mid", label="Prop.3 bound ceil((2P-2)/3)")
-    ax.set_xlabel("number of parts P"); ax.set_ylabel(f"rounds to {100*args.target:g}% half-width")
+    ax.set_xlabel("number of parts P"); ax.set_ylabel(f"rounds to {100*args.per_link_target:g}%/link half-width")
     ax.set_title("where the wall is, and does precision move it")
     ax.grid(alpha=0.3); ax.legend(fontsize=8)
 

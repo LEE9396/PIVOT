@@ -1,0 +1,34 @@
+\begin{table}[t]
+\caption{Simulation baselines on randomly proportioned chains, eight objects per
+row, fourteen-round budget. Entries are the median worst-part relative mass
+error; for our method the parenthesised figure is how many of the eight reached
+that row's target. \emph{Uniform} assigns one density to the whole assembly;
+\emph{single} runs our estimator at one fixed configuration with as many wrist
+orientations and repeats as it likes; \emph{WLS} keeps our selection rule but
+does not solve for the joint angles. The degradation of \emph{single} tracks
+Cor.~\ref{cor:rigid}: it is harmless at $p=2$, where one configuration already
+meets the bound, and grows once the unknowns exceed the rank ceiling.}
+% [번역] 표 캡션. 무작위 비율 사슬에서의 시뮬레이션 baseline. 행마다 물체
+%   8개, 예산 14라운드. 값은 부위 최악 상대 질량 오차의 중앙값이고, 우리
+%   방법의 괄호는 여덟 중 몇 개가 그 행의 목표에 닿았는지다. uniform 은
+%   조립체 전체에 밀도 하나를 준다. single 은 우리 추정기를 형상 하나에
+%   고정한 채 손목 방향과 반복은 원하는 만큼 쓴다. WLS 는 선택 규칙은
+%   그대로 두고 관절각을 함께 풀지 않는다. single 이 무너지는 양상이
+%   따름정리 2를 따라간다 — p=2 에서는 한 형상이 이미 하한을 채우므로 해가
+%   없고, 미지수가 rank 천장을 넘어서면서 커진다.
+\label{tab:sim_baselines}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{cccrrrl}
+\hline
+$p$ & $P$ & Target & Uniform & Single & WLS & Ours \\
+\hline
+$2$ & $3$  & $1.0\%$ & $280.4\%$ & $0.13\%$ & $0.16\%$ & $\mathbf{0.10\%}$ $(8/8)$ \\
+$3$ & $5$  & $1.0\%$ & $228.6\%$ & $1.46\%$ & $0.39\%$ & $\mathbf{0.07\%}$ $(8/8)$ \\
+$4$ & $7$  & $1.5\%$ & $218.5\%$ & $21.0\%$ & $8.31\%$ & $\mathbf{0.19\%}$ $(8/8)$ \\
+$5$ & $9$  & $2.0\%$ & $211.8\%$ & $32.0\%$ & $11.6\%$ & $\mathbf{0.32\%}$ $(7/8)$ \\
+$6$ & $11$ & $2.0\%$ & $206.3\%$ & $46.8\%$ & $17.6\%$ & $\mathbf{1.24\%}$ $(0/8)$ \\
+\hline
+\end{tabular}
+\end{table}

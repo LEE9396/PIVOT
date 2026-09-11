@@ -1,0 +1,80 @@
+0. abstract
+현실세계에는 rigid body뿐만 아니라 다양한 articulated object가 존재함. 따라서 이를 시뮬레이션에서 잘 다루는 것이 필수.
+관절체를 정확하게 시뮬레이션 하려면 part별 density와 geometry를 정밀하게 추정해야한다. 그 이유는 이 둘이 대부분의 physical property를 표현해주기 때문임.
+그러나 기존의 접근법은 주로 visual gap를 줄이는데 초점을 맞춰왔고, real world interaction 기반 physical property estimation은 강체에 국한되어 여전히 관절체에 대해서는 다루어지지 않음
+active robot manipulation을 통해 real world에서 part별 밀도를 추정함으로서 visual, geometry, physics에 대해서 모두 믿을만한 sim ready asset을 만드는 것이 이 연구의 목표
+part 수에 따른 탐색 횟수의 하한을 이론적으로 정의하고, information gain이 가장 큰 후보자세를 골라서 탐색과 추정을 반복하는 closed loop를 사용하여 사용자의 개입과 전체 추정시간을 동시에 최소화
+단일 rgbd 카메라, linkage gripper, 6dof robotic arm의 환경에서 4개의 실제 물체로 본 연구의 효과를 검증
+
+1. introduction
+abstract와 contribution을 기반으로 작성
+figure1 : 전체 pipeline (mesh+3dgs 추출, part분리, 부피추정, 후보자세 탐색, 여기궤적 설정, 불확실성 기반 update, sim reeady asset 완성)
+  - 각 단계 옆에 대응하는 Methods subsection 번호를 병기하여 3장과 대응시킬 것
+contribution
+1) 단일 형상의 관절체가 몇개의 part까지 나눌 수 있는지 고전적 기법으로 분석하고, object의 geometry(part 수)를 기반으로 필요한 형상 개수의 이론적 하한을 정의하고 real world에서 발생하는 차이를 분석
+2) 관절체의 관절을 손상시키지 않으면서 장애물과 self collision을 고려한 active robot exploration을 통해 visual, geometry(mesh), physics에 모두 faithful한 sim ready asset을 만들 수 있는 minimal intervention pipeline 제안
+3) 밀도를 추정의 null space를 축소하기 위해 information gain 기반 optimization을 통해 가장 정보량이 많은 joint configuration의 조합을 선택함으로서 추정시간을 최소화하는 알고리즘 제안
+4) gt를 제어할 수 있는 2개의 custom object를 포함한 실제 물체 4개에 대한 실제 실험을 통해 파이프라인과 알고리즘이 유효함을 검증
+
+2. related works
+1) articulated asset reconstruction (gs2mesh, rora 등)
+- articulated object의 geometry와 visual (3DGS)을 얻고, part를 분리하여 joint를 설정할 수 있는 연구들
+2) physical property estimation from vision and interation (physxomni, pugs, scalable real2sim 등)
+- 기존의 physical property 추정 방법인 vision 기반 추정(rigid, articulated)과 interaction 기반 추정(rigid only)에 관한 연구들
+3) 고전적인 articulated object에 대한 분석법 (아래 논문 참고해서 작성)
+- articulated object에 대해서 분석하고 이론적 하한을 제시하는 것의 토대가 되는 연구들
+4) optimal excitation, active exploration 기법 (아래 논문 참고해서 작성)
+- 기존의 excitation과 exploration 방법에 관한 연구들
+
+3. Methods
+1) problem statement
+- 문제 정의 및 전체 pipeline의 동작과정에 대한 간략하고 명확한 설명
+2) 물체의 geometry, visual 추출 및 part 분리/joint 설정 방법 설명, 그리고 part별 부피 추정 방법 설명
+- figure1의 "부피추정" 단계가 여기에 대응함. mesh로부터 part별 부피를 산출하는 절차와 watertight 처리 등 전처리 명시
+- 부피 추정 오차는 4.3절에서 정량 분석
+3) 단일 형상의 관절체가 몇개의 part까지 나눌 수 있는지 분석한 수식을 기반으로 object geometry (part수)를 기반으로 part 별 density를 분리하기 위해 필요한 형상 개수의 이론적 하한을 유도하는 수식, experiments에서 실제와 이론적 하한이 얼마나 차이나는지 밝히고 이유를 분석하겠다고 언급
+figure2 : 단일 형상의 한계와 하한을 유도하는 수식에 대한 시각적 보조 자료 (본 절 근처에 배치)
+- 유도한 rank와 Rmin은 RPNA(Wensing et al. 2024)로 독립 계산하여 교차검증하고, 결과는 table 1에 병기
+4) information gain 기반 optimization으로 part별 density를 가장 잘 분리할 수 있는 joint configuration을 추천하는 알고리즘과 그에 관한 수식
+- 고전 OED 기준(condition number 최소화, D-optimality)과의 관계를 본문에서 명시적으로 정리할 것. 4.6절 ablation의 이론적 근거가 됨
+5) object의 joint configuration, 장애물, self collision 을 고려한 excitation orbit 설계 방법과 그에 관한 수식
+6) 불확실성 기반의 탐색을 중지하는 기준에 대한 설명과 수식, 탐색이 종료된 후 sim ready asset을 만드는 과정에 대한 설명(urdf에서 밀도 정보 update 후 나머지 physical property 계산)
+
+4. Experiments
+figure3 : simulation(스크린샷) 및 real world(실제 사진)에서 구성한 실험환경에 대한 사진
+figure4 : custom object2개, desk lamp, laptop 실제 사진 및 custom object cad와 desk lamp, laptop에서 추출한 mesh 및 3dgs 사진 (가상환경 스크린샷)
+figure5 : 2~6 link object에 대한 3-panel 병합 그래프 (기존 figure5, 6, 7을 통합)
+  (a) x축 = link 수 p, y축 = 라운드 수. 곡선 = Rmin(하한), ours(IG), 고전 OED, random. Rmin 아래 영역은 회색 음영으로 불가능 영역 표시. Rmin과 R 수치를 직접 표시
+  (b) x축 = link 수 p, y축 = exploration time(round 수 x 연산시간). 곡선 = ours(IG), 고전 OED, random.
+  (c) x축 = 각도 오차, y축 = 반폭. 곡선 = p별(2,3,4,5,6), 목표 반폭 수평 파선 표시
+  - (a), (b)는 method별 색과 선 스타일(실선/파선/점선)을 동일하게 매핑, 흑백 인쇄 대비
+  - 에러바는 임의 물체 8개에 대한 std로 세 패널 통일
+  - 2단 논문이면 double-column full-width 배치
+table 1 : 실제 물체별 link수 p, 힌지 포함 미지수 P, 단일 형상의 rank, 탐색 형상 하한 round Rmin, RPNA로 계산한 rank/Rmin (교차검증)
+table 2 : 부피추정 오차 baseline, ours ablation
+table 3 : 2~6 link object에 대한 p, P, 임의의 물체 8개에 대해서 몇개가 목표반폭안에 들어왔는지, 밀도 오차 표
+  - Rmin, 실제 측정 횟수 R 열은 figure5 (a)로 이동하여 중복 제거
+table 4 : 실제로 측정한 4개의 물체의 밀도에 대한 gt, baseline, ours(sim), ours(real) 의 추정값과 gt와의 오차
+  - gt 측정 결과를 본 표에 통합 (별도 표를 만들지 않음). gt 측정 프로토콜은 4.1, 4.2에 서술
+1) experimental setup
+- 실험환경에서 사용한 장비에 대한 간략한 설명, 어떻게 실험을 설계했는지에 대한 간략한 설명(gt 측정, 부피추정, simulation에서 밀도 추정, real world에서 밀도 추정, 탐색 전략 ablation, baseline ablation)
+- baseline(physxomni, pugs) 출력이 part별 density가 아닐 경우, 이를 part별 density로 변환하는 절차를 명시. 변환은 해당 baseline에 유리한 방향으로 설정하여 공정성 확보
+2) GT 측정 결과
+- custom object 2개는 cad와 재질로부터 gt 산출, desk lamp / laptop은 분해 후 part별 계량 절차를 상세히 기술
+3) 부피 추정 결과 및 오차 원인 분석
+4) simulation에서 밀도 추정 결과 및 원인 분석 (밀도 오차, 탐색 횟수, 신뢰도)
+5) real world에서 밀도 추정 결과 및 원인 분석 (밀도 오차, 탐색 횟수, 신뢰도)
+6) 탐색 전략 ablation 및 이론적 하한과의 비교 (contribution 3의 직접 검증)
+- ours(IG) vs 고전 OED 기준(condition number / D-optimality를 우리 이산 configuration 선택 문제에 적용) vs random 비교
+- 라운드 수와 wall-clock time을 모두 보고 (figure5 a, b)
+- 유도한 Rmin과 실제 R의 차이를 분석하고 원인을 서술
+- 고전 OED는 궤적 계수를 오프라인에서 1회 최적화하는 반면 우리는 매 라운드 posterior를 갱신하며 재선택하는 closed loop라는 점이 라운드 수 차이로 드러나야 함
+7) baseline(physxomni, pugs 등) 실행 결과 ablation 및 우리 방법이 유효한 이유 분석
+- "왜 상호작용이 필요한가"에 답하는 시스템 수준 비교 (table 4)
+
+5. Conclusion
+-contribution과 limitation을 참고해서 작성
+
+limitation, future work 제안
+- 관절각을 고정으로 가정함 (관절각의 dynamics를 추정하고 그걸 기반으로 excitation하는 연구 제안)
+- 부피추정 오차, 각도 추정 오차 (부피와 각도 추정 오차를 줄일 수 있는 연구 제안)

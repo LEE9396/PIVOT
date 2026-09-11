@@ -1,0 +1,28 @@
+\begin{table}[t]
+\caption{Serial chains with randomly proportioned links, eight seeds per $p$,
+at the $2\%$ target of Sec.~\ref{sec:setup}, under a budget of thirty rounds.
+$R_{\min}$ is the bound of Eq.~\eqref{eq:chain}. Part-mass error is reported as
+mean\,/\,worst over seeds. The precision sweep of
+Fig.~\ref{fig:main} uses a shorter fourteen-round budget, which is
+why its six-link cell at $5\%$ does not converge while this one does.}
+% [번역] 표 캡션. 링크 비율을 무작위로 뽑은 직렬 사슬, p 마다 seed 8개, IV-A
+%   의 목표 반폭 2 %, 예산 30라운드. R_min 은 사슬 하한 식의 값이다. 부위
+%   질량 오차는 seed 에 대한 평균/최악으로 적었다. 정밀도 스윕(그림 3)은
+%   예산이 14라운드로 더 짧은데, 그래서 거기서는 6링크·5 % 칸이 수렴하지
+%   않고 여기서는 수렴한다.
+\label{tab:scaling}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{cccccc}
+\hline
+$p$ & $P$ & $R_{\min}$ & Converged & Rounds & Part mass err.\ [\%] \\
+\hline
+2 &  3 & 1 & 8/8 & 1--1   & 0.17 / 0.43 \\
+3 &  5 & 2 & 8/8 & 2--2   & 0.10 / 0.29 \\
+4 &  7 & 2 & 8/8 & 3--4   & 0.26 / 0.44 \\
+5 &  9 & 3 & 8/8 & 7--15  & 0.35 / 0.54 \\
+6 & 11 & 4 & 4/8 & 15--24 & 1.25 / 3.50 \\
+\hline
+\end{tabular}
+\end{table}

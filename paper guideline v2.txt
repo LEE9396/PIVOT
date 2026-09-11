@@ -1,0 +1,186 @@
+PIVoT 논문 구성 정리 (최종)
+====================================================================
+
+[제목]
+PIVoT: Part-Wise Identification of Volume-Aware Density via Multi-Topology Reorientation
+
+
+[Abstract]
+시뮬레이션에서 articulated object를 정확하게 재현하는 것은 로봇 조작 학습에 필수적이며, 물리적 특성은 part별 volume과 density로 결정되므로 이 둘을 part 단위로 정밀하게 식별해야 한다. 그러나 기존 vision 기반 방법은 부피를 물체 전체 단위로만 추정하여 part별 오차가 크고, 밀도는 외형만으로 추정하므로 신뢰하기 어렵다. Interaction을 통해 밀도를 정확히 추정하는 방법은 존재하지만 rigid body에만 적용되어 왔으며, 관절체의 part별 parameter를 식별하기 위한 측정 자세와 경로 설계는 다루어지지 않았다. 본 연구에서는 active robot interaction으로 articulated object의 part별 밀도를 식별하여 visual, geometry, physics에 모두 충실한 sim-ready asset을 생성하는 closed-loop pipeline인 PIVoT를 제안한다. PIVoT는 information gain 기반으로 밀도의 null space를 최소화하는 joint configuration을 사용자에게 제시하고, 각 configuration에서 서로 다른 중력 방향의 측정 자세 3개를 collision-free 경로로 이동하며 로봇이 데이터를 수집하고, 불확실성이 수렴할 때까지 part별 밀도를 갱신한다. 사용자 개입은 제시된 joint configuration 조정으로 최소화되며, 밀도 식별의 기반이 되는 part별 부피는 multi-view consistency 기반 mesh refinement와 part별 scaling으로 보정된다. 단일 RGB-D 카메라와 6-DoF arm 환경에서 custom object 2개를 포함한 실제 물체 4개에 대해 PIVoT가 physically accurate한 sim-ready asset을 생성함을 검증하였다.
+
+
+[Contributions]
+1) Information-theoretic part-wise density identification
+   part 수에 따른 joint configuration의 이론적 하한을 유도하고, information gain 기반으로 configuration을 선택하며, interaction 데이터로 part별 밀도를 불확실성 기반으로 갱신하는 알고리즘을 제안한다.
+
+2) Multi-topology measurement path design
+   하나의 joint configuration에 대해 서로 다른 중력 방향에서 3회 측정하도록 측정 자세를 정의하고, 다양한 topology의 기하학적 형상과 self-collision, 장애물을 고려하여 자세 간 collision-free 이동 경로를 생성하는 RRT 기반 방법을 제안한다.
+
+3) Closed-loop sim-ready asset pipeline
+   part별 부피 오차를 줄이는 mesh refinement와 scaling 위에 위 두 요소를 통합한 closed-loop 파이프라인으로, 추가 사용자 개입을 joint configuration 조정 한 번으로 제한하면서 visual, geometry, physics에 충실한 asset을 생성함을 4개의 실제 물체로 검증한다.
+
+* 대응 관계
+  - "Part-Wise"                    <-> abstract "part 단위로 정밀하게 식별" <-> contribution 1, 3
+  - "Identification of Density"    <-> abstract 방법 문장              <-> contribution 1
+  - "Volume-Aware"                 <-> abstract 부피 보정 문장           <-> contribution 3
+  - "Multi-Topology Reorientation" <-> abstract 측정 자세 3개 + 경로     <-> contribution 2
+  - abstract "closed-loop pipeline"                                    <-> contribution 3
+
+* 용어 주의
+  - "excitation", "orbit"은 동적 궤적을 연상시키므로 사용하지 않음.
+  - 통일 용어: measurement pose(측정 자세), reorientation(중력 방향 변경), measurement path(자세 간 경로).
+
+* 사용자 개입 표현 주의
+  - reconstruction 단계 개입은 RORA와 동일, physics 추정을 위해 추가되는 개입은 joint configuration 조정 1회.
+  - "개입 지점이 한 곳"이라고 쓰지 말고 "추가되는 개입은 한 곳"으로 정확히 기술.
+
+
+[Related Work] (3분류)
+1) Sim-ready reconstruction of articulated objects
+   - RORA, ArtVIP, JODA 등. geometry와 articulation을 복원하여 시뮬레이션 자산 생성.
+   - 마무리: visual/geometry는 제공하지만 physical property는 다루지 않음. 본 연구는 이 위에 physics를 얹음.
+
+2) Vision-based physical property estimation
+   - PhysXOmni, PUGS, SIPHY 등. 부피 추정과 밀도 추정을 나누어 서술.
+   - 마무리: 부피는 물체 전체 단위라 part별 오차가 크고, 밀도는 외형만으로 추정하므로 신뢰하기 어려움.
+
+3) Interaction-based physical property estimation
+   - (i) Scalable Real2Sim 등 실제 조작으로 mass/inertia 추정
+   - (ii) 다중 자세(multi-orientation) 기반 관성 parameter 식별: 물체를 여러 방향으로 기울여 wrench를 측정해
+         mass/CoM을 구하는 연구
+   - 마무리: (i)는 rigid body에 국한, (ii)는 rigid body 하나의 CoM을 구하며, 관절체의 part별 밀도로 확장하려면
+     joint configuration과 측정 자세의 결합 설계가 필요함.
+
+* 주의: "rigid only" 주장은 최근 문헌 재확인. 관절체 대상 물성 추정 연구가 있으면 "part별 밀도를 체계적으로 식별하는 연구는 없다"로 범위 조정.
+
+
+[Figure 1: Conceptual Overview] (번호형 콜라주, 3단계)
+1. Video recording of a static object
+   - 비디오 입력. RORA 결과물(articulated GS + Mesh)을 작은 중간 결과로 표시하여 출발점임을 보여줌.
+2. Active robot exploration for physical properties
+   - 로봇 팔이 물체를 서로 다른 방향으로 기울여 들고 있는 장면 + 사용자가 joint configuration을 바꾸는 작은 아이콘.
+   - 화살표 라벨: "Articulated GS + Mesh -> + Mass / Density per part"
+3. Physically accurate simulation
+   - 무게중심/관성에 따른 물체 거동(기울어짐, 낙하 등)이 실제와 일치하는 장면.
+
+
+[Figure 2: Overall Pipeline] (2층 구도, 7개 패널)
+위층 - Offline (회색, 직선 흐름)
+  (a) Articulated reconstruction : RORA 전체를 한 패널로 압축. GS + Mesh + URDF, "prior work" 표기.
+                                    패널 안에 작은 사람 아이콘 + "human-in-the-loop [RORA]" 표기 (기존 개입을 숨기지 않음)
+  (b) Volume estimation          : mesh refinement + part별 scaling으로 부피 추정
+
+아래층 - Active physical estimation loop (보라 점선 영역, 시계방향 루프)
+  (c) Joint configuration suggestion : information gain 기반 제안 -> 사용자가 관절 조정 (추가 개입 지점, 사람 아이콘)
+  (d) Measurement pose & path design  : 중력 방향 3개의 측정 자세 + 자세 간 collision-free 경로.
+                                        삽화: 물체 하나에 중력 화살표 3개와 자세 사이 경로
+  (e) Active robot sensing            : 6-DoF arm으로 각 자세에서 wrench 측정
+  (f) Density update                  : 불확실성 기반 part별 밀도 갱신
+  (f)->(c) "not converged", (f)->(g) "converged"
+
+오른쪽 세로 패널 - Output (청록)
+  (g) Sim-ready asset : Mesh(physics), Gaussians(rendering), Mass/Inertia per part + 시뮬레이션 스크린샷
+
+연결 화살표: (a)->(b), (b)->루프 영역 "part volume", (c)->(d)->(e)->(f)->(c) 루프, (f)->(g) 종료.
+
+Caption 초안:
+"Overall pipeline. Starting from the articulated asset of [RORA], the offline stage estimates part volumes, and the closed-loop stage iteratively suggests joint configurations, reorients the object to three gravity directions along collision-free paths, and updates part densities until uncertainty converges. Beyond the reconstruction stage, the user intervenes only to set the suggested joint configuration."
+
+
+[Method] (5개 section)
+A. Problem Formulation and Overview
+   - 패널 (a) + 전체 흐름. RORA 출력(part별 mesh, GS, URDF)을 입력으로 정의.
+   - part별 밀도 식별 문제를 수식으로 정의(측정 wrench와 밀도 벡터의 관계, null space 발생 이유).
+   - closed loop 개요, notation 정의.
+
+B. Part-Wise Volume Estimation
+   - 패널 (b). multi-view consistency 기반 mesh refinement, part별 PCA scaling.
+   - 마지막에 "이 부피가 이후 밀도 식별의 기반이 된다"로 연결.
+
+C. Information-Theoretic Joint Configuration Selection
+   - 패널 (c). 이론적 하한 유도 -> information gain 정의 -> optimization -> 사용자 제시.
+   - Contribution 1 전반부.
+
+D. Multi-Topology Measurement Path Design
+   - 패널 (d). 먼저 측정 자세 3개가 필요한 이유(중력 방향 3개가 선형 독립이어야 part별 CoM/질량이 관측됨)를 세움.
+   - 다음으로 자세 간 경로 생성: 물체 형상, self-collision, 장애물 제약, RRT 기반. topology별 차이.
+   - Contribution 2.
+
+E. Active Sensing and Uncertainty-Aware Density Update
+   - 패널 (e)(f)(g). 각 자세에서 wrench 측정 -> 불확실성 기반 밀도 갱신 -> 수렴 판정 및 C로 복귀 조건
+   - 마지막 단락: mesh, GS, mass/inertia 결합한 asset export.
+   - Contribution 1 후반부 + 3.
+
+
+[Experiments] (구성)
+A. Setup
+   - 하드웨어: 단일 RGB-D, linkage gripper, 6-DoF arm
+   - 물체 4개: custom 2개(part별 GT 밀도), 나머지 2개(저울 측정 질량)
+   - 힌지 관련 문장(반드시 포함):
+     "Custom object 2개는 힌지를 독립 part로 구성하였다. 힌지는 부피가 작고 다른 part에 가려져 관측이
+      어려우면서도 질량이 집중된 경우가 많아, 이를 하나의 part로 식별해야 하는 상황은 실제 articulated
+      object에서 흔히 나타나는 더 어려운 일반적 경우에 해당한다."
+   - 평가 지표: part별 부피 오차, part별 밀도/질량 오차, sim-real 거동 궤적 오차
+   - baseline 목록
+B. Part-Wise Volume Estimation
+   - vision baseline을 part별 적용 vs. 제안 방법. ablation(refinement/scaling 유무). 부피 오차 -> 밀도 오차 전파.
+C. Part-Wise Density Identification (main result)
+   - baseline: vision(PhysXOmni, PUGS), interaction rigid 방식(전체 물체), 제안.
+   - ablation: configuration 선택(random/heuristic/info-gain), uncertainty-aware update 유무.
+   - 이론적 하한 검증, 반복 횟수별 불확실성 수렴 곡선.
+   - 힌지 part의 오차 열을 별도로 강조.
+D. Measurement Pose and Path Design
+   - 측정 자세 선택: 임의 자세 vs. 제안 자세에서의 정보량(조건수), 밀도 오차.
+   - 경로 생성: 직선 보간 경로 vs. RRT 경로의 collision 발생률, joint limit 위반/관절 손상 여부.
+   - topology별 측정 자세와 경로 정성 비교.
+E. Sim-Ready Asset Validation
+   - 시뮬레이션-실제 거동 궤적 비교(밀기, 기울이기, 놓기). baseline asset vs. 제안 asset.
+   - 사용자 개입: Table 5에 열 하나로. 제안 방법은 "RORA와 동일 + joint adjustment 1회", baseline은 각자 필요한 개입 기술.
+   - 본문 문장: "Reconstruction 단계의 개입은 [RORA]와 동일하며, 밀도 식별을 위해 추가되는 개입은
+     제시된 joint configuration으로 물체를 조정하는 것뿐이다(물체당 평균 N회, 회당 약 M초)."
+
+* 물체 4개라 통계적 유의성 주장은 어려움. 물체별 결과를 모두 표에 드러내고 평균에만 의존하지 않을 것.
+
+
+[Tables]
+Table 1 | 실험 물체 사양: part 수(힌지 part 포함 여부 표시), joint type/topology, GT 획득 방법, 질량 범위  | Setup
+Table 2 | part별 부피 오차: vision baseline part별 적용 vs. 제안 + ablation(refinement/scaling 없음)       | Sec. B
+Table 3 | part별 밀도 오차(main): vision / interaction rigid / 제안 + ablation(선택 방식, update 방식)      | Sec. C
+Table 4 | 측정 자세/경로 비교: 임의 자세 / 제안 자세, 직선 경로 / RRT 경로                                 | Sec. D
+        |   열: 조건수(정보량), 밀도 오차, collision 발생률, joint limit 위반 횟수                         |
+Table 5 | asset 검증: sim-real 거동 궤적 오차(baseline asset vs. 제안) + 사용자 개입 열 + 총 소요 시간     | Sec. E
+
+[Figures]
+Fig. 3 | 실험 환경과 물체 4개 사진, part 색 구분(힌지 part 표시)                                          | Setup
+Fig. 4 | 부피 오차 -> 밀도 오차 전파 그래프(x: 부피 오차, y: 밀도 오차)                                    | Sec. B
+Fig. 5 | 반복 횟수별 불확실성 수렴 곡선(물체별 subplot) + 이론적 하한을 세로 점선으로 표시                  | Sec. C
+Fig. 6 | topology별 측정 자세 3개와 자세 간 경로를 물체 위에 오버레이, 직선 경로의 collision 지점 표시      | Sec. D
+Fig. 7 | sim vs. real 거동 비교 스냅샷: 같은 조작을 나란히, baseline asset은 어긋나고 제안 asset은 일치     | Sec. E
+
+* 핵심: Table 3, Fig. 7에 가장 공을 들일 것.
+* 분량 부족 시: Table 1 -> Fig. 3 caption으로, Fig. 4 -> Table 2의 열 하나로 흡수.
+
+
+[Conclusion] (3단락)
+1단락 - 문제와 제안 요약
+   - articulated object의 sim-ready asset에는 part별 volume과 density가 필요하지만, vision 기반은 부정확하고
+     interaction 기반은 rigid body에 국한되어 있었음.
+   - PIVoT는 active robot interaction으로 part별 밀도를 식별하는 closed-loop pipeline으로, information gain 기반
+     joint configuration 제안, 중력 방향 3개의 측정 자세와 collision-free 경로 설계, 불확실성 기반 밀도 갱신으로 구성됨.
+
+2단락 - 결과 요약
+   - 4개의 실제 물체에서 part별 밀도 오차가 vision 및 rigid-only baseline보다 크게 감소했고, 생성된 asset의
+     시뮬레이션 거동이 실제와 일치함.
+   - custom object 2개는 힌지를 독립 part로 포함하여, 작고 관측이 어려운 part까지 식별해야 하는 일반적인
+     경우에도 방법이 동작함을 보임.
+   - physics 추정을 위해 추가된 사용자 개입은 joint configuration 조정 한 번뿐임.
+
+3단락 - Limitations (채택한 기존 구성 요소에서 비롯된 한계 중심)
+   - 입력 reconstruction [RORA]의 part segmentation/joint 추정 오류가 이후 단계로 전파되며, 그 단계의
+     사용자 개입도 상속됨.
+   - 측정 자세 간 경로 생성에 사용한 RRT는 샘플링 기반이라 복잡한 topology에서 계산 시간이 증가하고
+     경로의 최적성을 보장하지 않음.
+   - 단일 linkage gripper와 6-DoF arm의 파지 가능 범위와 하중 한계로 인해 검증 대상이 소형/경량 물체로 제한됨.
+
+* reviewer 예상 질문(답변 준비): part별 균일 밀도 가정, 마찰/damping 미포함, part 수 증가 시 configuration 수 증가,
+  준정적 측정이므로 관성 텐서(inertia)는 CoM/질량에서 유도되는지 여부.

@@ -1,0 +1,147 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% [메모] 8/30 3차 개정 (WRITING_BRIEF.md §7 · paper guideline v2 기준).
+%   소절 4개 -> 3개 (가이드라인 v2 의 3분류). A: sim-ready 재구성 (RORA/ArtVIP/
+%   JODA + 기하·관절 전용 계보). B: vision 물성 추정 — 부피/밀도를 나누어 서술,
+%   "실측과 접점이 전혀 없다" 는 과장 제거 (실측은 평가 GT 로만 들어옴을 명시,
+%   §7.2). C: interaction 물성 추정 — (i) 단일 강체 실조작 (Nadeau 의 "part" 가
+%   강체 내부 재질 영역임을 명시), (ii) 다자세 정지 렌치 표준 결과 (특정 논문에
+%   귀속시키지 않음, §7.3), (iii) 최근접 선행연구 구분: Kumar 2019 신규 인용
+%   (비전/비파지 푸시/이산 분류 — 3가지 차이 한 문장), RigPI 는 실물 검증 물체가
+%   가동 링크 1개뿐임을 명시, 주장은 §7.4 의 3축 문구로 좁힘. 구 C(고전 분석)·
+%   D(여기·능동 탐색) 소절은 C 말미 한 문단으로 압축 (Gautier & Khalil, Swevers,
+%   RPNA, ASID 유지; Hausman 은 C(iii) 로 이동; hausman2015active 와
+%   memmel2024asid 는 별개 논문으로 분리 서술, §7.5).
+% [메모] 8/30 8-페이지 압축: 인용 11건 제거 (CUTS.md 참조) — mayeda1990base,
+%   lee2020geometric, lee2021optimal, janot2014instrumental, jin2025ugraph,
+%   eppner2018physics, zhai2024nerf2physics, xu2025gaussianproperty,
+%   kim2025screwsplat, lee2026artsplat, li2026uniphysgen. 신규 bib 키:
+%   artvip2026, joda2026, jiang2022ditto, liu2023paris, mandi2024real2code,
+%   artgs2025, cao2025physx3d, kumar2019estimating, nadeau2022fast,
+%   activetactile2023, kubus2008online. le2026siphy 는 ECCV 2026 로 정정.
+% [메모] 8/30 압축 개정: 8/27·8/20 구 판본 주석 블록은 삭제했다 (git 과 v1
+%   트리에 보존되어 있음).
+
+\section{Related Work}
+
+\subsection{Sim-Ready Reconstruction of Articulated Objects}
+
+Articulated-object reconstruction recovers appearance, part decomposition, and
+kinematics from interaction or images
+\cite{jiang2022ditto}.
+RORA, our starting point, exports part-bound Gaussians, part meshes, and a
+URDF from a single-configuration video through human-in-the-loop joint
+proposals \cite{lee2026rora}. ArtVIP's assets are billed as physically
+faithful but hand-authored, not identified from measurements of the simulated
+instance \cite{artvip2026}; JODA infers joint dynamics---friction, damping,
+detents---with a VLM, leaving link masses unaddressed \cite{joda2026}. The lineage delivers visual and
+geometric fidelity but no measured physics; we take such a reconstruction as
+input and add physics by measurement.
+% [번역] 관절 물체 재구성은 상호작용이나 영상으로부터 외형, 부위 분할, 기구학
+%   구조를 복원한다. RORA 는 단일 정적 형상 영상에서 human-in-the-loop 관절
+%   제안을 거쳐 part 결합 Gaussian, part mesh, URDF 를 내보내며 본
+%   파이프라인의 출발점이다. ArtVIP 는 물리적 충실도를 표방하는 관절 자산을
+%   제공하지만 전문 모델러의 수작업 저작이지 시뮬레이션 대상 개체의 실측 기반
+%   식별이 아니고, JODA 는 관절 동역학(마찰·댐핑·디텐트)을 VLM 으로 추론할 뿐
+%   링크 질량은 다루지 않는다. 이 계보는 시각·기하 충실도를 주지만 시뮬레이션
+%   거동을 결정하는 물성은 없거나 수작업이다. 본 연구는 그런 재구성을
+%   입력으로 받아 빠진 물리를 측정으로 채운다.
+
+\subsection{Vision-Based Physical Property Estimation}
+
+Vision-based methods estimate properties without contact. For \emph{volume},
+PUGS integrates a Gaussian-splatting reconstruction's volume to predict object
+mass \cite{shuai2025pugs}, and the PhysX series uses its
+generated meshes' volume
+\cite{cao2026physxomni}.
+Volume thus enters at whole-object granularity or via generated geometry; an individual part---thin, hollow, or occluded---retains a large
+error.
+% [번역] 시각 기반 방법들은 접촉 없이 물성을 추정한다. 부피 쪽에서 PUGS 는
+%   Gaussian splatting 재구성의 부피를 적분해 물체 질량을 예측하고, PhysX
+%   계열과 UniPhysGen 은 자신이 생성한 mesh 의 부피를 그대로 쓴다. 부피가
+%   물체 전체 단위로 들어오거나 생성된 기하에서 상속되므로, 얇거나 속이
+%   비었거나 가려진 개별 part 의 부피 오차는 크게 남는다.
+
+For \emph{density}, the generative series looks up a material database given a
+predicted material class, while PhysGS and part-level SiPhy infer it from
+appearance and language-derived priors
+\cite{chopra2026physgs,le2026siphy}.
+These estimates are grounded only in appearance priors: real measurements enter
+as evaluation ground truth---never as an input. Appearance does
+not determine density; we identify it by measurement instead.
+% [번역] 밀도 쪽에서 같은 생성 계열은 예측된 재질 클래스로 재질 DB 에서 값을
+%   조회하고, NeRF2Physics, GaussianProperty, PhysGS, part 단위의 SiPhy 는
+%   외형과 언어 유래 사전지식으로 추론한다. 이들 추정은 외형 사전지식에만
+%   근거한다. 실측은 평가용 GT 로는 들어오지만 추정의 입력으로는 결코 들어오지
+%   않는다. 외형이 밀도를 결정하지 않으므로 그 값은 해당 개체에 대해 신뢰할 수
+%   없고, 우리는 측정으로 식별한다.
+
+\subsection{Interaction-Based Physical Property Estimation}
+
+Interaction-based methods measure, but on single rigid bodies: quasi-static
+wrenches identify masses of homogeneous material regions inside one
+body---the ``parts'' of \cite{nadeau2023sum} are such regions, not articulated
+links---inertial parameters are identified during pick-and-place
+\cite{nadeau2022fast}, and Scalable Real2Sim generates
+assets with physically feasible inertial parameters from robot sensing
+\cite{pfaff2025scalable}.
+% [번역] 상호작용 기반 방법들은 실제로 측정하지만 단일 강체가 대상이다. 정지
+%   렌치로 한 강체 내부의 균질 재질 영역별 질량을 식별하는데 —
+%   \cite{nadeau2023sum} 의 "part" 는 그런 영역이지 관절로 연결된 링크가
+%   아니다 — pick-and-place 중 관성 파라미터를 식별하거나, Scalable Real2Sim
+%   처럼 로봇 센싱으로 물리적으로 실현 가능한 관성 파라미터의 asset 을
+%   생성한다.
+
+A second thread reorients a grasped rigid body, reading the static wrench: one
+gravity direction fixes mass, two non-parallel add the center of mass, a
+non-coplanar third separates sensor bias; the inertia tensor
+produces no quasi-static wrench and classically requires dynamic trajectories
+\cite{atkeson1986estimation,kubus2008online} (cf.\ Sec.~\ref{sec:theory}).
+% [번역] 두 번째 갈래는 파지한 강체를 재배향하며 정지 렌치를 읽는다. 중력
+%   방향 하나면 질량이, 비평행 두 방향이면 무게중심까지 정해지고, 비공면 세
+%   번째는 센서 바이어스를 분리한다. 관성 텐서는 준정적 렌치를 전혀 만들지
+%   않아 고전적으로 동적 궤적을 요구한다(III 절 참조).
+
+The closest prior work is Kumar et al.~\cite{kumar2019estimating}, which
+estimates per-link mass of two- and three-link objects on a real UR10; it
+differs in sensing with vision (an RGB-D camera and per-link
+markers) rather than force--torque, in pushing the object non-prehensilely
+rather than grasping and reorienting it, and in classifying among five discrete
+mass-distribution hypotheses rather than regressing continuous values. RigPI
+identifies parameters via VLM-seeded differentiable simulation with
+force--torque sensing \cite{he2027rigpi}, but its real-robot validation
+objects each have only one moving link; its multi-link results remain in
+simulation. Interactive perception
+acts on articulated objects but estimates the kinematic model---joint axes
+and types---not link masses or densities
+\cite{hausman2015active}. To our knowledge, no prior work
+identifies, from wrist force--torque measurements, the densities of two or more
+independently unknown links within one mechanism.
+% [번역] 가장 가까운 선행연구는 Kumar 등으로, 실물 UR10 에서 2·3링크 관절체의
+%   링크별 질량을 추정한다. 그러나 F/T 가 아니라 비전(RGB-D 카메라와 링크별
+%   마커)으로 센싱하고, 파지·재배향이 아니라 비파지 밀기를 쓰며, 연속 회귀가
+%   아니라 다섯 개의 이산 질량분포 가설 중 분류를 한다는 세 가지 점에서 본
+%   연구와 다르다. RigPI 는 F/T 센싱과 VLM 초기화 미분 가능 시뮬레이션으로
+%   파라미터를 식별하지만, 실물 검증 물체는 각각
+%   움직이는 링크가 하나뿐이고 다중 링크 결과는 시뮬레이션에 그친다.
+%   interactive perception 은 관절 물체를 능동 조작하지만 목적은 관절 축·타입,
+%   즉 kinematic model 추정이지 링크의 질량·밀도가 아니다. 우리가 아는 한,
+%   손목 F/T 실측으로 하나의 기구 안에서 독립적으로 미지인 링크 2개 이상의
+%   밀도를 식별한 연구는 없다.
+
+Our design machinery is classical: base-parameter analysis delimits
+which inertial combinations any regressor can resolve
+\cite{wensing2024geometric}; Gautier--Khalil
+and Swevers et al.\ condition the regressor by optimizing
+identification trajectories
+\cite{gautier1992exciting,swevers1997optimal}; ASID brings the same logic to
+learned exploration policies maximizing Fisher information
+\cite{memmel2024asid}. All design an actuated robot's trajectory, its
+configuration read by encoders; PIVoT instead designs, in a closed loop, a
+passive object's joint configuration and the gravity directions under which
+it is reoriented.
+% [번역] 우리가 딛고 서는 설계 도구는 고전적이다. base parameter 분석은 어떤
+%   회귀 행렬이든 분해할 수 있는 관성 조합을 한정하고, Gautier-Khalil 과
+%   Swevers 등은 동적 식별 주행의 궤적을 최적화해 회귀 행렬의 조건을 좋게
+%   하며, ASID 는 같은 논리를 Fisher 정보를 최대화하는 학습된 탐색 정책으로
+%   가져간다. 모두 엔코더로 형상을 읽는 구동 로봇의 궤적을 설계한다. PIVoT 는
+%   반대로 수동 물체의 관절 형상과 재배향할 중력 방향들을 폐루프로 설계한다.

@@ -1,0 +1,25 @@
+\begin{table}[t]
+\caption{Where each method's volume comes from, scored against the hydrostatic
+ground truth of Sec.~\ref{sec:gt}. MARE is the mean absolute relative error over
+parts; centroid error is the mean distance to the ground-truth part centroid.
+Bounding box and convex hull are references, not baselines.}
+% [번역] 표 캡션. 각 방법의 부피가 어디서 오는지를 IV-B 의 수중 배제법
+%   참값에 대고 채점한 것. MARE 는 부위에 대한 평균 절대 상대오차이고, 도심
+%   오차는 참값 부위 도심까지의 평균 거리다. bounding box 와 convex hull 은
+%   baseline 이 아니라 참조용이다.
+\label{tab:volume}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llcc}
+\hline
+Source of volume & Used by & Part $V$ MARE [\%] & Centroid [mm] \\
+\hline
+Mesh refinement (ours)  & Ours        & \rev{--} & \rev{--} \\
+Bounding box            & reference   & \rev{--} & \rev{--} \\
+Convex hull             & reference   & \rev{--} & \rev{--} \\
+Gaussian integration    & PUGS        & \rev{--} & \rev{--} \\
+Generated geometry      & PhysX-Omni  & \rev{--} & \rev{--} \\
+\hline
+\end{tabular}
+\end{table}

@@ -1,0 +1,133 @@
+# N-link 밀도추정 시뮬레이션 (To-Do [8]) — 실제로 사용한 설정
+#
+# 이 파일은 손으로 적은 것이 아니라 exp_nlink_density.py 의 상수와 기본
+# 인자를 그대로 옮긴 것이다. 재현하려면:
+#   cd my_work
+#   ../robot_learning/scripts/run_drake_env.sh python -u exp_nlink_density.py
+#   ../robot_learning/scripts/run_drake_env.sh python -u summarize_nlink.py
+
+meta:
+  date: 2026-09-03
+  scripts:
+    experiment: my_work/exp_nlink_density.py
+    summary: my_work/summarize_nlink.py
+  runner: robot_learning/scripts/run_drake_env.sh   # 맨 python 금지 (AGENTS.md)
+  drake: 1.54.0
+
+object:
+  generator: my_work/nlink.py  (nlink.make_spec)
+  type: 직렬 N-link 사슬 (뱀 형태), 모든 관절 revolute
+  n_links: [2, 3, 4, 5, 6]
+  cross_section_mm: [44, 44]
+  link_gap_mm: 4
+  hinge_axis_offset_mm: 27           # 표면 장착이라 축이 중심선에서 벗어남
+  fill_fraction: 0.98                # 외부 부피 = bbox 의 98 % (리세스 공제)
+  joint_axes: z, -y, z, -y, ...      # 번갈아
+  joint_limits_rad: [0, 3.14159]
+  link_length_mm:
+    rule: seed 마다 [70, 150] 에서 균일 무작위 (nlink.link_lengths, rng 사용)
+    spec_seed: 1000 + trial_seed     # study_scaling.run_cell 과 같은 규약
+    note: >
+      고정 길이(단조 감소)를 쓰면 말단 링크가 짧아져 마지막 관절의 지렛대가
+      사라지고, 등길이를 쓰면 반대로 유리한 모양을 고른 셈이 된다. 무작위로
+      뽑아야 '전형적인 사슬'에 대한 결과가 되고 seed 간 편차가 물체 간
+      편차로 오차막대에 잡힌다.
+  hinge:
+    mass_kg: 0.041                   # 실측 41 g, 실물 2-link/3-link 와 같은 부품
+    per_joint: true
+    note: >
+      힌지를 빼면 미지수가 N 개뿐이라 실물보다 쉬운 문제가 된다. 넣으면
+      미지수 = N + (N-1) = 2N-1 로 실물과 정확히 맞는다 (N=2 -> 3, N=3 -> 5).
+  unknowns_per_n: {2: 3, 3: 5, 4: 7, 5: 9, 6: 11}
+
+gt_density:
+  rule: nlink.densities(N) — 5200 -> 700 kg/m^3 로 로그 등간격 (geomspace)
+  reason: 자릿수가 고르게 퍼지도록. 링크마다 서로 다른 값이 된다.
+  values:
+    2: [5200.0, 700.0]
+    3: [5200.0, 1907.9, 700.0]
+    4: [5200.0, 2665.0, 1365.8, 700.0]
+    5: [5200.0, 3149.8, 1907.9, 1155.6, 700.0]
+    6: [5200.0, 3481.9, 2331.5, 1561.2, 1045.4, 700.0]
+  usage: GT 는 채점에만 쓴다. 탐색·정지 판단은 GT 를 한 번도 보지 않는다.
+
+grasp_point:
+  rule: 한 곳 고정 — 센서 프레임 원점 = link1 의 몸쪽 끝면 중심
+  implementation: >
+    density_id_objects.build_plant 이 base(link1) 를 센서 프레임에 용접한다.
+    nlink.make_spec 은 base_bbox_center_in_sensor_mm = (L1/2, 0, 0) 을 주므로
+    파지점은 link1 bbox 중심에서 -L1/2 만큼, 즉 몸쪽 끝면 중심에 온다.
+  varied: false                      # 파지점 스윕은 지시문 8절에서 제외
+
+error_injection:
+  principle: >
+    참값 물체(density_id_drake.TRUTH_PLANT)는 절대 건드리지 않는다. 측정은
+    항상 참부피 x 참밀도로 만든 실제 총질량·무게중심에서 나온다. 두 오차
+    모두 "추정기가 믿는 모형"만 틀리게 만든다.
+  volume:
+    where: density_id_drake.VOLUMES (회귀행렬이 rho 의 계수로 쓰는 부피)
+    convention_from: my_work/exp_v2_volume.py  # 같은 자리, 같은 규약
+    distribution: >
+      균등이나 정규가 아니다. 링크마다 부호 s_i in {-1, +1} 를 무작위로 하나
+      뽑아 고정하고, 크기는 정확히 x % 를 준다: V_used_i = V_true_i (1 + s_i x).
+      상대오차이며, 같은 (N, seed) 면 C0~C3 가 같은 부호를 쓴다 — 조건 비교가
+      "같은 물체에서 오차 크기만 키운 것"이 되게 하려는 것이다.
+    sign_seed: 700000 + 977 * N + trial_seed
+    hinge_perturbed: false           # 힌지 부피는 저울 실측이라 재구성 오차 대상이 아님
+    weight_prior_uses: 참부피        # exp_v2_volume.setup 과 같은 순서 (섭동 전에 적용)
+  angle:
+    where: design_core.closed_loop(rel_error=...) -> angle_aware.angle_covariance
+    distribution: 가우시안, 관절별 독립
+    sigma: sigma_j = max(rel_error * |theta_j|, 0.5 deg)   # 상대오차 + 절대 하한
+    floor_deg: 0.5                   # 파이프라인 기본값, 조건과 무관하게 유지
+    applied_twice: >
+      지령각 -> 실제각, 실제각 -> 측정각 두 번 흔든다. 추정기가 보는 각도는
+      참각도에서 sigma 만큼 틀어져 있고, 측정 렌치는 실제각에서 나온다.
+
+conditions:            # (vol_err_pct, angle rel_error)
+  C0: {vol_err_pct: 1.0, ang_rel: 0.01, use: 기본 성능}
+  C1: {vol_err_pct: 5.0, ang_rel: 0.01, use: volume 민감도}
+  C2: {vol_err_pct: 1.0, ang_rel: 0.05, use: angle 민감도}
+  C3: {vol_err_pct: 5.0, ang_rel: 0.05, use: 상호작용 (표 B 미게재)}
+  note: >
+    지시문 3절의 임시값이다. 실물 실험에서 측정된 오차율이 확정되면 기준 행
+    (C0, 그리고 C1/C2 의 기준 쪽)만 재실행하면 된다. 참고로 저장소·논문
+    (paper_v2/4_exp.tex, exp_v2_main.py) 의 기존 기본값은 각도 5 % 이므로,
+    C2 가 그 설정에 해당한다.
+
+trials:
+  seeds: [0, 1, 2, 3, 4]
+  closed_loop_seed: 100 * trial_seed
+  total_runs: 100                    # 5(N) x 4(조건) x 5(trial)
+
+hyperparameters:                     # 실물 실험(exp_v2_main.py)과 동일. 조건별로 바꾸지 않음.
+  target_half_width: tau(p) = 0.005 * p     # 0.5 % x 부위수, 95 % 상대 반폭
+  max_rounds: 14
+  n_starts: 6                        # 연속 최적화 시작점
+  select: continuous
+  criterion: D                       # D-최적
+  estimator: tls                     # total least squares (EIV)
+  stop_rule: residual                # 잔차로 반폭 팽창
+  stopping_scope: 부위만 (n_wanted = N). 힌지는 저울로 아는 값이라 정지 판단에서 뺀다.
+  gravity_dirs: [[0,0,-1], [1,0,0], [0,1,0]]   # configuration 당 측정 3회
+  measurement_averaging: density_id_objects.set_measurement_averaging() 기본값
+  sensor_noise: sigma_F 0.10 N, sigma_T 0.003 N.m (평균화 전 기준)
+  prior: 저울 총무게 사전분포 (apply_weight_prior), 힌지는 좁게 묶음
+
+scoring:
+  parts_only: true                   # 힌지는 채점에서 제외 (아는 값)
+  err_pct_Li: 100 * |rho_hat_i - rho_gt_i| / rho_gt_i
+  mean_err_pct: 링크에 대한 err_pct 의 평균
+  final_uncertainty: 종료 시점 stopping_width (부위 95 % 상대 반폭의 최댓값) [%]
+  n_measurements: n_configs * 3
+  note: >
+    밀도로 채점한다. exp_v2_volume.py 의 논증대로 회귀는 사실 질량
+    m_i = rho_i V_i 를 푸는 것이라, 질량으로 채점하면 부피오차가 상쇄되어
+    보이지 않는다. 지시문이 요구한 지표가 밀도오차이므로 밀도로 잰다.
+
+outputs:
+  - results/nlink_density_results.csv   # trial 단위 원본
+  - results/nlink_summary.md            # 표 A, 표 B, L1/L6, 보고 문장
+  - results/nlink_density_extra.json    # 링크 길이·부피오차 부호·부위별 반폭 (재현용)
+  - results/nlink_notes.md              # 손으로 쓴 보고 문장 (요약 끝에 이어붙음)
+  - results/run_config.yaml             # 이 파일

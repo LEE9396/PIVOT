@@ -1,0 +1,44 @@
+\begin{table}[t]
+\caption{Four-way comparison on the real robot. GT is the reference part mass
+[g] from Sec.~\ref{sec:gt}; all other columns are relative mass error [\%]
+against it. \emph{Ours\,(sim)} runs the same estimator on the same scanned model
+with the angular error measured in the session, and is the ceiling of the
+method; \emph{Ours\,(real)} is the hardware result. \rev{Numbers to be filled
+from hardware runs.} The detailed vision-only breakdown is in
+Table~\ref{tab:part_property_accuracy}.}
+% [번역] 표 캡션. 실물 로봇에서의 네 갈래 비교. GT 는 IV-B 의 기준 부위
+%   질량[g]이고, 나머지 열은 모두 그에 대한 상대 질량 오차[%]다. Ours(sim)
+%   은 같은 스캔 모형 위에서 그 세션에서 실측한 각도 오차를 넣고 같은
+%   추정기를 돌린 것으로 이 방법의 천장이며, Ours(real) 은 하드웨어 결과다.
+%   수치는 하드웨어 실행 후 채운다. 시각 전용 baseline 의 상세 분해는 표 VI
+%   에 있다.
+\label{tab:main}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{llcccccc}
+\hline
+Object & Part & GT & PUGS & SiPhy & PhysX-Omni & Ours\,(sim) & Ours\,(real) \\
+\hline
+\multirow{3}{*}{2-link}
+  & link0  & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+  & link1  & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+  & hinge  & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+\hline
+\multirow{4}{*}{3-link}
+  & link0  & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+  & link1  & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+  & link2  & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+  & hinges & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+\hline
+\multirow{3}{*}{Desk lamp}
+  & base   & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+  & arm    & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+  & head   & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+\hline
+\multirow{2}{*}{Laptop}
+  & lid ($\Delta$)  & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+  & base ($\Delta$) & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} & \rev{--} \\
+\hline
+\end{tabular}
+\end{table}

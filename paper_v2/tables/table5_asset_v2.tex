@@ -1,0 +1,51 @@
+% Table 5 — sim-ready asset 검증.  출처: figures/v2/asset_validation.json (E5).
+%   ★ 시뮬-시뮬 대리 검증: reference 는 GT-밀도 plant 이지 현실이 아니다.
+%   캡션·헤더에 명시.  8-페이지 압축: 9행 -> push 3행 (Fig. 7 시나리오와 일치),
+%   release·drop 순서는 본문 한 문장, 원행은 CUTS.md.  2link release 구조적
+%   둔감 서술은 본문 산문에 잔존.  개입/시간 블록: 가이드라인 요구.
+%   실물 타이밍은 \Pending.
+\begin{table}[!htb]
+\caption{Sim-ready asset validation, a \emph{simulation-only surrogate}:
+median worst-part trajectory RMSE [mm] against the ground-truth-density
+reference plant, \textsc{push} scenario of Fig.~\ref{fig:asset}, with the
+user intervention each asset requires.}
+% [번역] sim-ready asset 검증(시뮬 전용 대리 검증): 참값 밀도 기준 plant 대비
+%   최악 part 궤적 RMSE [mm] 중앙값, 그림 7의 push 시나리오, 아래 블록은
+%   asset 별 사용자 개입. (공유 상수·초기조건 5개·release/drop 요약은 각주와
+%   IV-E 산문으로 이동.)
+\label{tab:asset}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrr}
+\toprule
+& \multicolumn{4}{c}{\shortstack{Worst-part RMSE [mm], \textsc{push}\\vs.\ GT-density plant (simulation)}} \\
+\cmidrule(lr){2-5}
+Object & Ours & Uniform & SiPhy & PUGS \\
+\midrule
+2-link     & \textbf{26.97} & 79.94  & 338.68 & 342.36 \\
+3-link     & \textbf{43.97} & 216.13 & 491.38 & 582.44 \\
+Stand lamp & \textbf{25.66} & 53.16  & 325.22 & 363.97 \\
+\midrule
+\multicolumn{4}{l}{\emph{User intervention}} & Time \\
+\multicolumn{1}{l}{\quad Ours}
+ & \multicolumn{3}{l}{as RORA $+$ scale $+$ joint adj.\ (1--2$\times$)} & \Pending \\
+\multicolumn{1}{l}{\quad Uniform}
+ & \multicolumn{3}{l}{as RORA $+$ scale; no interaction} & \Pending \\
+\multicolumn{1}{l}{\quad SiPhy}
+ & \multicolumn{3}{l}{single RGB image; no interaction} & \Pending \\
+\multicolumn{1}{l}{\quad PUGS}
+ & \multicolumn{3}{l}{multi-view scan; no interaction} & \Pending \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+\parbox{\linewidth}{\footnotesize \textit{The reference is a plant carrying the
+ground-truth densities, \emph{not} the real object; contact stiffness,
+dissipation, friction, and joint damping are shared constants across all
+variants, so only the per-part densities differ. Medians are over five
+pre-registered initial conditions; release and drop are summarized in the text
+(Sec.~\ref{sec:asset}). \rev{End-to-end wall-clock time requires the hardware
+runs and is pending.} Vision-baseline densities carry the
+relative errors of Table~\ref{tab:main} with an assumed positive sign; PhysX-Omni
+is excluded because it is N/A on both custom objects.}}
+\end{table}

@@ -1,0 +1,75 @@
+{
+ "arms": [
+  "ours",
+  "offline-D",
+  "random"
+ ],
+ "parts": [
+  6
+ ],
+ "seeds": 1,
+ "rel": 0.05,
+ "budget": 30,
+ "n_starts": 6,
+ "per_link_target": 0.005,
+ "table": {
+  "6": {
+   "target": 0.03,
+   "cells": {
+    "ours": {
+     "rounds": [
+      12
+     ],
+     "converged": [
+      true
+     ],
+     "cum_select": [
+      23.570983477970003
+     ],
+     "cum_est": [
+      116.5658694410231
+     ],
+     "error": [
+      0.013155316255613522
+     ]
+    },
+    "offline-D": {
+     "rounds": [
+      23
+     ],
+     "converged": [
+      true
+     ],
+     "cum_select": [
+      40.88596129097277
+     ],
+     "cum_est": [
+      119.50122692601872
+     ],
+     "error": [
+      0.004912686542918279
+     ]
+    },
+    "random": {
+     "rounds": [
+      30
+     ],
+     "converged": [
+      false
+     ],
+     "cum_select": [
+      0.00046508002560585737
+     ],
+     "cum_est": [
+      175.29471359694435
+     ],
+     "error": [
+      0.20186051419014078
+     ]
+    }
+   },
+   "wall_seconds": 483.36430978775024
+  }
+ },
+ "total_seconds": 483.3644950389862
+}

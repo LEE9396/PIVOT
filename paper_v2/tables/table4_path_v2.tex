@@ -1,0 +1,41 @@
+% Table 4 — 경로 비교 (figures/v2/path_compare.json 'all' 범위).
+%   구 panel (a)(중력 방향 수확체감, study_tilt.py 실측)는 8-페이지 압축에서
+%   삭제 — 수치는 IV-D 산문에 흡수, 원문은 CUTS.md.  E4b 주의 4건 반영:
+%   관절한계 열은 두 계획기 모두 구조적으로 0 (볼록 상자) — 승리로 쓰지 말 것.
+%   밀도오차 열: 두 계획기는 같은 측정 자세를 이으므로 추정치는 동일 —
+%   각주로 설명 (숫자를 지어내지 않는다).
+\begin{table}[!htb]
+\caption{Straight-line joint interpolation vs.\ RRT-Connect over every pose pair
+of the configuration grid (each cell: straight\,/\,RRT-Connect), with
+per-configuration information gain $\Delta I$ and whitened-regressor condition
+number $\kappa$.}
+% [번역] 전체 형상 격자의 모든 자세쌍에서 직선 보간 대 RRT-Connect(칸마다
+%   직선/RRT-Connect), 형상별 정보이득 Delta I 와 백색화 회귀행렬 조건수
+%   kappa. (두 계획기의 밀도 추정 동일 문장은 각주로 이동.)
+\label{tab:path}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccccc}
+\toprule
+Object & \shortstack{$\Delta I$ [nat] /\\cond.\ $\kappa$} & \shortstack{Coll.\\{[\%]}} & \shortstack{Pen.\\{[mm]}} & \shortstack{Clear.\\{[mm]}} & \shortstack{Time\\{[s]}} \\
+\midrule
+2-link & \shortstack{4.0--4.5\\57--324} & 25.0\,/\,\textbf{0.0} & 83.5\,/\,\textbf{0.0} & 0.6\,/\,13.1 & $\sim$0\,/\,0.12 \\
+\addlinespace[2pt]
+3-link & \shortstack{6.3--11.1\\$10^{16}$--$10^{18}$} & 20.9\,/\,\textbf{0.0} & 33.1\,/\,\textbf{0.0} & 11.3\,/\,14.1 & $\sim$0\,/\,0.11 \\
+\addlinespace[2pt]
+Stand lamp & \shortstack{6.9--9.3\\8.9--100} & 21.1\,/\,\textbf{0.0} & 93.8\,/\,\textbf{0.0} & $-0.8$\,/\,12.0 & $\sim$0\,/\,0.43 \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+\parbox{\linewidth}{\footnotesize \textit{Coll.\ = fraction of pose pairs whose path
+touches an obstacle; Pen.\ = maximum penetration depth; Clear.\ = mean minimum
+clearance (negative = inside an obstacle on average); Time = mean planning time per
+pair. Both planners connect the same measurement poses, so the wrench data and
+hence the density estimate (Table~\ref{tab:main}) are unchanged; what differs is
+whether the path is executable without contact. Joint-limit violations are zero for both planners by construction
+(Sec.~\ref{sec:posepath}). The 3-link condition numbers are structural, not
+numerical: one configuration observes total mass and first moment (rank $4$)
+against five unknowns, the rank-four ceiling of Prop.~\ref{prop:rank} appearing
+directly in the conditioning; the two three-unknown objects are full rank.}}
+\end{table}

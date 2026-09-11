@@ -1,0 +1,105 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\graphicspath{{figures/}}   % 그림은 모두 figures/ 아래에 둔다
+
+% --- float 배치 완화 ---------------------------------------------------
+% 두 단 폭 float(figure*/table*)은 페이지 맨 위에만 놓일 수 있어서, 기본값으로는
+% 자기 절을 지나 뒤로 밀린다. 한 페이지가 float 에 내줄 수 있는 몫을 늘려
+% 각 그림/표가 자기 절 안에 앉도록 한다.
+\renewcommand{\topfraction}{0.92}        % 페이지 위쪽 float 최대 비율 (기본 0.7)
+\renewcommand{\bottomfraction}{0.75}     % 아래쪽 (기본 0.3)
+\renewcommand{\textfraction}{0.06}       % 본문이 차지해야 하는 최소 비율 (기본 0.2)
+\renewcommand{\floatpagefraction}{0.72}  % float 전용 페이지 판정 문턱 (기본 0.5)
+\renewcommand{\dbltopfraction}{0.92}     % 두 단 폭 float 의 위쪽 몫 (기본 0.7)
+\renewcommand{\dblfloatpagefraction}{0.72}
+\setcounter{topnumber}{3}                % 페이지 위쪽 float 개수 (기본 2)
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{5}              % 한 페이지 총 float 개수 (기본 3)
+\setcounter{dbltopnumber}{3}
+% ----------------------------------------------------------------------
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage{booktabs}   % tables/*.tex 가 \toprule/\midrule/\cmidrule/\bottomrule 를 쓴다
+\usepackage{tikz}       % Fig.2 (영공간 도식) 가 쓴다
+\usetikzlibrary{arrows.meta,positioning,calc}
+\usepackage[hidelinks]{hyperref}
+\usepackage{kotex}   % 한글 주석/메모용. 한글을 쓰지 않으면 주석 처리해도 됨
+\newcommand{\rev}[1]{\textcolor{red}{#1}}
+%수정한 부분을 빨간색으로 표시함
+\newcommand{\NA}{\text{--}}   % tables/table2_baselines.tex 이 쓰던 미정의 매크로
+\newcommand{\Pending}{\rev{--}}   % tables/table_main_v2.tex 이 쓰는데 정의가 없었다 (실물 대기 칸)
+
+% --- Method 절의 정리 환경 (3_method.tex 이 씀) --------------------------
+% IEEEtran 은 IEEEproof 는 주지만 theorem 계열은 직접 선언해야 한다.
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}{Corollary}
+\newtheorem{remark}{Remark}
+% ------------------------------------------------------------------------
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+% 분량 맞춤: raggedbottom 은 단 아래를 매 페이지 비워 두므로 flushbottom 으로
+% 되돌리고, float 주변 간격을 IEEE 기본보다 조금 좁힌다 (내용 삭제 없는 압축).
+\setlength{\textfloatsep}{8pt plus 2pt minus 4pt}
+\setlength{\dbltextfloatsep}{8pt plus 2pt minus 4pt}
+\setlength{\floatsep}{6pt plus 2pt minus 2pt}
+\setlength{\dblfloatsep}{6pt plus 2pt minus 2pt}
+\begin{document}
+
+\title{PIVoT: Part-Wise Identification of Volume-Aware Density via Multi-Topology Reorientation}
+
+
+\author{Jun Hyeok Lee\textsuperscript{*}, Yu Seong Cheon\textsuperscript{*}, Sang Woo Han\textsuperscript{*}, and Yong Seok Lee\textsuperscript{$\dagger$}}
+
+\maketitle
+
+\begin{abstract}
+Reproducing articulated objects faithfully in simulation is essential for learning robotic manipulation, and an object's physical behavior is determined by each part's volume and density, so both must be identified at the part level. Existing vision-based methods, however, estimate volume only at the whole-object level and infer density from appearance alone, while interaction-based identification has been applied only to rigid bodies; the design of measurement poses and paths for identifying the part-wise parameters of an articulated object has not been addressed. We present PIVoT, a closed-loop pipeline that identifies the per-part density of articulated objects through active robot interaction and produces sim-ready assets faithful in appearance, geometry, and physics. Based on information gain, PIVoT suggests to the user joint configurations that minimize the null space of the density estimate; at each configuration, the robot collects wrench data along collision-free paths through three measurement poses under different gravity directions and updates the per-part densities until their uncertainty converges. User intervention beyond reconstruction is limited to adjusting the object to the suggested joint configuration, and the per-part volumes on which the identification rests are corrected by multi-view-consistency-based mesh refinement and per-part scaling. With a single RGB-D camera and a 6-DoF arm, we validate PIVoT in simulation on three real articulated objects, including two custom objects with per-part ground-truth density\rev{; validation on a fourth object (laptop) and on the physical robot is in preparation}.
+% [번역] 시뮬레이션에서 articulated object 를 충실하게 재현하는 것은 로봇
+%   조작 학습에 필수적이며, 물체의 물리적 거동은 part 별 부피와 밀도로
+%   결정되므로 이 둘을 part 단위로 식별해야 한다. 그러나 기존 vision 기반
+%   방법은 부피를 물체 전체 단위로만 추정하고 밀도는 외형만으로 추정하며,
+%   상호작용 기반 식별은 rigid body 에만 적용되어 왔다. 관절체의 part 별
+%   parameter 를 식별하기 위한 측정 자세와 경로 설계는 다루어지지 않았다.
+%   본 연구에서는 active robot interaction 으로 articulated object 의 part
+%   별 밀도를 식별하여 외형·기하·물성에 모두 충실한 sim-ready asset 을
+%   생성하는 closed-loop pipeline 인 PIVoT 를 제안한다. PIVoT 는
+%   information gain 에 기반해 밀도 추정의 null space 를 최소화하는 joint
+%   configuration 을 사용자에게 제시하고, 각 configuration 에서 서로 다른
+%   중력 방향의 측정 자세 3개를 collision-free 경로로 이동하며 렌치를
+%   수집하고, 불확실성이 수렴할 때까지 part 별 밀도를 갱신한다. 재구성 이후
+%   추가되는 사용자 개입은 제시된 joint configuration 조정으로 제한되며,
+%   밀도 식별의 기반이 되는 part 별 부피는 multi-view consistency 기반 mesh
+%   refinement 와 part 별 scaling 으로 보정된다. 단일 RGB-D 카메라와 6-DoF
+%   arm 환경의 시뮬레이션에서, part 별 GT 밀도를 가진 커스텀 물체 둘을
+%   포함한 실제 관절체 3종에 대해 검증한다(4번째 물체(노트북)와 실물 로봇
+%   검증은 준비 중 — \rev{} 표시).
+\end{abstract}
+
+\begin{IEEEkeywords}
+Articulated object, Physical property identification, Real2Sim
+\end{IEEEkeywords}
+
+\input{1_intro}
+\input{2_relwork}
+\input{3_method}
+\input{4_exp}
+\input{5_conclusion}
+
+\section*{Acknowledgment}
+% TODO: Acknowledgment 작성
+
+\begingroup
+\hbadness=2000
+\bibliographystyle{IEEEtran}
+\bibliography{reference}
+\endgroup
+
+\end{document}

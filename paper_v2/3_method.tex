@@ -1,0 +1,527 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% [메모] 8/30 5차: COMPRESSION_RULES.md 에 따라 3,556 단어에서 압축
+%   (4차 개정의 소절 구조 A~E 와 정리 환경 8개·라벨·\rev 전부 보존).
+%   증명 처리: 보조정리 1 은 한 문장. 명제 1(rank 천장)·명제 3(라운드 하한)
+%   증명은 표준 단계(PSD 순서·rank 준가법성·그람 행렬)라 진술 뒤 한 구절로
+%   강등. 명제 2 증명은 짧아 유지. 측정 방향 수확체감 수치열
+%   (12.88/25.41/26.35/26.92/27.73 nat, 2.72배)은 4_exp 의 Table IV(tab:path)
+%   가 이미 실으므로 본문에는 "삼면체=무릎" 형태와 0.0 % / -39.9 %
+%   (1.031 -> 0.620 N·m) 만 유지. Wensing/base-parameter 대비 문단은
+%   2_relwork 가 같은 인용을 다루므로 한 문장으로 축약. 삭제 산문은 CUTS.md.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Method}
+
+\subsection{Problem Formulation and Overview}
+\label{sec:formulation}
+
+% ---------------------------------------------------------------------------
+% Fig. 2 — Overall pipeline.  가이드라인 v2 의 [Figure 2] 사양을 그대로 옮긴다.
+%   위층 Offline (회색, 직선 흐름):
+%     (a) Articulated reconstruction — RORA 전체를 한 패널로 압축. GS + Mesh + URDF,
+%         "prior work" 표기. 패널 안에 작은 사람 아이콘 + "human-in-the-loop [RORA]"
+%         (기존 개입을 숨기지 않는다 — 이것이 이 그림의 정직성 장치다)
+%     (b) Volume estimation — mesh refinement + part별 scaling
+%   아래층 Active physical estimation loop (보라 점선 영역, 시계방향):
+%     (c) Joint configuration suggestion — information gain 기반 제안 -> 사용자가 관절 조정
+%         (물리 추정을 위해 **추가되는** 유일한 개입 지점, 사람 아이콘)
+%     (d) Measurement pose & path design — 중력 방향 3개의 측정 자세 + 자세 간
+%         collision-free 경로. 삽화: 물체 하나에 중력 화살표 3개와 자세 사이 경로
+%     (e) Active robot sensing — 6-DoF arm 으로 각 자세에서 wrench 측정
+%     (f) Density update — 불확실성 기반 part별 밀도 갱신
+%     (f)->(c) "not converged",  (f)->(g) "converged"
+%   오른쪽 세로 패널 Output (청록):
+%     (g) Sim-ready asset — Mesh(physics), Gaussians(rendering), Mass/Inertia per part
+%         + 시뮬레이션 스크린샷
+%   연결: (a)->(b), (b)->루프 영역에 "part volume", (c)->(d)->(e)->(f)->(c), (f)->(g)
+% ---------------------------------------------------------------------------
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{fig2_pipeline.png}
+\caption{Pipeline. From the asset of~\cite{lee2026rora}, the offline
+stage estimates part volumes; the closed loop suggests joint configurations,
+reorients the object to three gravity directions, and updates part densities
+until convergence.}
+% [번역] 파이프라인. [RORA] 의 자산에서 오프라인 단계가 part 부피를
+%   추정하고, 폐루프가 joint configuration 을 제안하며 물체를 중력 방향
+%   3개로 재배치하고 수렴까지 part 밀도를 갱신한다.
+%   ("추가 개입은 제시된 joint configuration 조정뿐" 은 초록·IV-E 산문에.)
+\label{fig:pipeline}
+\end{figure*}
+
+
+RORA~\cite{lee2026rora} reconstructs the object from a video of one static
+configuration: $P$ rigid parts, each with a mesh and 3D Gaussians, in a
+metric-scale URDF. Part $i$ has volume $V_i$ and unknown uniform density
+$\rho_i$; mass, center of mass, and inertia follow analytically, so
+$\rho=(\rho_1,\dots,\rho_P)^{\!\top}$ alone separates a visually faithful
+asset from a dynamically faithful one.
+% [번역] RORA 는 단일 정적 형상을 담은 영상 하나에서 물체를 재구성한다.
+%   mesh 와 3D Gaussian 을 가진 강체 part P 개가 계량 축척의 URDF 를 이룬다.
+%   part i 는 부피 V_i 와 알려지지 않은 균일 밀도 rho_i 를 갖고 질량·
+%   무게중심·관성은 해석적으로 따라 나오므로, rho 하나가 시각적으로 충실한
+%   asset 과 동역학까지 충실한 asset 을 가른다.
+
+A gripper rigidly grasps the object behind a wrist force/torque sensor
+(frame $\mathcal{S}$); the configuration
+$\theta\in\Theta\subset\mathbb{R}^{J}$ is friction-held, operator-set, and
+camera-read---known only up to measurement error. The wrist is
+quasi-statically reoriented through gravity directions $\hat g$, reading the
+wrench $y=(f,\tau)$ after tare.
+% [번역] 그리퍼가 손목 force/torque 센서(좌표계 S) 뒤에서 물체를 단단히
+%   잡는다. 관절 형상 theta 는 마찰로 유지되고 작업자가 맞추며 RGB-D
+%   카메라로 읽히므로 측정 오차만큼만 불확실하게 알려진다. 손목은 준정적으로
+%   여러 중력 방향을 거치고, 타어링 뒤 렌치 y = (f, tau) 를 읽는다.
+
+The wrench is linear in $\rho$: with
+%
+\begin{equation}
+v \triangleq (V_1,\dots,V_P)^{\!\top}\!,\;\;
+C(\theta) \triangleq
+\big[\,V_1c_1(\theta)\;\cdots\;V_Pc_P(\theta)\,\big]
+\in\mathbb{R}^{3\times P}\!,
+\label{eq:vC}
+\end{equation}
+%
+where $c_i(\theta)$ is the centroid of part $i$ in $\mathcal{S}$,
+%
+\begin{equation}
+y \;=\; A(\theta,\hat g)\,\rho+\varepsilon,
+\qquad
+A(\theta,\hat g)=g\!\begin{bmatrix}\hat g\,v^{\!\top}\\[2pt]
+-[\hat g]_\times C(\theta)\end{bmatrix}\!\in\mathbb{R}^{6\times P}.
+\label{eq:regressor}
+\end{equation}
+%
+$A$ needs volumes and centroids only---no density; noise is
+$R=\mathrm{blkdiag}(\sigma_f^2I_3,\sigma_\tau^2I_3)$; one weighing of the
+assembled object gives $v^{\!\top}\!\rho$, seeding the prior.
+% [번역] 렌치는 rho 에 선형이다. 형상을 식 (1) 로 모으면 — c_i(theta) 는 S
+%   에서 본 part i 의 도심 — 측정 모형 (2) 를 얻는다. A 는 부피와 도심만
+%   쓰므로 밀도를 몰라도 계산된다. 잡음은 블록 등방이고, 조립된 물체를 한 번
+%   저울에 올리면 v^T rho 가 나와 사전분포를 초기화한다.
+
+The estimation vector must count every mass the wrench feels: small, occluded
+hardware---above all the friction hinges holding $\theta$, $41\,\mathrm{g}$
+in $7.45\,\mathrm{cm}^3$ on our custom objects---enters $\rho$ as its own
+component. Omitted, the hinge mass biases by $79.1\%$ while the reported
+half-width stays $0.83\%$---confidently wrong, unrepaired by more rounds.
+% [번역] 추정 벡터는 렌치가 느끼는 모든 질량을 세어야 한다. 작고 가려진
+%   하드웨어 — 무엇보다 theta 를 붙잡는 마찰 힌지, 커스텀 물체에서 7.45
+%   cm^3 에 41 g — 는 rho 의 독립 성분으로 들어간다. 빼면 힌지 질량이
+%   79.1 % 편향되면서도 보고되는 반폭은 0.83 % 에 머문다 — 라운드를 더해도
+%   고쳐지지 않는, 틀렸는데 맞았다고 확신하는 답이다.
+
+PIVoT closes a loop around this model (Fig.~\ref{fig:pipeline}): an offline
+stage (Sec.~\ref{sec:geom}) produces the volumes and centroids behind every
+regressor; each round selects the most informative joint
+configuration---set by hand by the operator, the only intervention added
+beyond those inherited from reconstruction---then measures along designed
+poses and paths and updates the posterior over $\rho$ until a target
+relative uncertainty is met.
+% [번역] PIVoT 는 이 모형 둘레로 폐루프를 돈다. 오프라인 단계(III-B)가 모든
+%   회귀행렬의 재료인 부피와 도심을 만들고, 각 라운드는 가장 정보량 높은
+%   관절 형상을 골라 — 작업자가 손으로 맞추며, 재구성 단계에서 상속되는 개입
+%   외에 추가되는 유일한 개입이다 — 설계된 자세·경로를 따라 렌치를 재어
+%   rho 의 사후분포를 갱신하고, 목표 상대 불확실도에 닿을 때까지 돈다.
+
+\subsection{Part-Wise Volume Estimation}
+\label{sec:geom}
+
+This stage turns the captured views and RORA's meshes into the $V_i$ and
+$c_i(\theta)$ of \eqref{eq:vC}: mesh refinement enforces multi-view
+consistency \rev{[pending: refinement implementation from collaborator]},
+then each part is rescaled along its principal (PCA) axes against the
+anisotropic scale error that survives
+\rev{[pending: refinement implementation from collaborator]}. Volumes and
+centroids are integrated from the result (non-watertight meshes via their
+exactly integrable convex-decomposition union); CAD solids
+and direct measurement serve as ground truth, never pipeline inputs.
+% [번역] 이 단계는 촬영 시점들과 RORA 의 mesh 를 식 (1) 의 V_i 와 도심으로
+%   바꾼다. mesh refinement 가 multi-view consistency 를 강제하고 [협업자
+%   구현 대기], 이어 각 part 를 주축(PCA) 방향으로 재배율해 남는 비등방 배율
+%   오차를 보정한다 [협업자 구현 대기]. 부피와 도심은 그 결과에서 적분하되
+%   수밀하지 않은 mesh 는 볼록 분해의 합집합(적분이 정확함)으로 대체한다.
+%   CAD 솔리드와 직접 측정은 채점 기준이지 파이프라인 입력이 아니다.
+
+\begin{remark}[Volume invariance]
+\label{rem:volume}
+In \eqref{eq:vC}--\eqref{eq:regressor} the measurement depends on $\rho$ only
+through the products $V_i\rho_i$: for fixed centroids, replacing each $V_i$ by
+any $V'_i>0$ and $\rho_i$ by $(V_i/V'_i)\rho_i$ leaves $A(\theta,\hat g)\rho$
+unchanged. The estimated part masses $\hat m_i=V_i\hat\rho_i$ are therefore
+invariant to volume error, which enters only the derived density
+$\hat\rho_i=\hat m_i/V_i$.
+\end{remark}
+% [번역] 비고 (부피 불변성). 식 (1)-(2) 에서 측정은 rho 에 오직 곱 V_i rho_i
+%   를 통해서만 의존한다. 도심을 고정한 채 V_i 를 V'_i 로 바꾸고 rho_i 를
+%   (V_i/V'_i) rho_i 로 두면 A rho 가 그대로다. 따라서 추정 part 질량은 부피
+%   오차에 불변이고, 부피 오차는 파생 밀도에만 들어온다.
+
+The invariance is exactly that narrow---its limits are what ``volume-aware''
+means: density inherits volume error one-to-one
+($\hat\rho_i=\hat m_i/V_i$), inertia keeps $s^2$ of a scale error $s$, and
+centroids enter $C(\theta)$ itself, corrupting the estimated \emph{masses}
+by ${\sim}2.4\%$ per millimetre. Were part masses the goal, refinement would
+be needless by Remark~\ref{rem:volume}; a sim-ready asset also needs
+density, inertia, and centroids (verified in Sec.~\ref{sec:vol}).
+% [번역] 이 불변성은 딱 그만큼만 성립하며, 그 한계가 "volume-aware" 가
+%   뜻하는 바다. 밀도는 부피 오차를 1:1 로 물려받고, 관성은 배율 오차 s 의
+%   s^2 배가 남으며, 도심은 C(theta) 에 들어가 추정 '질량' 을 mm 당 약
+%   2.4 % 오염시킨다. 목표가 part 질량뿐이면 Remark 1 에 의해 정제가
+%   불필요하지만 sim-ready asset 은 밀도·관성·도심까지 맞아야 한다
+%   (수치 확인은 IV-B).
+
+\subsection{Information-Theoretic Joint Configuration Selection}
+\label{sec:theory}\label{sec:design}
+
+The classical limit of static gravity
+sensing~\cite{atkeson1986estimation} becomes, in density coordinates:
+% [번역] 밀도 좌표에서, 정지 중력 측정의 고전적 한계는 다음 형태가 된다.
+
+\begin{lemma}[Closed-form information; classical fact restated]
+\label{lem:closed}
+For any finite set $\mathcal{G}=\{\hat g_k\}_{k=1}^{K}$ of unit gravity
+directions, the Fisher information about $\rho$ gathered at configuration
+$\theta$ is
+\begin{equation}
+M(\theta;\mathcal{G})=g^2\!\left[\frac{K}{\sigma_f^2}vv^{\!\top}
++\frac{1}{\sigma_\tau^2}C^{\!\top}\!\Big(KI_3-\!\sum_k\hat g_k\hat g_k^{\!\top}
+\Big)C\right].
+\label{eq:closed}
+\end{equation}
+\end{lemma}
+% [번역] 보조정리 1 (닫힌 형태의 정보행렬; 고전적 사실의 재진술). 단위 중력
+%   방향의 임의의 유한 집합 G 에 대해, 형상 theta 에서 rho 에 관해 모이는
+%   Fisher 정보는 위 식과 같다.
+
+\begin{IEEEproof}
+Expand $A^{\!\top}R^{-1}A$ using
+$[\hat g]_\times^{\!\top}[\hat g]_\times=I_3-\hat g\hat g^{\!\top}$; sum over
+$k$.
+\end{IEEEproof}
+% [번역] 증명. A^T R^-1 A 를 [g_hat]_x^T [g_hat]_x = I_3 - g_hat g_hat^T 로
+%   전개하고 k 에 대해 더한다.
+
+\begin{corollary}[Triad invariance]
+\label{cor:invariance}
+If $\mathcal{G}$ is an orthonormal basis then $\sum_k\hat g_k\hat g_k^{\!\top}
+=I_3$ and
+\begin{equation}
+M(\theta)=g^2\!\left[\tfrac{3}{\sigma_f^2}vv^{\!\top}
++\tfrac{2}{\sigma_\tau^2}C(\theta)^{\!\top}C(\theta)\right],
+\label{eq:triad}
+\end{equation}
+which is invariant to rotating the whole triad by any $Q\in SO(3)$.
+\end{corollary}
+% [번역] 따름정리 1 (삼면체 불변성). G 가 직교정규 기저이면 정보행렬이 위
+%   형태로 줄고, 삼면체 전체를 임의의 Q in SO(3) 로 돌려도 변하지 않는다.
+
+Cor.~\ref{cor:invariance} collapses the design space to $\Theta$: wrist tilt
+carries no information, so articulation is the \emph{only} design variable;
+the freed $SO(3)$ is spent in Sec.~\ref{sec:path}. And since $M(\theta)$ is
+independent of $\rho$, the loop exists only to absorb angle error.
+% [번역] 따름정리 1은 설계 공간을 Theta 로 접는다. 손목 기울임은 정보를
+%   나르지 않으므로 관절 형상이 유일한 설계 변수이고, 풀려난 SO(3) 는 III-D
+%   에서 조작 실현 가능성에 쓰인다. M(theta) 는 rho 와도 무관하므로,
+%   폐루프는 오직 각도 오차를 흡수하기 위해 존재한다.
+
+\begin{proposition}[Rank ceiling]
+\label{prop:rank}
+For any $K$ and any arrangement of gravity directions,
+$\operatorname{rank}M(\theta;\mathcal{G})\le1+\operatorname{rank}C(\theta)
+\le1+\min(3,P)$.
+\end{proposition}
+% [번역] 명제 1 (rank 천장). 중력 방향의 개수와 배치가 어떠하든
+%   rank M <= 1 + rank C(theta) <= 1 + min(3, P) 이다.
+
+Its proof---PSD ordering plus rank subadditivity---is standard.
+% [번역] 식 (3) 의 두 항은 준양정이고(g g^T <= I_3), rank 준가법성이 표준
+%   증명을 끝낸다.
+
+\begin{corollary}[Rigid objects are capped at four]
+\label{cor:rigid}
+Holding the configuration fixed, no number of gravity directions or repeated
+measurements raises the rank above four: a rigid assembly of $P\ge5$ parts is
+not identifiable from quasi-static wrench sensing without additional
+priors---the closure rigid-object
+methods~\cite{nadeau2023sum,pfaff2025scalable,shuai2025pugs} must buy.
+\end{corollary}
+% [번역] 따름정리 2 (강체는 넷에서 막힌다). 형상을 고정하면 중력 방향과 측정
+%   반복을 몇 번 쓰든 rank 가 4 를 넘지 않는다. P >= 5 인 강체 조립품은
+%   추가 사전지식 없이 정지 렌치 측정만으로 식별할 수 없다.
+
+\begin{proposition}[What stays invisible]
+\label{prop:null}
+With an orthonormal triad,
+$\mathcal{N}(M(\theta))=\{u:\sum_iu_iV_i=0\ \text{and}\ \sum_iu_iV_ic_i(\theta)
+=0\}$: a redistribution of mass preserving both the total mass and the first
+moment about the sensor origin is unobservable at $\theta$.
+\end{proposition}
+% [번역] 명제 2 (무엇이 끝내 보이지 않는가). 직교정규 삼면체에서 M(theta) 의
+%   영공간은 총질량과 센서 원점 기준 1차 모멘트를 둘 다 보존하는 재분배 u
+%   전체와 같다. 그런 재분배는 theta 에서 관측되지 않는다.
+
+\begin{IEEEproof}
+With $M=a\,vv^{\!\top}+b\,C^{\!\top}C$, $a,b>0$:
+$Mu=0\iff a(v^{\!\top}u)^2+b\|Cu\|^2=0\iff v^{\!\top}u=0$, $C(\theta)u=0$.
+\end{IEEEproof}
+% [번역] 증명. M = a vv^T + b C^T C (a, b > 0) 로 쓰면 Mu = 0 은
+%   a(v^T u)^2 + b||Cu||^2 = 0, 곧 v^T u = 0 이면서 C(theta) u = 0 과
+%   동치다.
+
+A redistribution hidden at $\theta_1$ becomes visible at $\theta_2$ iff
+$C(\theta_2)u\neq0$; only articulation moves $C$---the method is specific to
+articulated objects, not merely applicable: a redistribution of
+$+100/-200/+100\,\mathrm{g}$ preserving total mass and first moment is
+invisible at every wrist orientation, and folding the joint moves the far
+centroid and reveals it.
+% [번역] theta_1 에서 숨은 재분배가 theta_2 에서 보이는 것은 정확히
+%   C(theta_2) u != 0 일 때이고, C 를 움직이는 유일한 수단이 관절 운동이다.
+%   이 방법은 관절 물체에 '적용 가능한' 정도가 아니라 고유하다. 예를 들어
+%   +100/-200/+100 g 의 재분배는 총질량과 1차 모멘트를 보존하므로 손목을 어떻게
+%   돌려도 보이지 않고, 관절을 접으면 먼 쪽 도심이 움직여 드러난다.
+%   [8/30] 가이드라인 v2 의 [Figures] 목록에 없는 그림이라 영공간 도식을 삭제하고
+%   그 내용을 이 문장에 흡수했다. 그림 파일은 figures/fig_nullspace.pdf 에 남아 있다.
+
+
+\begin{proposition}[Lower bound on rounds]
+\label{prop:rounds}
+With $M_R=\sum_{r=1}^{R}M(\theta_r)$ we have
+$\operatorname{rank}M_R\le1+\min(3R,P)$, so identifying all $P$ densities
+requires $R\ge\lceil(P-1)/3\rceil$ distinct configurations.
+\end{proposition}
+% [번역] 명제 3 (라운드 하한). R 개 형상의 정보를 합한 M_R 은 rank M_R <=
+%   1 + min(3R, P) 이므로, 밀도 P 개를 전부 식별하려면 서로 다른 형상이
+%   R >= ceil((P-1)/3) 개 필요하다.
+
+The proof stacks the $C(\theta_r)$ and applies subadditivity to the Gram
+matrix. For a serial chain of $p$ links with a friction hinge
+per joint, $P=2p-1$:
+\begin{equation}
+R\;\ge\;\big\lceil (2p-2)/3\big\rceil ,
+\label{eq:chain}
+\end{equation}
+met with equality on both custom objects (Sec.~\ref{sec:pred}). In density
+coordinates, the geometric observability characterization
+of~\cite{wensing2024geometric}, specialized to quasi-static gravity, is
+exactly Props.~\ref{prop:rank} and~\ref{prop:null}; the configuration count
+of Prop.~\ref{prop:rounds} is what the density view adds.
+% [번역] 증명은 C(theta_r) 을 3R x P 행렬로 쌓아 그 그람 행렬에 rank
+%   준가법성을 적용하면 끝난다. p 개 링크가 직렬이고 관절마다 마찰 힌지가
+%   달린 사슬에서는 P = 2p-1 이라 식 (5) 로 특수화되며, 커스텀 물체 둘 모두
+%   등호로 만족한다(IV-C). Wensing 등의 기하학적 관측가능성 특성화를 중력만의
+%   준정적 측정으로 특수화하면 밀도 좌표에서 정확히 명제 1·2가 된다. 형상이
+%   몇 개 필요한가를 세는 명제 3이 밀도 관점이 더하는 것이다.
+
+\begin{remark}[Channel separation]
+\label{rem:channel}
+The force block $-g(v^{\!\top}\!\rho)\hat g$ of \eqref{eq:regressor} is
+free of $\theta$: joint-angle error enters
+$R_{\mathrm{eff}}=R+J\Sigma_\theta J^{\!\top}$ through the torque rows alone.
+Rank one with row space $\mathrm{span}\{v\}$, it determines only the total
+mass the scale provides; the part-separating and angle-corrupted subspaces
+coincide, so reducing $\sigma_f$ improves nothing the scale has not fixed.
+\end{remark}
+% [번역] 비고 (채널 분리). 힘 블록 -g (v^T rho) g_hat 에는 theta 가 없으므로
+%   관절각 오차는 R_eff 에 오직 토크 행으로만 들어온다. 같은 블록은 rank 1,
+%   행공간 span{v} 라 저울이 이미 주는 총질량만 결정한다. 부위를 가르는
+%   부분공간과 각도 오차가 오염시키는 부분공간이 일치하므로, sigma_f 를
+%   줄여도 저울이 이미 고정한 것 밖은 개선되지 않는다.
+
+\begin{remark}[Necessary, not sufficient]
+\label{rem:cond}
+Prop.~\ref{prop:rounds} constrains rank only and grows \emph{additively}:
+two unknowns per link buy at most a third of a round. Once $M_R$ is full
+rank, conditioning governs, degrading \emph{multiplicatively}---roughly
+twofold per link, hence with half-width $\propto1/\sqrt{R}$ roughly fourfold
+more rounds per link (quantified in Sec.~\ref{sec:sim}).
+\end{remark}
+% [번역] 비고 (필요조건이지 충분조건이 아니다). 명제 3은 rank 만 구속하며
+%   '덧셈' 으로 는다(링크당 미지수 둘, 라운드는 많아야 1/3). M_R 이 full
+%   rank 가 된 뒤에는 조건수가 지배하고 이는 '곱셈' 으로 나빠진다 — 우리
+%   사슬에서 링크당 약 2배, 반폭이 1/sqrt(R) 이므로 라운드는 약 4배
+%   (정량화는 IV-C).
+
+Each round maximizes expected information gain under the current posterior
+$\Sigma$,
+%
+\begin{equation}
+\theta^\star=\arg\max_{\theta\in\Theta_{\mathrm{feas}}}\;
+\tfrac{1}{2}\log\det\!\big(I+R_{\mathrm{eff}}^{-1/2}A(\theta)\Sigma
+A(\theta)^{\!\top}\!R_{\mathrm{eff}}^{-1/2}\big),
+\label{eq:dopt}
+\end{equation}
+%
+on the relative-uncertainty scaling of $\Sigma$. The triad drops out
+(Cor.~\ref{cor:invariance}): the search runs over joint angles only, by
+multi-start optimization over $\Theta_{\mathrm{feas}}$ of
+Sec.~\ref{sec:path}. \eqref{eq:dopt} is classical
+D-optimality~\cite{gautier1992exciting,swevers1997optimal};
+ours differs in procedure, not criterion: the design variable is the
+object's own articulation, not the robot's trajectory, and $\Sigma$ is the
+per-round posterior, not a prior optimized once.
+% [번역] 매 라운드는 현재 사후분포 Sigma 아래 기대 정보이득을 최대화하며
+%   (식 6), Sigma 의 상대 불확실도 스케일 위에서 평가한다. 따름정리 1로
+%   삼면체가 사라지므로 탐색은 관절각에 대해서만, III-D 의 실현 가능 집합
+%   Theta_feas 위에서 다중 출발 연속 최적화로 푼다. 식 (6) 은 고전적 D-최적
+%   기준이다. 우리가 다른 것은 기준이 아니라 절차다. 설계 변수가 로봇 궤적이
+%   아니라 물체 자신의 관절 형상이고, Sigma 는 1회 최적화된 사전분포가 아니라
+%   매 라운드 갱신되는 사후분포다.
+
+The accepted $\theta^\star$ goes to the operator: the robot holds still, the
+interface shows the target angles, and the operator sets the joints by
+hand---the one intervention PIVoT adds beyond reconstruction; the robot
+proceeds only after the camera reads the achieved angles.
+% [번역] 채택된 theta* 는 작업자에게 간다. 로봇은 정지하고 인터페이스가 목표
+%   관절각을 표시하며 작업자가 관절을 손으로 맞춘다 — PIVoT 가 재구성 너머로
+%   추가하는 유일한 개입이다. 로봇은 카메라가 실제 각도를 읽은 뒤에만
+%   움직인다.
+
+\subsection{Multi-Topology Measurement Path Design}
+\label{sec:path}
+
+Each configuration is measured at three poses forming an orthonormal gravity
+triad---not for observability: two non-parallel directions already attain the
+rank ceiling of Prop.~\ref{prop:rank} (for $K=2$ the weighting in
+\eqref{eq:closed} is positive definite). The third direction completes
+$\sum_k\hat g_k\hat g_k^{\!\top}=I_3$ (Cor.~\ref{cor:invariance}):
+information becomes isotropic, the ceiling is met at the direction set's best
+conditioning, and the triad's $SO(3)$ orientation becomes informationally
+\emph{free}. Measurement agrees (Sec.~\ref{sec:posepath}).
+% [번역] 형상마다 직교정규 중력 삼면체를 이루는 측정 자세 3개에서 재는데,
+%   이유는 관측가능성이 아니다. 비평행 2방향이면 이미 명제 1의 rank 천장에
+%   도달한다(K=2 에서 식 (3) 의 가중이 양정). 세 번째 방향은 sum g g^T =
+%   I_3 을 완성해(따름정리 1) 정보를 등방으로 만들고, 방향 집합이 줄 수 있는
+%   최선의 조건수에서 천장을 달성하며, 삼면체의 SO(3) 방향을 정보 면에서
+%   '공짜' 로 만든다. 실측이 이를 뒷받침한다(IV-D).
+
+The free orientation pays for manipulation: rotating the whole triad changes
+nothing in \eqref{eq:triad}, so we rotate it for grasp feasibility,
+reachability, collision avoidance, and joint protection at zero informational
+cost (quantified in Sec.~\ref{sec:posepath}).
+% [번역] 공짜인 방향이 조작의 값을 치른다. 삼면체를 통째로 돌려도 식 (4) 는
+%   변하지 않으므로, 정보 비용 0 으로 파지 가능성·도달성·충돌 회피·관절
+%   보호를 만족하도록 돌린다(정량화는 IV-D).
+
+Because $\theta$ changes the object's \emph{shape}, feasibility is re-checked
+per candidate---identification design under restricted
+trajectories, with a shape-changing payload:
+$\theta^\star$ must admit grasping and holding at all three poses without
+collision, across the tracker's angular-uncertainty interval, plus a
+collision-free inter-pose path \emph{under the shape at that configuration}
+(planning against the previous round's shape collides in transit). Failing
+candidates are excluded with a neighbourhood; \eqref{eq:dopt} is re-solved.
+% [번역] theta 가 물체의 '모양' 을 바꾸므로 후보마다 실현 가능성을 다시
+%   따진다 — 실현 가능한 궤적이 제한된 식별 설계의, 페이로드가 모양을 바꾸는
+%   판본이다. theta* 는 세 자세 모두에서 충돌 없이 잡고 유지할 수 있어야
+%   하고, 추적기의 각도 불확실 구간 전체에서 그래야 하며, 자세 간 충돌 없는
+%   경로가 '그 형상의 모양 아래' 존재해야 한다(직전 라운드의 모양으로
+%   계획하면 이동 중 충돌한다). 실패 후보는 근방과 함께 배제하고 식 (6) 을
+%   다시 푼다.
+
+Paths are planned by RRT-Connect in the arm's joint space with the object
+rigidly attached, checking joint limits, environment and self-collisions,
+and the object's own collision pairs. Topology changes the problem, not its
+parameters---spatial extent, active self-collision pairs, reachable
+reorientations---so triad rotation and paths are re-solved per topology and
+configuration. Joint visibility, too: an axis near the camera's line of
+sight projects poorly (worst \rev{$0.37\,\mathrm{px/deg}$}, a
+\rev{$4.1\times$} spread), so each joint is read where its axis is best
+conditioned.
+% [번역] 경로는 물체를 강체로 부착한 채 팔의 관절공간에서 RRT-Connect 로
+%   계획하며 관절 한계, 환경·자기충돌, 물체 자신의 충돌 쌍을 검사한다.
+%   topology 는 매개변수가 아니라 문제 자체를 바꾼다 — 공간 점유, 활성화될
+%   자기충돌 쌍, 도달 가능한 재배치 — 그래서 삼면체 회전과 경로는 topology
+%   마다, 형상마다 다시 푼다. 관절 가시성도 같은 설계에 든다. 카메라 시선과
+%   거의 나란한 축은 투영이 나빠(최악 0.37 px/deg, 관절 간 4.1배 차이) 각
+%   관절을 그 축이 가장 잘 조건화된 자세에서 읽는다.
+
+\subsection{Active Sensing and Uncertainty-Aware Density Update}
+\label{sec:estimation}
+
+The robot keeps inertial forces below one percent of gravity, holds still at
+each pose, and reads the wrench after tare. The regressed configuration is
+the camera-\emph{measured} $\hat\theta$, so $A(\hat\theta)$ is corrupted:
+errors-in-variables, under which weighted least squares stays biased however
+many rounds accumulate.
+% [번역] 로봇은 관성력을 중력의 1 % 아래로 유지하며 자세마다 정지해 타어링
+%   뒤 렌치를 읽는다. 회귀에 쓰는 형상은 카메라가 '측정한' theta-hat 이므로
+%   A(theta-hat) 자체가 오염되어 있다. 이 오차변수(EIV) 구조에서
+%   가중최소제곱은 라운드를 아무리 쌓아도 편향된 채로 남는다.
+
+We therefore estimate the per-round angle correction $\delta_r$ jointly with
+$\rho$:
+%
+\begin{equation}
+\min_{\rho,\{\delta_r\}}\;\sum_r\big\|y_r-A(\hat\theta_r+\delta_r)\rho\big\|^2
+_{R_{\mathrm{eff}}^{-1}}
++\sum_r\|\delta_r\|^2_{\Sigma_\theta^{-1}}
++\|\rho-\mu_0\|^2_{\Sigma_0^{-1}},
+\label{eq:tls}
+\end{equation}
+%
+under positivity box constraints,
+with $\Sigma_\theta$ the tracker's angle covariance and the prior seeded by
+the scale---the total-least-squares remedy
+applied to the design variable itself. A grasp offset $\delta$ adds
+$MG[\hat g]_\times\delta$ to the torque rows---three linear unknowns, $M$
+known from the scale. The posterior propagates
+with $R_{\mathrm{eff}}=R+J\Sigma_\theta J^{\!\top}$,
+$J=\partial(A\rho)/\partial\theta$.
+% [번역] 그래서 라운드별 각도 보정 delta_r 을 rho 와 함께 추정한다(식 7).
+%   모든 밀도를 양수로 유지하는 상자 제약 아래 풀고, Sigma_theta 는 추적기의
+%   각도 공분산, 사전분포는 저울 값으로 초기화한다 — 총최소제곱 해법을 설계
+%   변수 자신에 적용한 것이다. 파지 오프셋 delta 는 토크 행에 들어오는데
+%   총질량 M 을 저울에서 알므로 선형 미지수 셋만 더한다. 사후분포는 R_eff =
+%   R + J Sigma_theta J^T 로 순차 전파한다.
+
+Because \eqref{eq:tls} fits $y\approx A(\hat\theta+\delta)\rho$, residuals
+must be scored at $\hat\theta_r+\delta_r$: scoring at $\hat\theta$ charges
+the recovered correction back to the residual---interval inflation of
+\rev{$79\times$} at $p=4$, the stopping test never satisfied though the
+estimate is accurate to \rev{$0.28\%$}---a structural trap of pairing an
+errors-in-variables estimator with a residual-based stopping rule.
+% [번역] 식 (7) 은 y ≈ A(theta-hat + delta) rho 를 맞추므로 잔차도 보정된
+%   형상에서 채점해야 한다. theta-hat 에서 채점하면 방금 복원한 보정이
+%   잔차로 청구되어 구간 팽창이 p=4 에서 79배에 이르고, 추정이 이미 0.28 %
+%   로 정확한데도 정지 조건이 끝내 만족되지 않는다. 오차변수 추정기를 잔차
+%   기반 정지 규칙과 짝지을 때의 구조적 함정이다.
+
+The loop stops when the $95\%$ relative half-width over the \emph{parts}
+falls below $\tau(p)=0.5\%\times p$ ($1.0$--$3.0\%$ for $p=2$--$6$), inflated
+when the residual exceeds the noise prediction; the per-part budget follows
+from Remark~\ref{rem:cond}. Hinge rows known from the scale are excluded lest
+their prior width block termination, and the iteration budget scales with
+$P+RJ$. Unmet, $\Sigma$ re-enters \eqref{eq:dopt}.
+% [번역] 루프는 'part' 에 대한 95 % 상대 반폭이 링크 수 비례 목표 tau(p) =
+%   0.5 % x p (p = 2..6 에서 1.0~3.0 %) 아래로 내려가면 멈추고, 잔차가 잡음
+%   예측을 넘으면 반폭을 부풀린다. 부위당 예산은 비고 3에서 나온다. 저울에서
+%   이미 아는 힌지 행은 사전 폭이 종료를 막지 못하도록 제외하고, 반복 예산은
+%   미지수 개수 P + RJ 에 따라 늘린다. 목표에 못 미치면 Sigma 가 식 (6) 에
+%   다시 들어간다.
+
+One quantity is beyond this loop by physics, not design: the inertia tensor
+cannot be identified quasi-statically---at rest $\omega=0$ and $\alpha=0$, so
+every term of $\tau=I\alpha+\omega\times(I\omega)$ containing $I$ vanishes
+identically, and the static wrench constrains only the zeroth and first mass
+moments (Prop.~\ref{prop:rank}). Exported inertia is \emph{derived}---mesh
+geometry times identified density under the uniform-density assumption---not
+measured, inheriting volume-scale error as $s^2$ (Sec.~\ref{sec:geom}) and
+bounding what any quasi-static method can claim.
+% [번역] 한 가지 양은 설계가 아니라 물리에 의해 이 루프 바깥에 있다. 회전
+%   관성 텐서는 준정적으로는 식별할 수 없다. 정지 상태에서 omega = 0,
+%   alpha = 0 이므로 tau = I alpha + omega x (I omega) 에서 I 를 담은 모든
+%   항이 항등적으로 사라지고, 정지 렌치는 0차·1차 질량 모멘트만 구속한다
+%   (명제 1). 따라서 내보내는 관성은 측정값이 아니라 '유도값' — 균일 밀도
+%   가정 아래 mesh 기하 곱하기 식별된 밀도 — 이며 부피 배율 오차를 s^2 로
+%   물려받는다(III-B). 준정적 방법이 주장할 수 있는 것의 경계다.
+
+The converged $\hat\rho$ yields each part's mass, center of mass, and derived
+inertia analytically, written into the URDF with geometry, joints, and
+Gaussians untouched; the asset is revalidated in simulation at measured
+and held-out configurations.
+% [번역] 수렴한 rho-hat 에서 각 part 의 질량·무게중심·유도 관성이
+%   해석적으로 나와 URDF 에 기록되며, 형상·관절·Gaussian 은 건드리지
+%   않는다. asset 은 시뮬레이션에서 측정 형상과 보지 않은 형상 모두로
+%   재검증한다.

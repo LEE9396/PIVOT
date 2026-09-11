@@ -1,0 +1,44 @@
+% Table 2 — part별 부피 오차.  refinement/scaling 구현과 실측 오차는 협업자 인계 대기.
+%   빈 칸을 지어내지 않는다. 자료가 오면 \Pending 만 교체하면 된다.
+\begin{table}[t]
+\caption{Per-part volume error [\%] against the CAD solids (custom objects) and the
+displacement measurements (stand lamp). The vision baselines are scored on the volume
+they themselves recover---PUGS by integrating its Gaussians, PhysX-Omni on its generated
+shape---so the table fixes how much of each method's density error is already present
+before any density is assigned. \rev{The refinement and per-part scaling stage is being
+delivered by a collaborator; its rows are pending.}}
+\label{tab:volume}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llccccc}
+\toprule
+& & \multicolumn{3}{c}{Baselines} & \multicolumn{2}{c}{Ours} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-7}
+Object & Part & Bbox & PUGS & \shortstack{PhysX-\\Omni} & \shortstack{raw\\mesh} & \shortstack{$+$refine\\$+$scale} \\
+\midrule
+\multirow{3}{*}{Stand lamp}
+ & Base    & \Pending & \Pending & \Pending & \Pending & \Pending \\
+ & Support & \Pending & \Pending & \Pending & \Pending & \Pending \\
+ & Head    & \Pending & \Pending & \Pending & \Pending & \Pending \\
+\midrule
+\multirow{3}{*}{2-link}
+ & Long    & \Pending & \Pending & \NA & \Pending & \Pending \\
+ & Short   & \Pending & \Pending & \NA & \Pending & \Pending \\
+ & Hinge   & \Pending & \Pending & \NA & \Pending & \Pending \\
+\midrule
+\multirow{4}{*}{3-link}
+ & Link 0  & \Pending & \Pending & \NA & \Pending & \Pending \\
+ & Link 1  & \Pending & \Pending & \NA & \Pending & \Pending \\
+ & Link 2  & \Pending & \Pending & \NA & \Pending & \Pending \\
+ & Hinges  & \Pending & \Pending & \NA & \Pending & \Pending \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+\parbox{\linewidth}{\footnotesize \textit{The ablation columns isolate refinement from
+scaling. \rev{Laptop rows are omitted until its asset is available.} An independent
+reproducibility check of the reconstruction stage---two runs of the same scan under
+identical settings---gave a scale spread of $0.24254$ vs.\ $0.24447\,\mathrm{m}$ per
+unit and a volume spread of $29.9$ vs.\ $30.4\,\mathrm{L}$, i.e.\ a $\pm5\%$ noise floor
+that no downstream density estimator can remove.}}
+\end{table}

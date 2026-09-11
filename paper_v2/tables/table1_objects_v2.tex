@@ -1,0 +1,32 @@
+% Table 1 — 실험 물체 사양.  출처: gt.json (gt_list.md 를 정본으로 재계산),
+%   rank / R_min 은 my_work/study_theory.py 의 수치 검증 결과.
+\begin{table}[t]
+\caption{Evaluation objects: links, independently unknown densities $P$,
+single-configuration rank $1+\min(3,P)$ (Prop.~\ref{prop:rank}), configuration
+lower bound $R_{\min}=\lceil (P-1)/3\rceil$ (Prop.~\ref{prop:rounds}), and
+ground-truth source.}
+% [번역] 평가 물체: 링크 수, 독립 미지 밀도 P, 단일 형상 rank 1+min(3,P)
+%   (명제 1), 형상 개수 하한 R_min = ceil((P-1)/3) (명제 3), 참값 출처.
+\label{tab:objects}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccl}
+\toprule
+Object & Links & $P$ & rank & $R_{\min}$ & Ground truth \\
+\midrule
+Custom 2-link  & 2 & 3$^{\mathrm h}$ & 3 & 1 & CAD $+$ material \\
+Custom 3-link  & 3 & 5$^{\mathrm h}$ & 4 & 2 & CAD $+$ material \\
+Stand lamp     & 3 & 3 & 3 & 1 & scan $+$ disassembly \\
+Laptop$^{\dagger}$ & 2 & 2 & 3 & 1 & scale $+$ part split \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+\parbox{\linewidth}{\footnotesize \textit{Rank and $R_{\min}$ follow from
+geometry alone, before any wrench is measured. $^{\mathrm h}$ includes the friction hinge
+as its own unknown ($41\,\mathrm{g}$ each). The hinge occupies $7.4\,\mathrm{cm^3}$ at
+$5.51\,\mathrm{g/cm^3}$---small, largely occluded, and mass-dense, the case that makes
+part-wise identification hard rather than the case that makes it easy.
+$^{\dagger}$ \rev{Laptop mesh and URDF are in preparation; it contributes ground truth
+and vision-baseline rows only.}}}
+\end{table}

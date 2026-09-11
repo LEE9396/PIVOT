@@ -13,6 +13,8 @@
 마지막에 "그래서 얼마나 맞았나"를 채점할 때만 쓴다.
 """
 
+import time
+
 import numpy as np
 
 import density_id_drake as alg
@@ -186,6 +188,23 @@ def continuous_best(bounds, score_fn, n_starts=8, seed=0, feasible=None,
     if best_x is None:                       # 전부 실현 불가면 격자로 후퇴
         return grid_best(bounds, 5, score_fn, feasible)
     return best_x, dict(score=best_s, n_eval=calls["n"], n_starts=len(seeds))
+
+
+def sample_feasible(bounds, rng, feasible=None, max_tries=200):
+    """상자 제약 안에서 균일 무작위로 하나 뽑는다 (random 탐색 전략용).
+
+    D-최적 점수는 전혀 안 본다 — random 기준선이 '점수와 무관하게' 고른다는
+    것 자체가 비교 대상이다. feasible 을 만족하는 표본을 못 찾으면(드묾)
+    max_tries 번째 표본을 그냥 반환한다.
+    """
+    bounds = np.asarray(bounds, dtype=float)
+    lo, hi = bounds[:, 0], bounds[:, 1]
+    theta = lo + (hi - lo) * rng.random(len(bounds))
+    for _ in range(max_tries):
+        if feasible is None or feasible(theta):
+            return theta
+        theta = lo + (hi - lo) * rng.random(len(bounds))
+    return theta
 
 
 # ---------------------------------------------------------------------------
@@ -559,8 +578,19 @@ def closed_loop(spec, target=0.01, max_rounds=12, seed=0,
                 g_dirs=None, select="continuous", criterion="D",
                 estimator="tls", stop_rule="residual", systematic=0.3,
                 n_starts=8, grid_steps=5, feasible=None, n_wanted=None,
-                verbose=False):
-    """자세 고르기 -> 재기 -> 갱신 을 목표 불확실성까지 반복한다."""
+                theta_sequence=None, verbose=False):
+    """자세 고르기 -> 재기 -> 갱신 을 목표 불확실성까지 반복한다.
+
+    select 에 두 가지를 더 받는다 (study_strategy.py 의 탐색 전략 비교용).
+      "random"  실현 가능 집합에서 매 라운드 균일 무작위로 고른다 (점수 무시).
+      "fixed"   theta_sequence[index-1] 을 그대로 쓴다 — round 마다 재선택하지
+                않는 절차(예: 고전 OED 의 이산 유비)를 실행만 시킬 때 쓴다.
+                자세 자체를 어떻게 만들지는 호출한 쪽 책임이다.
+
+    라운드마다 자세 선택과 추정에 쓴 벽시계 시간을 history 에 t_select /
+    t_est 로 남긴다 (계측 훅). 관절을 맞추는 데 드는 시간은 시뮬레이션에
+    없는 값이라 여기 안 잡힌다 — 순수 연산 시간만 잰다.
+    """
     g_dirs = CANONICAL_TRIAD if g_dirs is None else np.asarray(g_dirs)
     if n_wanted is None:
         n_wanted = len(spec.parts)      # 힌지 등 부속은 정지 판단에서 뺀다
@@ -576,20 +606,30 @@ def closed_loop(spec, target=0.01, max_rounds=12, seed=0,
             return utility(theta, rho_hat, Sigma, g_dirs, criterion,
                            rel_error, floor_deg)
 
+        t0 = time.perf_counter()
         if select == "continuous":
             theta, _ = continuous_best(bounds, score, n_starts=n_starts,
                                        seed=seed + index, feasible=feasible)
-        else:
+        elif select == "grid":
             theta, _ = grid_best(bounds, grid_steps, score, feasible=feasible)
+        elif select == "random":
+            theta = sample_feasible(bounds, rng, feasible)
+        elif select == "fixed":
+            theta = np.asarray(theta_sequence[index - 1], dtype=float)
+        else:
+            raise ValueError(select)
         theta = np.atleast_1d(theta)
+        t_select = time.perf_counter() - t0
 
         # 작업자가 맞춘 실제 각도와, FoundationPose 가 읽어준 각도는 다르다.
-        # 알고리즘은 measured 만 본다.
+        # 알고리즘은 measured 만 본다. (측정 자체는 연산 시간에 안 잡는다 —
+        # 실물에서는 카메라가 재는 시간이지 선택도 추정도 아니다.)
         sigma = np.sqrt(np.diag(aa.angle_covariance(theta, rel_error, floor_deg)))
         actual = theta + rng.normal(0.0, sigma)
         measured = actual + rng.normal(0.0, sigma)
         y = alg.measure(actual, g_dirs=list(g_dirs), rng=rng)
 
+        t1 = time.perf_counter()
         A = regressor(measured, g_dirs)
         R = effective_cov(measured, rho_hat, g_dirs, rel_error, floor_deg)
         blocks.append((A, y, R))
@@ -616,9 +656,11 @@ def closed_loop(spec, target=0.01, max_rounds=12, seed=0,
                                      floor_deg)
         half = half_width(Sigma, rho_hat, Cov_bias=bias_cov, inflate=inflate)
         worst = stopping_width(half, n_wanted)
+        t_est = time.perf_counter() - t1
         history.append(dict(round=index, theta=theta.copy(),
                             rho=rho_hat.copy(), half=half.copy(),
-                            worst=worst, inflate=inflate))
+                            worst=worst, inflate=inflate,
+                            t_select=t_select, t_est=t_est))
         if verbose:
             print(f"  round {index}: q={np.round(np.degrees(theta), 1)} deg"
                   f"  반폭 {100*worst:.3f}%"
@@ -628,4 +670,6 @@ def closed_loop(spec, target=0.01, max_rounds=12, seed=0,
 
     return dict(rho_hat=rho_hat, Sigma=Sigma, half=half, worst=worst,
                 inflate=inflate, rounds=len(history),
-                converged=bool(worst <= target), history=history)
+                converged=bool(worst <= target), history=history,
+                t_select_total=float(sum(h["t_select"] for h in history)),
+                t_est_total=float(sum(h["t_est"] for h in history)))

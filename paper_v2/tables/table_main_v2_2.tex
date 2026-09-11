@@ -1,0 +1,44 @@
+% Sources: docs/objects_property.txt and frozen baseline outputs.
+\begin{table*}[t]
+\caption{Ground-truth physical properties and four-way comparison on the real robot. GT volume $V$, mass $M$, and effective density $\rho=M/V$ follow Sec.~\ref{sec:gt}; assembly density is omitted. All method columns report relative part-mass error [\%], with the lowest available error in each part shown in bold. \emph{Ours (sim)} runs the same estimator on the same scanned model using the angular error measured in the corresponding hardware session and represents the method ceiling, whereas \emph{Ours (real)} denotes the hardware result. Custom-object and Laptop masses are under measurement and are shown as \Pending; only measured or exact (CAD) quantities are tabulated.}
+% [번역] 실물 로봇에서의 GT 물성과 네 갈래 비교. GT 부피 V, 질량 M, 유효밀도 rho=M/V는 Sec.~\ref{sec:gt}를 따르며 assembly density는 생략한다. 모든 method 열은 part 질량 상대오차[%]이며, 각 part에서 사용 가능한 값 중 가장 낮은 오차를 굵게 표시한다. Ours(sim)은 해당 hardware session에서 측정한 angular error를 사용하여 동일한 scanned model과 estimator를 실행한 method ceiling이고, Ours(real)은 hardware 결과다. Custom-object 와 Laptop 의 질량은 측정 중이라 빈칸으로 두었다. 실측되었거나 정확한 값(CAD 부피)만 표에 싣는다.
+\label{tab:ground_truth_properties}
+\label{tab:main}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.5pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llrrrccccc}
+\toprule
+& & \multicolumn{3}{c}{Ground truth} & \multicolumn{5}{c}{Part-mass relative error [\%]} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-10}
+Object & Part & $V$ [cm$^3$] & $M$ [g] & $\rho$ [g/cm$^3$] & PUGS$^{\mathrm S}$ & SiPhy & PhysX-Omni & \shortstack{Ours\\(sim)} & \shortstack{Ours\\(real)} \\
+\midrule
+\multirow{4}{*}{Desk lamp}
+  & Base     & 290.20 & 399 & 1.375 & 164.1 & \textbf{38.3} & 69.1  & \Pending & \Pending \\
+  & Support  &  72.89 &  85 & 1.166 & \textbf{10.7} & 27.3 & 183.1 & \Pending & \Pending \\
+  & Head     &  52.82 &  87 & 1.647 & \textbf{36.4} & 48.5 & 58.0  & \Pending & \Pending \\
+  & Assembly & 415.91 & 571 & --    & \multicolumn{5}{c}{--} \\
+\midrule
+\multirow{4}{*}{2-link$^*$}
+  & Long     & 135.72 & \Pending & \Pending & 7887.4 & \textbf{593.4} & \NA & \Pending & \Pending \\
+  & Short    & 108.12 & \Pending & \Pending & 7323.6 & \textbf{544.5} & \NA & \Pending & \Pending \\
+  & Hinge    &   7.45 & \Pending & \Pending & 423.8  & \textbf{54.5}  & \NA & \Pending & \Pending \\
+  & Assembly & 251.29 & \Pending & --    & \multicolumn{5}{c}{--} \\
+\midrule
+\multirow{5}{*}{3-link$^*$}
+  & Link 0   & 288.12 & \Pending & \Pending & 4312.5 & \textbf{349.6} & \NA & \Pending & \Pending \\
+  & Link 1   & 208.40 & \Pending & \Pending & 3369.1 & \textbf{253.5} & \NA & \Pending & \Pending \\
+  & Link 2   & 162.28 & \Pending & \Pending & 3501.8 & \textbf{267.0} & \NA & \Pending & \Pending \\
+  & Hinges   &  14.90 & \Pending & \Pending & 178.2  & \textbf{71.7}  & \NA & \Pending & \Pending \\
+  & Assembly & 673.70 & \Pending & --    & \multicolumn{5}{c}{--} \\
+\midrule
+\multirow{3}{*}{Laptop$^\dagger$}
+  & Display  &  354.10 & \Pending & \Pending & \textbf{76.7} & 182.5 & 417.3 & \Pending & \Pending \\
+  & Base     &  782.00 & \Pending & \Pending & \textbf{30.1} & 108.0 & 611.8 & \Pending & \Pending \\
+  & Assembly & 1136.10 & \Pending & --    & \multicolumn{5}{c}{--} \\
+\bottomrule
+\end{tabular}}
+\vspace{2pt}
+\parbox{\textwidth}{\scriptsize \textit{$^{\mathrm S}$ Stand-lamp PUGS masses integrate the frozen SAM-partitioned Gaussian volume and point-wise density; errors use the midpoint of its predicted mass range. Other PUGS rows and all SiPhy rows distribute each object-level prediction using frozen GT volume fractions. PhysX-Omni is N/A where its generated shape has no canonical part mapping. $*$ Custom-object masses and densities are under measurement (post-ballast) and are left blank rather than filled with pre-ballast estimates; their CAD volumes are exact and are reported. $\dagger$ Laptop part masses are under measurement; the previously tabulated split was an assumption, not a measurement, and has been removed. Desk-lamp entries are measured by disassembly (Sec.~\ref{sec:gt}). Ours remains pending until the frozen simulation and hardware runs are available.}}
+\end{table*}

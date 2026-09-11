@@ -1,0 +1,376 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% [메모] 8/30 압축판 (COMPRESSION_RULES.md, 목표 1,500 단어).  구조는 v2
+%   5소절 그대로: A Setup / B Volume / C Density (main) / D Pose & Path /
+%   E Asset.  수치 출처 불변: RESULTS.md (E1~E10), gt.json, frozen vision 열,
+%   figures/v2/*.json.  없는 값은 \Pending / \rev.  실물 로봇 데이터 없음.
+%   Exp E 는 시뮬-시뮬 대리 검증으로만 서술.  라벨 호환: sec:vol / sec:sim /
+%   sec:pred 유지.  Table I 은 실제 표로 복원 (tables/table1_objects_v2.tex,
+%   tab:objects 라벨은 표 안).  실물 비교 자리표시자 그림(구 Fig. 8)은 Fig. 7
+%   캡션에 흡수 (fig:assetreal 라벨은 그림 안에 보존).  표 캡션·각주가 이미
+%   말하는 문장은 산문에서 지웠고, 잘린 산문은 CUTS.md 에 보관.
+
+\section{Experiments}
+\label{sec:exp}
+
+\subsection{Setup}
+\label{sec:setup}
+
+\begin{figure}[!htb]
+\centering
+\includegraphics[width=\linewidth]{fig3_setup.png}
+\caption{Experimental platform and the four evaluation objects of
+Table~\ref{tab:objects}. \rev{[Placeholder: the photo awaits the hardware
+session.]}}
+% [번역] 그림 3 — 실험 플랫폼과 평가 물체 4종(표 I). 실물 사진은 하드웨어
+%   세션 대기 자리표시자. 물체 사양(링크/P/rank/R_min/참값 출처)과 힌지
+%   각주는 표 I 로 복원.
+\label{fig:setup}
+\end{figure}
+
+\input{tables/table1_objects_v2}
+
+
+The platform: a six-axis RB5-850E arm, wrist force/torque sensor, Robotiq
+2F-85 gripper, and one RealSense D456; joint angles are tracked on the
+RGB-D stream---measured, not commanded (Fig.~\ref{fig:setup}). All
+results below are Drake simulation, running the estimator, selection rule,
+and stopping test of Sec.~\ref{sec:estimation} unchanged; \rev{the hardware runs
+are in preparation, and every real-robot quantity is marked pending}.
+% [번역] 장비: 6축 RB5-850E + 손목 F/T 센서 + Robotiq 2F-85 + RealSense D456
+%   한 대. 관절각은 RGB-D 추적기의 측정값(명령값 아님)이다(그림 3). 아래 모든
+%   결과는 III-E 의 추정기·선택 규칙·정지 판정을 그대로 돌린 시뮬레이션
+%   (Drake)이다. 하드웨어 실행은 준비 중, 실물 수치는 전부 pending.
+
+We evaluate four articulated objects (Fig.~\ref{fig:setup},
+Table~\ref{tab:objects}): two custom 3D
+prints with per-part densities we set, a disassembly-weighed stand lamp from
+a 3DGS scan, and a laptop; the custom objects give their friction hinge its
+own part---the harder general case. Density
+identification covers three of the four: \rev{the laptop's mesh and URDF
+assets are in preparation, so it contributes ground-truth and
+vision-baseline rows only}.
+% [번역] 평가 물체 4종(그림 3): 부위별 밀도를 지정한 커스텀 3D 프린트 2종,
+%   분해 계량 참값의 3DGS 스캔 스탠드 램프, 노트북. 커스텀 둘은 마찰 힌지를
+%   독립 part 로 둔다 — 작고 가려지고 질량이 몰린, 더 어려운 일반 경우. 밀도
+%   식별은 4종 중 3종: 노트북 mesh/URDF 는 준비 중이라 참값·vision baseline
+%   행만 기여한다.
+
+Metrics: per-part relative density error; $95\%$ half-width and its
+coverage (a confident wrong answer is worse than an uncertain one); rounds
+to the target half-width $\tau=0.5\%\times P$; asset trajectory RMSE. All
+methods share the same fixed part volumes, so density error and mass error
+are the same number (Table~\ref{tab:main} footnotes). Four objects admit no
+statistical-significance claim, so tables show per-part rows, not pooled
+means.
+% [번역] 지표: 부위별 상대 밀도오차, 보고 95 % 반폭과 경험적 커버리지(자신
+%   있게 틀린 답이 불확실한 답보다 나쁘다), 목표 반폭 tau = 0.5 % x P 까지의
+%   라운드 수, asset 은 궤적 RMSE. 모두 같은 고정 부피로 채점되므로 밀도오차
+%   = 질량오차(1.7e-16 불변성은 표 III 각주). 물체 4개로는 통계적 유의성을
+%   주장할 수 없어 표는 평균 아닌 부위별 행을 드러낸다.
+
+Baselines are PUGS~\cite{shuai2025pugs}, SiPhy~\cite{le2026siphy}, and
+PhysX-Omni~\cite{cao2026physxomni} from vision, plus three ablations:
+\emph{uniform} (one density per assembly~\cite{pfaff2025scalable}),
+\emph{single} (one fixed configuration, unlimited reorientations and
+repeats~\cite{nadeau2023sum}), and \emph{WLS} (our loop, ignoring the
+regressor's own angle error, Eq.~\eqref{eq:tls}). Vision outputs lacking
+per-part densities are converted in whichever direction favors the baseline
+(Table~\ref{tab:main} footnotes).
+% [번역] baseline: vision 셋(PUGS, SiPhy, PhysX-Omni)과 ablation 셋 —
+%   uniform 은 조립체에 밀도 하나, single 은 형상 하나 고정 + 무제한
+%   reorientation·반복, WLS 는 우리 루프에서 회귀행렬 자체의 각도 오차(식
+%   (7))만 무시. part 별 밀도가 없는 vision 출력은 매번 해당 baseline 에
+%   유리한 방향으로 변환한다(표 III 각주).
+
+
+\subsection{Part-Wise Volume Estimation}
+\label{sec:vol}
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.74\textwidth]{fig_volume.png}
+\caption{Injected part-volume error (eight seeds): density error tracks it
+near one-to-one; part mass, scored with the volumes the estimator used,
+drifts to $3$--$6\%$ at $\delta=30\%$---first-order invariant, not exactly
+so.}
+% [메모] Fig. 4 — 파일: figures/v2/fig_volume.png.
+\label{fig:volume}
+\end{figure*}
+
+
+The CAD solids and displacement measurements are scoring references, never
+inputs. \rev{The mesh refinement and per-part
+scaling implementation is being delivered by a collaborator, so the measured
+per-part volume-error table is deferred; no claim below depends on it.} What we can
+already quantify is the downstream cost: we perturb the
+volumes the estimator \emph{believes} by $\pm\delta$ with random signs while
+measurements come from the true plant, scoring masses with the volumes
+actually used ($\delta\le30\%$; Fig.~\ref{fig:volume}).
+% [번역] CAD 솔리드·수중 배제 실측은 채점 기준이지 입력이 아니다.
+%   refinement/scaling 구현은 협업자 인계 중이라 부피오차 실측 표는 유보,
+%   아래 주장은 그에 의존하지 않는다. 지금 정량화할 수 있는 것은 하류 비용이다.
+%   추정기가 '믿는' 부피를 ±delta 무작위 부호로 흔들되 측정은 참 plant 에서
+%   나오고 질량은 실제 쓴 부피로 채점한다(delta <= 30 %, 그림 4).
+
+Density error follows volume error near-exactly one-to-one; part mass is far
+less sensitive but not exactly invariant---$3$--$6\%$ at $\delta=30\%$, the
+MAP prior's cancellation being inexact (Remark~\ref{rem:volume} covers only
+the least-squares core)---and the mesh-derived inertia tensor degrades as
+$s^2$ ($19.1\%$ at $\delta=30\%$).
+% [번역] 밀도오차는 부피오차를 거의 1:1 로 따르고, 부위 질량은 훨씬 덜
+%   민감하나 엄밀히 불변은 아니며 — MAP 사전분포의 상쇄가 부정확해 delta
+%   30 % 에서 3~6 % (Remark 의 불변성은 최소제곱 핵심만 다룬다) — mesh 유도
+%   관성 텐서는 s^2 로 나빠진다(delta 30 % 에서 19.1 %).
+
+Volume error also costs \emph{rounds}: the worst part drags the loop, median
+rounds growing from $1$ to $7$ on the 2-link object by $\delta=30\%$, with
+three of eight 3-link seeds failing to converge there. Refinement is what keeps the
+interaction count bounded.
+% [번역] 부피오차는 '라운드' 도 치른다. 최악 part 가 루프를 끌어 2링크에서
+%   delta 30 % 까지 라운드 중앙값이 1 → 7 로 늘고, 3링크는 거기서 8 시드 중
+%   3 이 미수렴. 상호작용 횟수를 유한하게 묶는 것이 바로 정제다.
+
+
+% Table 2 (part별 부피 오차) 는 협업자의 refinement/scaling 실측이 도착할 때까지
+% 전 칸이 Pending 이라 지면만 차지한다. 파일은 tables/table2_volume_v2.tex 에
+% 그대로 두었으니, 자료가 오면 아래 한 줄의 주석만 풀면 된다.
+% \input{tables/table2_volume_v2}
+
+\subsection{Part-Wise Density Identification}
+\label{sec:sim}
+\label{sec:pred}
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.74\textwidth]{fig_conv.png}
+\caption{Worst-part reported half-width per round (median and interquartile
+range, eight seeds). Dashed: round bound $R_{\min}$ of
+Prop.~\ref{prop:rounds}; dotted: target $\tau(P)$.}
+% [번역] 라운드에 대한 부위 최악 보고 반폭(seed 8개 중앙값·사분위 범위).
+%   파선은 명제 3의 라운드 하한 R_min, 점선은 목표 tau(P). ("형상만으로
+%   계산"은 서론·표 I 각주·IV-C 산문, "하한 등호 달성"은 IV-C 산문에.)
+\label{fig:conv}
+\end{figure*}
+
+\input{tables/table3_main_v2}
+
+
+Each object runs the closed loop over eight seeds ($5\%$ joint-angle error,
+$\tau=0.5\%\times P$); Table~\ref{tab:main} is the main result.
+Prop.~\ref{prop:rounds} reads off geometry (Table~\ref{tab:objects}): the
+3-link object's five unknowns exceed the rank-four ceiling, so a second
+configuration is \emph{necessary} before any wrench is simulated.
+% [번역] 각 물체는 각도오차 5 %, tau = 0.5 % x P 로 여덟 시드 폐루프를 돌며
+%   표 III 이 메인 결과다. 명제 3은 형상만으로 읽힌다(표 I): 3링크는
+%   미지수 다섯이 rank 4 천장을 넘어 렌치 시뮬 전에 이미 두 번째 형상이
+%   '필요' 하다.
+
+The loop meets that bound (one round on the 2-link object, two elsewhere;
+all seeds converge). Uniform fails by orders of magnitude: the mass redistributions it misses
+stay invisible to shape until a second articulation configuration
+(Prop.~\ref{prop:null}).
+% [번역] 루프는 그 하한대로 2링크 한 라운드, 나머지 두 라운드에 끝나고 전
+%   시드 수렴한다. uniform 은 자릿수로 틀린다 — 놓친 질량 재분배는 두 번째
+%   관절 형상 전까지 형상에 안 보인다(명제 2).
+
+On the 2-link
+object \emph{ours is single}: three unknowns fit under the rank-four
+ceiling, and the two columns of Table~\ref{tab:main} are
+byte-identical---the positive direction of Prop.~\ref{prop:rounds}, not a
+win; only uniform is separated there. Single's failure appears on the 3-link
+object, in the half-width rather than the point error: its worst-part error
+is a respectable $1.58\%$, but its half-widths for the three links are
+$2.6$, $28.7$, and $42.5\%$---one configuration cannot \emph{certify} five
+unknowns.
+% [번역] 2링크에서는 'ours 가 곧
+%   single' — 미지수 셋이 rank 4 천장 아래라 표 III 두 열은 바이트 단위로
+%   같다. 명제 3의 양의 방향이지 승리가 아니며 갈리는 것은 uniform 뿐.
+%   single 의 실패는 3링크에서, 점오차 아닌 반폭에서다 — 최악 part 오차
+%   1.58 % 는 준수하나 세 링크 반폭이 2.6 / 28.7 / 42.5 %: 형상 하나로
+%   미지수 다섯을 '증명' 못 한다. (수렴 플래그가 무의미하다는 것과 single 의
+%   커버리지가 폭 때문이라는 것은 표 III 각주가 싣는다.)
+
+The strongest ablation evidence is the coverage block of
+Table~\ref{tab:main}. WLS shares our loop, ignoring only the
+errors-in-variables structure; its point errors stay within an order of
+magnitude of ours, but its $95\%$ intervals miss the truth on up to $20$ of
+$24$ part--seed pairs where ours cover at target width: the bias
+Eq.~\eqref{eq:tls} removes does not shrink with rounds. Single's coverage
+comes only from width. An estimator feeding a simulator must know when it
+is wrong.
+% [번역] 가장 강한 ablation 근거는 표 III 커버리지 블록이다. 루프를 공유하고
+%   EIV 구조만 무시하는 WLS 는 점오차는 한 자릿수 안이지만 95 % 구간이
+%   최대 24쌍 중 20쌍에서 참값을 놓친다(우리는 목표 폭으로 커버; 개별 수치는
+%   표 III) — 식 (7) 이 제거하는 편향은 라운드를 쌓아도 안 준다. single 의
+%   커버리지는 오직 폭 덕분이다. 시뮬레이터에 밀도를 넘길 추정기는 제가 틀린
+%   때를 알아야 한다.
+
+The hinge rows are the built-for case: densities recovered to $0.04$--$0.34\%$, intervals covering on all seeds, at
+$3.0$--$3.8\%$ half-widths honestly reflecting the occluded part's weaker
+observability. The stand lamp has no hinge body, so this rests on the custom
+objects only.
+% [번역] 힌지 행이 커스텀 물체를 만든 이유다. 밀도 0.04~0.34 %
+%   복원, 구간은 전 시드에서 덮고, 반폭 3.0~3.8 % 는 가려진 part 의 약한
+%   관측성을 정직하게 반영한다. 램프에는 힌지 body 가 없어 커스텀 둘에만
+%   근거한다.
+
+The stand lamp attains full rank in one configuration yet runs two: past
+full rank, conditioning governs, set by joint-angle precision rather than
+rank (Remark~\ref{rem:cond}, Fig.~\ref{fig:conv}).
+% [번역] 램프는 형상 하나에서 full rank 인데 두 라운드를 돈다. full rank
+%   이후는 조건수가 지배하고, 그것은 rank 아닌 각도 정밀도가 만든다
+%   (Remark 3, 그림 5).
+
+Synthetic chains of $P{=}2\ldots6$ unknowns separate the methods cleanly.
+Through $P=3$ everything but uniform suffices; from $P=4$ the rank-four
+ceiling of Cor.~\ref{cor:rigid} appears directly in \emph{single}, whose
+worst-part error climbs $17.06\to32.02\to53.57\%$ as $P$ grows past four,
+while WLS degrades $10.53\to11.79\to21.39\%$ and ours stays below $0.6\%$
+throughout. At $P=4$ ours converges in a median of
+$3$ rounds where offline D-optimal
+design~\cite{gautier1992exciting,swevers1997optimal} needs $4$ and random
+selection needs $21$ and fails once in eight; at $P=5$ the gap widens to $7$
+against $10$ and random never converges ($0/8$). All three share the
+criterion, so closed-loop re-selection is the only difference.
+\rev{The $P=6$ arm is still computing.} Beyond $P=5$, though, no criterion---D, A, or E---reaches a $1\%$ target in
+twelve rounds: at $\pm5\%$ angular error the binding resource is angular
+precision, not the criterion.
+% [번역] 미지수 P = 2..6 합성 사슬이 방법들을 깨끗하게 가른다. P <= 3 은 uniform
+%   빼고 전부 충분하다. P = 4 부터 따름정리 2의 rank 4 천장이 single 에 그대로
+%   나타나, 부위 최악 오차가 P 가 4를 넘어가며 17.06 -> 32.02 -> 53.57 % 로 오른다.
+%   WLS 는 10.53 -> 11.79 -> 21.39 %, 우리는 전 구간 0.6 % 미만(0.25, 0.51, 0.59 %).
+%   P = 4 에서 우리는 라운드 중앙값 3 으로 수렴하는데 고전 오프라인 D-최적 설계는 4,
+%   무작위 선택은 21 이 필요하고 8회 중 1회는 실패한다. P = 5 에서는 격차가
+%   7 대 10 으로 벌어지고 무작위는 예산 안에 아예 수렴하지 못한다(0/8).
+%   셋이 기준을 공유하므로 차이는 폐루프 재선택 그 자체다. P = 6 arm 은 계산 중.
+%   다만 기준 선택이 이 영역을 구제하지는 못한다 — P = 5 부터는 D, A, E 어느
+%   기준도 12라운드 안에 목표 1% 에 닿지 못한다. 각도오차 ±5% 에서는 그만큼의
+%   미지수를 가를 정보가 측정에 애초에 없기 때문이다. 구속하는 자원은 기준이
+%   아니라 각도 정밀도다.
+
+
+
+\subsection{Measurement Pose and Path Design}
+\label{sec:posepath}
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.74\textwidth]{fig_path.png}
+\caption{One row per object at its most informative colliding
+configuration: joint-space paths, minimum clearance (dashed: straight;
+solid: RRT-Connect), and end-link workspace trace.}
+% [메모] Fig. 6 — 파일: figures/v2/fig_path.png.
+\label{fig:path}
+\end{figure*}
+
+\input{tables/table4_path_v2}
+
+
+How many gravity directions per round: two orthogonal directions reach the
+rank ceiling, and the orthonormal triad is the knee of diminishing
+returns---$12.88$ nat for one direction, $25.41$ for two, $26.35$ for the
+triad, only $27.73$ for six---while one direction is anisotropic
+($2.72\times$): a gravity-aligned joint axis hides distal mass.
+% [번역] 라운드당 중력 방향 개수: 직교 2방향이면 rank 천장에 닿고 직교정규
+%   삼면체가 수확체감의 꺾이는 지점이다 — 1방향 12.88 nat, 2방향 25.41,
+%   삼면체 26.35, 6방향이라야 27.73 — 단일 방향은 비등방적이다(배향 따라
+%   2.72배): 중력과 나란한 관절 축이 그 아래 질량을 숨긴다.
+
+The triad's free $SO(3)$ orientation (Cor.~\ref{cor:invariance}) is spent on
+the joints: rotating it to minimize peak torque on those joints preserves
+the information \emph{exactly}---$26.3535$ nat before and
+after, a $0.0\%$ loss---while cutting peak joint torque from $1.031$ to
+$0.620\,\mathrm{N\cdot m}$, a $39.9\%$ reduction: the quantitative basis for
+claiming measurement does not endanger the object's joints.
+% [번역] 삼면체의 공짜 SO(3) 방향(따름정리 1)은 관절 보호에 쓴다. 그 관절의
+%   최대 토크를 최소화하도록 돌리면 정보는 '정확히' 보존되고 — 전후 26.3535
+%   nat, 손실 0.0 % — 최대 관절 토크는 1.031 → 0.620 N·m, 39.9 % 감소다.
+%   측정이 물체의 관절을 상하게 하지 않는다는 주장의 정량적 근거다.
+
+We grid each joint range at five values, plan every pose pair (triad cycles,
+home transits), and score straight-line interpolation against RRT-Connect
+(Table~\ref{tab:path}, Fig.~\ref{fig:path}); RRT-Connect never collides, at
+negligible path-length and planning-time cost.
+% [번역] 관절당 다섯 값 격자의 모든 자세쌍(삼면체 순환, home transit)을
+%   계획해 직선 보간 대 RRT-Connect 를 채점한다(표 IV, 그림 6). RRT-Connect
+%   는 무충돌 — 경로·계획시간 비용은 무시할 만하다.
+
+The worst \emph{table} penetration is
+$33.1\,\mathrm{mm}$ (3-link tip link), while the larger $93.8$ and
+$83.5\,\mathrm{mm}$ figures are the object penetrating the robot's own wrist
+and forearm. Joint-limit violations are zero for \emph{both} planners, necessarily (the
+limits form a convex box): interpolation fails by collision, never by limit
+violation. Nor always---the 3-link transits are straight-line
+collision-free---so feasibility is re-checked per configuration.
+% [번역] 최악 '테이블' 관통은 33.1 mm(3링크 끝 링크), 더 큰 93.8 / 83.5 mm
+%   는 물체가 로봇 손목·전완에 파고드는 관통이다. 관절한계 위반은 '두'
+%   계획기 모두 0 이며 필연이다(한계는 볼록 상자): 직선 보간의 실패 방식은
+%   충돌이지 한계 위반이 아니고, 항상 실패하지도 않는다 — 3링크 transit 은
+%   직선도 무충돌이라 실현가능성은 형상마다 재검사한다.
+
+
+
+\subsection{Sim-Ready Asset Validation}
+\label{sec:asset}
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.74\textwidth]{fig_asset.png}
+\caption{Asset dynamic fidelity (\emph{simulation-only surrogate}): tip
+displacement in three scenarios against the ground-truth-density reference
+plant. \rev{[Sim-vs-real version awaits the hardware sessions.]}}
+% [번역] asset 동적 충실도(시뮬 전용 대리 검증): 세 시나리오의 끝단 변위를
+%   참값 밀도 기준 plant 와 비교. sim-vs-real 판은 하드웨어 세션 대기.
+%   ("밀도만 다름"과 2링크 release 둔감성은 IV-E 산문에.)
+% [메모] Fig. 7 — 시뮬 대리 검증 그림(figures/v2/fig_asset.png).  구 Fig. 8
+%   (실물 비교 자리표시자)은 이 캡션의 rev 로 흡수, fig:assetreal 라벨 보존.
+\label{fig:asset}
+\label{fig:assetreal}
+\end{figure*}
+
+\input{tables/table5_asset_v2}
+
+
+This validation is a \emph{simulation-only surrogate}: the reference is a
+Drake plant carrying the ground-truth densities, not the real object, and
+nothing here is a real-world claim. \rev{The sim-to-real comparison
+(Fig.~\ref{fig:assetreal}) requires the hardware sessions and is pending.}
+Contact, friction, and damping parameters are shared constants, so the
+comparison isolates exactly what we identify: the per-part densities.
+% [번역] 이 검증은 '시뮬레이션 전용 대리 검증' 이다. 기준은 참값 밀도를
+%   실은 Drake plant 이지 실제 물체가 아니고, 여기의 어떤 것도 실세계 주장이
+%   아니다. sim-to-real 비교(그림 7 내 rev)는 하드웨어 세션 대기로 pending.
+%   접촉·마찰·댐핑 계수는 공유 상수 — 우리 식별 대상이 아니다 — 라 비교는
+%   부위별 밀도만 격리한다.
+
+Each variant runs release, drop, and push; ours ranks first in all $27$
+scenario cells. Table~\ref{tab:asset} reports the push rows matching
+Fig.~\ref{fig:asset}; release and drop preserve the same ordering at larger
+margins---orders of magnitude, versus $2.1$--$14.2\times$ on push, where
+contact amplifies every variant's error, ours included: a ranking, not
+absolute accuracy.
+% [번역] 각 asset 변형을 release·drop·push 로 구동해 최악 part 궤적 RMSE 로
+%   판정하며, 27개 시나리오 칸 전부에서 우리가 1위다. 표 V 는 그림 7과 같은
+%   push 행만 싣고, release·drop 은 같은 순서를 더 큰 격차로 보존한다 — 수
+%   자릿수 대, 접촉이 모든 변형의 오차를 증폭하는 push 의 2.1~14.2배: push 는
+%   절대 정확도가 아니라 순위다.
+
+The 2-link release must not be over-read: it is structurally blind to
+density---with the root link welded, the single pendulum's motion is
+invariant to scaling the moving link's density, so its sub-millimetre RMSE
+reflects that invariance, not skill---and release trajectories
+settle onto joint limits, under-stating differences.
+% [번역] 2링크 release 는 과대 해석 금지. 구조적으로 밀도에 눈멀어 있다 —
+%   뿌리 링크를 용접하면 단진자라 움직이는 링크의 밀도 배율에 불변, sub-mm
+%   수치는 실력이 아니라 그 불변성이다 — release 는 관절 한계에 내려앉아
+%   차이를 과소평가한다. (vision 변형의 양의 부호 가정은 표 V 각주.)
+
+Intervention is part of the asset's specification (Table~\ref{tab:asset}):
+the addition over the inherited RORA~\cite{lee2026rora} stage is the joint
+adjustment, once per round---one to two rounds here \rev{(operator and
+wall-clock times await the hardware sessions)}.
+% [번역] 개입은 asset 사양의 일부다(표 V). 상속되는 RORA 단계 위에 추가되는
+%   것은 joint 조정뿐, 라운드당 한 번 — 여기서는 한두 라운드다(작업자·전체
+%   소요 시간은 하드웨어 세션 대기).
+
+

@@ -31,7 +31,12 @@ import density_id_objects as obj
 import design_core as dc
 import nlink
 
-TARGET_BY_P = {2: 0.01, 3: 0.01, 4: 0.015, 5: 0.02, 6: 0.02}
+PER_LINK_TARGET = 0.005   # tau(p) = 0.5 % x p  (8/27 사용자 결정, 안 가)
+
+
+def target_for(n_part, per_link=PER_LINK_TARGET):
+    """목표 상대 반폭은 링크 수에 비례한다: tau(p) = per_link * p."""
+    return per_link * n_part
 
 
 def setup(n_part, seed):
@@ -63,7 +68,7 @@ def uniform_estimate(spec, rho_gt):
 def run_baselines(parts, seeds, rel, max_rounds, n_starts):
     rows = {}
     for p in parts:
-        target = TARGET_BY_P.get(p, 0.02)
+        target = target_for(p)
         acc = {k: [] for k in ("uniform", "single", "wls", "ours")}
         rounds = {k: [] for k in ("single", "wls", "ours")}
         for s in range(seeds):
@@ -107,7 +112,7 @@ def run_ablation(parts, seeds, rel, max_rounds, n_starts):
     for name, kw in ABLATIONS:
         cells = {}
         for p in parts:
-            target = TARGET_BY_P.get(p, 0.02)
+            target = target_for(p)
             errs, rds, ok = [], [], 0
             for s in range(seeds):
                 spec, gt = setup(p, s)
@@ -140,7 +145,8 @@ def main():
 
     t0 = time.time()
     print(f"각도오차 {100*a.rel:g}%   seed {a.seeds}개   예산 {a.max_rounds}라운드")
-    print(f"목표 반폭은 부위 수마다 다르다: {TARGET_BY_P}\n")
+    print(f"목표 반폭 = {100*PER_LINK_TARGET:.1f}%%/링크 (tau=0.5%%xp): "
+          f"{ {q: round(100*target_for(q),2) for q in a.parts} }\n")
 
     print("[1/2] 시뮬 baseline — 부위 최악 질량오차 (중앙값)")
     base = run_baselines(a.parts, a.seeds, a.rel, a.max_rounds, a.starts)
@@ -149,7 +155,9 @@ def main():
     abl = run_ablation(a.parts, a.seeds, a.rel, a.max_rounds, a.starts)
 
     json.dump(dict(parts=a.parts, seeds=a.seeds, rel=a.rel,
-                   max_rounds=a.max_rounds, target=TARGET_BY_P,
+                   max_rounds=a.max_rounds,
+                   target={str(q): target_for(q) for q in a.parts},
+                   per_link_target=PER_LINK_TARGET,
                    baselines=base, ablation=abl),
               open(a.json, "w"), indent=1)
     print(f"\n총 {time.time()-t0:.0f}초   수치 -> {a.json}")

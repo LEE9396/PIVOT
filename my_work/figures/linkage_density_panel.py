@@ -129,8 +129,8 @@ def build(key):
     parts, hinge_g = d["parts"], d["hinge_g"]
     n_hinge = d["n_joint"]
     hinge_names = [f"{j.name}_hinge" for j in spec.joints]
-    hinge_gt = spec.joints[0].hinge_density
-    hinge_vol = [j.hinge_mass_kg / j.hinge_density for j in spec.joints]
+    hinge_vol = [j.hinge_volume_cm3 * obj.CM3 for j in spec.joints]
+    hinge_gt = spec.joints[0].hinge_mass_kg / hinge_vol[0]
 
     # 컬러 정의역: 이 그림에 나오는 모든 밀도를 담는다.
     #

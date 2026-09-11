@@ -1,0 +1,45 @@
+% GT 테이블+베이스라인+ours 결과 테이블 통합
+
+\begin{table*}[t]
+\caption{Ground-truth physical properties and four-way comparison on the real robot. GT volume $V$, mass $M$, and effective density $\rho=M/V$ follow Sec.~\ref{sec:gt}; assembly density is omitted. All method columns report relative part-mass error [\%]. \emph{Ours (sim)} runs the same estimator on the same scanned model using the angular error measured in the corresponding hardware session and represents the method ceiling, whereas \emph{Ours (real)} denotes the hardware result. Custom-object masses and densities are preliminary pre-ballast values; their CAD volumes remain fixed and the final masses and densities will be updated after assembly.}
+% [번역] 실물 로봇에서의 GT 물성과 네 갈래 비교. GT 부피 V, 질량 M, 유효밀도 rho=M/V는 Sec.~\ref{sec:gt}를 따르며 assembly density는 생략한다. 모든 method 열은 part 질량 상대오차[%]다. Ours(sim)은 해당 hardware session에서 측정한 angular error를 사용하여 동일한 scanned model과 estimator를 실행한 method ceiling이고, Ours(real)은 hardware 결과다. Custom-object의 질량과 밀도는 ballast 추가 전 preliminary 값이며 CAD 부피는 고정되고 최종 질량과 밀도는 assembly 후 갱신된다.
+\label{tab:ground_truth_properties}
+\label{tab:main}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.5pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llrrrccccc}
+\toprule
+& & \multicolumn{3}{c}{Ground truth} & \multicolumn{5}{c}{Part-mass relative error [\%]} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-10}
+Object & Part & $V$ [cm$^3$] & $M$ [g] & $\rho$ [g/cm$^3$] & PUGS$^{\mathrm S}$ & SiPhy & PhysX-Omni & \shortstack{Ours\\(sim)} & \shortstack{Ours\\(real)} \\
+\midrule
+\multirow{4}{*}{Desk lamp}
+  & Base     & 290.20 & 399 & 1.375 & 164.1 & 38.3 & 69.1  & \Pending & \Pending \\
+  & Support  &  72.89 &  85 & 1.166 & 10.7  & 27.3 & 183.1 & \Pending & \Pending \\
+  & Head     &  52.82 &  87 & 1.647 & 36.4  & 48.5 & 58.0  & \Pending & \Pending \\
+  & Assembly & 415.91 & 571 & --    & \multicolumn{5}{c}{--} \\
+\midrule
+\multirow{4}{*}{2-link$^*$}
+  & Long     & 135.72 & 49  & 0.361 & 7887.4 & 593.4 & \NA & \Pending & \Pending \\
+  & Short    & 108.12 & 42  & 0.388 & 7323.6 & 544.5 & \NA & \Pending & \Pending \\
+  & Hinge    &   7.45 & 41  & 5.503 & 423.8  & 54.5  & \NA & \Pending & \Pending \\
+  & Assembly & 251.29 & 132 & --    & \multicolumn{5}{c}{--} \\
+\midrule
+\multirow{5}{*}{3-link$^*$}
+  & Link 0   & 288.12 & 100 & 0.347 & 4312.5 & 349.6 & \NA & \Pending & \Pending \\
+  & Link 1   & 208.40 & 92  & 0.441 & 3369.1 & 253.5 & \NA & \Pending & \Pending \\
+  & Link 2   & 162.28 & 69  & 0.425 & 3501.8 & 267.0 & \NA & \Pending & \Pending \\
+  & Hinges   &  14.90 & 82  & 5.503 & 178.2  & 71.7  & \NA & \Pending & \Pending \\
+  & Assembly & 673.70 & 343 & --    & \multicolumn{5}{c}{--} \\
+\midrule
+\multirow{3}{*}{Laptop}
+  & Display  &  354.10 & 379.25  & 1.071 & 76.7 & 182.5 & 417.3 & \Pending & \Pending \\
+  & Base     &  782.00 & 1137.75 & 1.455 & 30.1 & 108.0 & 611.8 & \Pending & \Pending \\
+  & Assembly & 1136.10 & 1517    & --    & \multicolumn{5}{c}{--} \\
+\bottomrule
+\end{tabular}}
+\vspace{2pt}
+\parbox{\textwidth}{\scriptsize \textit{$^{\mathrm S}$ Stand-lamp PUGS masses integrate the frozen SAM-partitioned Gaussian volume and point-wise density; errors use the midpoint of its predicted mass range. Other PUGS rows and all SiPhy rows distribute each object-level prediction using frozen GT volume fractions. PhysX-Omni is N/A where its generated shape has no canonical part mapping. $*$ denotes preliminary pre-ballast custom-object mass and density.}}
+\end{table*}

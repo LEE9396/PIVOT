@@ -1,0 +1,132 @@
+{
+ "stand_lamp": {
+  "label": "Stand lamp",
+  "source": "3DGS scan + disassembly weighing",
+  "parts": [
+   {
+    "name": "Base",
+    "V": 273.0,
+    "M": 399.0,
+    "rho": 1.4615
+   },
+   {
+    "name": "Support",
+    "V": 84.5,
+    "M": 85.0,
+    "rho": 1.0059
+   },
+   {
+    "name": "Head",
+    "V": 64.1,
+    "M": 87.0,
+    "rho": 1.3573
+   }
+  ],
+  "assembly": {
+   "V": 421.6,
+   "M": 571.0
+  },
+  "hinge_as_part": false,
+  "joints": 2,
+  "topology": "serial chain",
+  "n_unknown": 3
+ },
+ "laptop": {
+  "label": "Laptop",
+  "source": "scale + assumed part split",
+  "parts": [
+   {
+    "name": "Display",
+    "V": 354.1,
+    "M": 379.25,
+    "rho": 1.071
+   },
+   {
+    "name": "Base",
+    "V": 798.6,
+    "M": 1137.75,
+    "rho": 1.4247
+   }
+  ],
+  "assembly": {
+   "V": 1152.7,
+   "M": 1517.0
+  },
+  "hinge_as_part": false,
+  "joints": 1,
+  "topology": "single revolute",
+  "n_unknown": 2
+ },
+ "custom_2link": {
+  "label": "Custom 2-link",
+  "source": "CAD + material",
+  "parts": [
+   {
+    "name": "Long link",
+    "V": 135.72,
+    "M": 49.0,
+    "rho": 0.361
+   },
+   {
+    "name": "Short link",
+    "V": 108.12,
+    "M": 42.0,
+    "rho": 0.3885
+   },
+   {
+    "name": "Hinge",
+    "V": 7.44708,
+    "M": 41.0,
+    "hinge": true,
+    "rho": 5.5055
+   }
+  ],
+  "assembly": {
+   "V": 251.28708,
+   "M": 132.0
+  },
+  "hinge_as_part": true,
+  "joints": 1,
+  "topology": "serial chain",
+  "n_unknown": 3
+ },
+ "custom_3link": {
+  "label": "Custom 3-link",
+  "source": "CAD + material",
+  "parts": [
+   {
+    "name": "Link 0 (long)",
+    "V": 288.12,
+    "M": 100.0,
+    "rho": 0.3471
+   },
+   {
+    "name": "Link 1 (middle)",
+    "V": 208.4,
+    "M": 92.0,
+    "rho": 0.4415
+   },
+   {
+    "name": "Link 2 (short)",
+    "V": 162.28,
+    "M": 69.0,
+    "rho": 0.4252
+   },
+   {
+    "name": "Hinges x2",
+    "V": 14.89416,
+    "M": 82.0,
+    "hinge": true,
+    "rho": 5.5055
+   }
+  ],
+  "assembly": {
+   "V": 673.69416,
+   "M": 343.0
+  },
+  "hinge_as_part": true,
+  "joints": 2,
+  "topology": "serial chain",
+  "n_unknown": 4
+ }
+}

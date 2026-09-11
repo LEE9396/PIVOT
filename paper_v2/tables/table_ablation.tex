@@ -1,0 +1,44 @@
+\begin{table}[t]
+\caption{Ablations. Each row replaces one component and reports what it costs.
+Errors are the median worst-part relative mass error over eight randomly
+proportioned objects per part count, run at the same seeds and the same
+fourteen-round budget as Table~\ref{tab:sim_baselines}; the last three rows are
+single findings rather than sweeps.}
+% [번역] 표 캡션. Ablation. 각 행은 구성요소 하나를 바꿔 넣고 그 대가가
+%   얼마인지 보고한다. 오차는 부위 수마다 무작위 비율 물체 8개에 대한 부위
+%   최악 상대 질량 오차의 중앙값이고, seed 와 14라운드 예산은 표 V 와 같다.
+%   마지막 세 행은 sweep 이 아니라 단발 발견이다.
+\label{tab:ablation}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{0.40\columnwidth}p{0.52\columnwidth}}
+\hline
+Replace & Effect \\
+\hline
+TLS $\to$ weighted least squares
+  & the errors-in-variables bias does not wash out with rounds: $8.31\%$ against
+    $0.19\%$ at $p=4$, and convergence within budget falls from $8/8$ to $3/8$ \\
+D- $\to$ E-optimal selection
+  & $2.5$--$5\times$ worse in error, and convergence within budget falls from
+    $8/8$ to $1/8$ at $p=4$ \\
+Continuous $\to$ grid selection
+  & $0.89\%$ against $0.32\%$ at $p=5$, convergence $4/8$ against $7/8$ \\
+D-optimal $\to$ hand-picked extreme configurations
+  & worst-part half-width $344\%$ vs.\ $8.20\%$ at $p=6$ with eight
+    configurations; across the sweep, static and geometry-driven selection is
+    $8$--$42\times$ worse than the D-optimal rule \\
+Drop residual inflation from the stopping test
+  & the loop stops \emph{more} often and lands \emph{worse}: $8/8$ against
+    $7/8$ within budget at $p=5$, at $0.45\%$ against $0.32\%$. Empirical
+    coverage of the reported $95\%$ interval falls to $88\%$ \\
+Residual scored at $\hat\theta$ instead of $\hat\theta+\delta$
+  & inflation $79\times$ at $p=4$; stopping test never satisfied \\
+Fixed TLS iteration cap of $400$
+  & $13.36\%$ instead of $1.11\%$ at $p=6$ (converges at $547$) \\
+Drop the hinge from $\rho$
+  & part masses biased by $23\%$ while the estimator reports $0.38\%$: a
+    sixty-fold overconfidence no further measurement removes \\
+\hline
+\end{tabular}
+\end{table}

@@ -29,7 +29,7 @@ density_id_drake.py의 추정기(S1~S6)를 **그대로** 재사용하고, 대상
 """
 
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from pydrake.geometry import Box, Convex, Mesh
@@ -59,9 +59,18 @@ class Hinge:
 # 제조사가 토크값을 공개하지 않으므로 같은 회사 금속 토크힌지(HT-TC2626:
 # 0.1~0.2 / 0.5~0.6 N·m)의 범위를 기준으로 잡고, --hinge-torque 로 바꾼다.
 # 실물은 반드시 토크 게이지로 실측해야 한다.
-# 힌지 본체 재질 밀도. 부피 = 질량 / 이 값 으로 환산해 '부위' 하나로 만든다.
-# 정확할 필요는 없다. 밀도와 부피의 곱(=질량)만 맞으면 렌치가 같다.
-HINGE_MATERIAL_DENSITY = 1150.0     # PA6 나일론
+# 힌지도 부위와 **같은 방식으로** 다룬다: 실측 부피와 실측 질량을 주고,
+# 밀도는 그 둘의 몫으로 파생시킨다 (Part 가 volume_cm3 와 rho_gt 를 들고
+# 있는 것과 같다). 예전에는 반대로 재질 밀도(PA6 1150)를 가정하고 부피를
+# 질량/밀도 로 역산했는데, 커스텀 물체의 나머지 부위가 전부 CAD 실측 부피를
+# 쓰는 것과 어긋났다. 추정값 자체는 어느 쪽이든 같지만(Remark: 부피 불변성,
+# rho 와 V 는 곱으로만 들어간다) 표에 싣는 밀도의 격이 달라진다.
+#
+# ⚠ 7.45 cm^3 은 논문 Table IV 의 GT 열에서 왔고 저장소 안에서 재현 경로가
+#    없다. 수중 치환으로 다시 재서 확인할 것 (DEPLOY.md §5). 41 g / 7.45 cm^3
+#    = 5503 kg/m^3 이면 이 힌지는 금속이며, 아래 HINGES 의 "PA6" 설명이
+#    틀린 것이다.
+MEASURED_HINGE_CM3 = 7.45           # 힌지 1개 부피 (논문 Tab. IV, 확인 필요)
 HINGE_PRIOR_REL_SIGMA = 0.02        # 저울로 잰 힌지 질량의 상대 불확실성 2 %
 MEASURED_HINGE_KG = 0.041           # 명가철물 토크힌지 실측 (저울)
 
@@ -386,7 +395,7 @@ class Joint:
     # 힌지는 핀 축 위에 붙어 있으므로 부모/자식 어느 쪽에 달아도 중력
     # 렌치가 같다. 여기서는 자식 링크에 단다.
     hinge_mass_kg: float = 0.0
-    hinge_density: float = HINGE_MATERIAL_DENSITY
+    hinge_volume_cm3: float = MEASURED_HINGE_CM3
     # 힌지 무게중심이 핀 축에서 얼마나 벗어나 있는가 (자식 링크 프레임, mm).
     #
     # 기본 (0,0,0) 은 "핀 축 위" 라는 뜻인데, 실제 힌지는 날개가 한쪽으로
@@ -476,6 +485,88 @@ OBJECTS = {spec.key: spec for spec in (TWO_LINK, THREE_LINK)}
 
 
 # ---------------------------------------------------------------------------
+# desk lamp (실물 스캔) — desk_lamp.py 의 정의를 그대로 재사용한다.
+#
+# desk_lamp.py 는 최상단에서 `from density_id_objects import Joint, ObjectSpec,
+# Part` 를 한다. 그래서 이 모듈이 최상단에서 desk_lamp 를 곧바로 import 하면
+# 순환 임포트가 된다 (density_id_objects.py 를 먼저 불러오는 경로에서는 문제
+# 없지만, desk_lamp.py 를 먼저 불러오는 경로에서는 build_spec 이 아직 정의되기
+# 전 상태의 모듈을 참조하게 된다). study_theory.py의 check_real_objects() 와
+# 같은 이유로, 필요할 때(함수 호출 시점)에만 불러온다.
+#
+# desk_lamp 배달물 자산(assets/desk_lamp_minimal_sim)이 없으면 desk_lamp.py는
+# import 시점에 바로 FileNotFoundError 를 낸다 — 이것도 여기서만 터지게 둔다.
+# ---------------------------------------------------------------------------
+def _desklamp_spec(volume_source):
+    """desk_lamp.build_spec() 을 부피 출처에 맞게 재포장한다.
+
+    build_spec() 은 기본적으로 **스캔(재구성) 부피**를 쓴다 — Part.volume_cm3 가
+    스캔 메시의 부피이고, rho_gt = 실측질량 / 스캔부피 로 정의돼 있다
+    (desk_lamp.py 상단 docstring 참고: "스캔 부피 != 재료 부피"). 즉
+    volume_source="reconstructed" 는 build_spec() 을 그대로 쓰면 된다.
+
+    volume_source="gt" 는 그 대신 desk_lamp.GROUND_TRUTH 의 **실측 재료 부피**
+    (물 치환 등으로 잰 material_cm3) 로 Part.volume_cm3 를 바꿔치기하고, 질량은
+    저울 실측값(mass_kg) 그대로 유지되도록 rho_gt 를 다시 계산한다. 위치·메시·
+    관절 등 나머지는 build_spec() 이 만든 것을 그대로 쓴다.
+    """
+    import desk_lamp  # noqa: 함수 안에서만 — 위 설명 참고
+
+    spec = desk_lamp.build_spec()
+    if volume_source == "reconstructed":
+        return spec
+    if volume_source != "gt":
+        raise ValueError(f"알 수 없는 volume_source: {volume_source!r}")
+
+    new_parts = []
+    for part in spec.parts:
+        gt = desk_lamp.GROUND_TRUTH[part.name]
+        volume_cm3 = gt["material_cm3"]
+        rho_gt = gt["mass_kg"] / (volume_cm3 * CM3)
+        new_parts.append(replace(part, volume_cm3=volume_cm3, rho_gt=rho_gt))
+    return replace(spec, parts=new_parts)
+
+
+VOLUME_SOURCES = ("gt", "reconstructed")
+ALL_OBJECT_KEYS = (*OBJECTS, "desklamp")
+
+
+def get_spec(key, volume_source="gt"):
+    """물체 키 -> ObjectSpec. desklamp 는 여기서 지연 로딩하고, 부피 출처도 여기서 정한다.
+
+    density_id_drake 의 회귀행렬은 rho_i 의 계수로 부피 V_i 를 그대로 쓴다
+    (density_id_drake.regressor: force_rows = ... * VOLUMES). 그래서
+    rho_hat_i * V_i (=질량) 는 V_i 를 무엇으로 잡든 노이즈가 평균화되면 참질량에
+    수렴한다 — desk_lamp.py 가 "질량으로 채점해야 한다"고 강조하는 바로 그
+    성질이다. gt/reconstructed 두 arm 을 self-consistent 하게 만든 이유가 이것:
+    V_i 를 바꿀 때 rho_gt 도 함께 바꿔야, 밀도 오차(%) 비교가 부피 배율이
+    아니라 실제 추정 성능을 보여준다. (밀도 오차만 보고 싶다면 이 불변성 자체가
+    "부피가 틀려도 밀도 오차%는 안 변한다"는 결과로 나타난다 — 버그가 아니라
+    이 선형 추정기의 설계 성질이다.)
+    """
+    if volume_source not in VOLUME_SOURCES:
+        raise ValueError(f"알 수 없는 --volume-source: {volume_source!r}")
+    if key == "desklamp":
+        return _desklamp_spec(volume_source)
+    if key not in OBJECTS:
+        raise KeyError(key)
+    spec = OBJECTS[key]
+    if volume_source == "gt":
+        return spec   # 이미 CAD 적분 부피 = GT. 기존 동작 그대로 (회귀 없음).
+    # volume_source == "reconstructed"
+    raise SystemExit(
+        f"[--volume-source reconstructed] '{key}' 에는 재구성(스캔) 부피 자산이"
+        " 이 저장소에 없다.\n"
+        "  2link/3link 는 CAD 로 설계·제작됐고, 저장소에 스캔 메시가 없다.\n"
+        "  custom_object_cad/drake/*.obj 는 CAD 설계 원본이지 스캔 재구성이 아니라서"
+        " 쓰지 않는다\n"
+        "  (그걸 쓰면 GT 와 같은 값이 나와 부피오차가 0인 척하는 가짜 ablation이"
+        " 된다).\n"
+        "  가짜 부피로 채우지 않는다. 실제 스캔 자산을 추가하거나,"
+        " --object desklamp (실측 스캔 있음) 를 쓰라.")
+
+
+# ---------------------------------------------------------------------------
 # 힌지를 '부위' 로 취급하기
 #
 # 힌지는 관절 축 위에 붙은 덩어리다. 지금까지는 질량 0 으로 뒀는데, 실측
@@ -488,12 +579,15 @@ OBJECTS = {spec.key: spec for spec in (TWO_LINK, THREE_LINK)}
 #   넓게         : 접착제·나사까지 얼마인지 모를 때. 자세가 하나 더 필요하다.
 # ---------------------------------------------------------------------------
 def hinge_bodies(spec):
-    """질량이 주어진 힌지만 골라 (관절, 부피[m^3], 밀도) 로 돌려준다."""
+    """질량이 주어진 힌지만 골라 (관절, 부피[m^3], 밀도) 로 돌려준다.
+
+    부피와 질량이 실측이고 밀도는 파생값이다 — 부위와 같은 순서다.
+    """
     out = []
     for joint in spec.joints:
         if joint.hinge_mass_kg > 0.0:
-            out.append((joint, joint.hinge_mass_kg / joint.hinge_density,
-                        joint.hinge_density))
+            volume = joint.hinge_volume_cm3 * CM3
+            out.append((joint, volume, joint.hinge_mass_kg / volume))
     return out
 
 
@@ -824,7 +918,12 @@ def torque_sweep(spec, safety=DEFAULT_SAFETY,
 
     # 하류를 추 없이 비워둔 상태가 물리적으로 가장 가벼운 구성이다.
     # 이 구성조차 버티지 못하면 어떤 밀도를 골라도 이 힌지로는 실험이 불가능하다.
-    lightest = [spec.parts[0].rho_gt] + [p.rho_empty for p in spec.parts[1:]]
+    # build_plant()/required_torque() 는 densities 를 body_table() 순서
+    # (part 먼저, 힌지 나중)로 기대한다. 힌지는 실측 하드웨어라 "비울" 수
+    # 없으므로 그 실제 밀도(rho_gt)를 그대로 붙인다 — 개수를 맞추지 않으면
+    # build_plant() 가 힌지 밀도를 인덱싱할 때 IndexError 로 죽는다.
+    lightest = ([spec.parts[0].rho_gt] + [p.rho_empty for p in spec.parts[1:]]
+                + [density for _, _, density in hinge_bodies(spec)])
     floor = required_torque(spec, densities=lightest).max()
     print(f"  하류를 전부 비운 최경량 구성에서도 {floor:.3f} N·m 필요"
           f"  -> 유지토크가 {floor * safety:.3f} N·m 미만이면 실험 자체가 불가")
@@ -996,8 +1095,13 @@ def validate(spec, hinge, n_rounds=6, n_random_seeds=10,
                          density_scale=density_scale)
     print("=" * 74)
     print(f"{spec.label}  —  {spec.notes}")
-    print(f"힌지: {hinge.label}, 유지토크 {hinge.holding_torque_nm} N·m"
-          f" ({hinge.note}), 안전배수 {safety}")
+    if hinge is None:
+        # desklamp 처럼 토크 스펙이 문서화된 힌지가 없는 물체. 자세 필터링을
+        # 하지 않는다 (bind_object 가 이미 alg.is_feasible = 항상 True 로 둔다).
+        print("힌지: 없음 (토크 기반 자세 필터링을 하지 않는다 — 실측 힌지 스펙 없음)")
+    else:
+        print(f"힌지: {hinge.label}, 유지토크 {hinge.holding_torque_nm} N·m"
+              f" ({hinge.note}), 안전배수 {safety}")
     print("=" * 74)
 
     scaled = "" if density_scale == 1.0 else f"  (하류 밀도 x{density_scale:.3f})"
@@ -1018,15 +1122,19 @@ def validate(spec, hinge, n_rounds=6, n_random_seeds=10,
     if impossible:
         print(f"  경고: {', '.join(impossible)} 는 추를 다 빼도 이 밀도를 만들 수 없다.")
 
-    print(f"\n[하드웨어] 유지토크 {hinge.holding_torque_nm} N·m 대비"
-          f" (Drake 중력토크 전수 스윕)")
-    for row in hinge_load_check(spec, hinge, densities=rho_gt, safety=safety):
-        verdict = ("고정됨" if row["margin"] >= safety else
-                   "여유부족" if row["margin"] >= 1.0 else "미끄러짐")
-        print(f"  {row['joint']:<10} 하류질량 {row['downstream_mass_g']:>6.1f} g"
-              f"   최악토크 {row['torque_nm']:.3f} N·m"
-              f" @ q={np.round(row['theta_deg'], 0)}"
-              f"   여유 {row['margin']:>5.1f}x  {verdict}")
+    if hinge is None:
+        print("\n[하드웨어] 힌지 토크 스펙이 없어 여유 점검을 건너뛴다"
+              " (desk_lamp.py 에 실측 토크 데이터 없음)")
+    else:
+        print(f"\n[하드웨어] 유지토크 {hinge.holding_torque_nm} N·m 대비"
+              f" (Drake 중력토크 전수 스윕)")
+        for row in hinge_load_check(spec, hinge, densities=rho_gt, safety=safety):
+            verdict = ("고정됨" if row["margin"] >= safety else
+                       "여유부족" if row["margin"] >= 1.0 else "미끄러짐")
+            print(f"  {row['joint']:<10} 하류질량 {row['downstream_mass_g']:>6.1f} g"
+                  f"   최악토크 {row['torque_nm']:.3f} N·m"
+                  f" @ q={np.round(row['theta_deg'], 0)}"
+                  f"   여유 {row['margin']:>5.1f}x  {verdict}")
 
     grid = full_grid(spec)
     candidates = alg.candidate_grid()
@@ -1037,8 +1145,11 @@ def validate(spec, hinge, n_rounds=6, n_random_seeds=10,
         print("  통과한 자세가 없다. 이 밀도 GT 는 이 힌지로 실험할 수 없다.")
         return None
     torques = max_joint_torques(spec, candidates, rho_gt)
-    print(f"  통과 자세의 관절토크 최대 {torques.max():.3f} N·m"
-          f" (한계 {hinge.holding_torque_nm / safety:.3f} N·m)")
+    if hinge is None:
+        print(f"  통과 자세의 관절토크 최대 {torques.max():.3f} N·m (한계 없음)")
+    else:
+        print(f"  통과 자세의 관절토크 최대 {torques.max():.3f} N·m"
+              f" (한계 {hinge.holding_torque_nm / safety:.3f} N·m)")
 
     svals = alg.structural_identifiability(candidates)
     rank = int(np.sum(svals > 1e-6 * svals[0]))
@@ -1170,7 +1281,8 @@ def render(spec, out_dir, hinge=None, safety=DEFAULT_SAFETY, density_scale=1.0):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--object", choices=(*OBJECTS, "both"), default="both")
+    parser.add_argument("--object", choices=(*ALL_OBJECT_KEYS, "both"),
+                        default="both")
     parser.add_argument("--rounds", type=int, default=6)
     parser.add_argument("--hinge", choices=tuple(HINGES), default="mg_plastic")
     parser.add_argument("--hinge-torque", type=float, default=None,
@@ -1185,34 +1297,56 @@ def main():
                              " (실험 전제는 균일밀도이므로 기본은 끔)")
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--out-dir", default="frames_objects")
+    parser.add_argument("--volume-source", choices=VOLUME_SOURCES, default="gt",
+                        help="추정기에 알려주는 부피의 출처."
+                             " gt=CAD 적분값/실측 재료부피 (부피오차 0, 기본값),"
+                             " reconstructed=스캔·재구성 파이프라인 부피"
+                             " (2link/3link 는 이 자산이 없어 에러로 종료한다)")
     args = parser.parse_args()
 
     hinge = HINGES[args.hinge]
     if args.hinge_torque is not None:
         hinge = Hinge(hinge.label, args.hinge_torque, hinge.note)
 
+    # "both" 는 기존 그대로 2link + 3link 만 가리킨다 (desklamp 는 힌지 토크
+    # 스펙이 없어 --sweep/--auto-scale 경로가 다르므로 일부러 묶지 않는다).
     keys = list(OBJECTS) if args.object == "both" else [args.object]
+
+    def hinge_for(key):
+        # desklamp 는 실측 힌지 토크 스펙이 없다 (desk_lamp.py 에 없음). 없는
+        # 값을 지어내는 대신 자세 필터링을 끈다 (bind_object 의 hinge=None 경로).
+        return None if key == "desklamp" else hinge
 
     if args.sweep:
         for key in keys:
-            torque_sweep(OBJECTS[key], safety=args.safety)
+            if key == "desklamp":
+                print(f"  desklamp 는 힌지 토크 스펙이 없어 --sweep 을 건너뛴다")
+                continue
+            torque_sweep(get_spec(key, args.volume_source), safety=args.safety)
         return
 
     results = []
     for key in keys:
-        spec = OBJECTS[key]
+        spec = get_spec(key, args.volume_source)
+        key_hinge = hinge_for(key)
         scale = 1.0
         if args.auto_scale:
-            scale = min(1.0, max_feasible_density_scale(spec, hinge, args.safety))
-        result = validate(spec, hinge, n_rounds=args.rounds,
+            if key_hinge is None:
+                print(f"  {key} 는 힌지 토크 스펙이 없어 --auto-scale 을 건너뛴다"
+                      " (배율 1.0 유지)")
+            else:
+                scale = min(1.0, max_feasible_density_scale(
+                    spec, key_hinge, args.safety))
+        result = validate(spec, key_hinge, n_rounds=args.rounds,
                           safety=args.safety, density_scale=scale)
         if result is None:
-            torque_sweep(spec, safety=args.safety)
+            if key_hinge is not None:
+                torque_sweep(spec, safety=args.safety)
             print()
             continue
         results.append(result)
         if args.com_mismatch:
-            com_mismatch_study(spec, n_rounds=args.rounds, hinge=hinge,
+            com_mismatch_study(spec, n_rounds=args.rounds, hinge=key_hinge,
                                safety=args.safety, density_scale=scale)
         print()
     if results:
@@ -1220,11 +1354,14 @@ def main():
 
     if args.render:
         for key in keys:
-            spec = OBJECTS[key]
-            scale = (min(1.0, max_feasible_density_scale(spec, hinge, args.safety))
-                     if args.auto_scale else 1.0)
+            spec = get_spec(key, args.volume_source)
+            key_hinge = hinge_for(key)
+            scale = 1.0
+            if args.auto_scale and key_hinge is not None:
+                scale = min(1.0, max_feasible_density_scale(
+                    spec, key_hinge, args.safety))
             print(f"\n[렌더링] {key}")
-            render(spec, args.out_dir, hinge=hinge, safety=args.safety,
+            render(spec, args.out_dir, hinge=key_hinge, safety=args.safety,
                    density_scale=scale)
 
 

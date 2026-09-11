@@ -1,0 +1,24 @@
+\begin{table}[t]
+\caption{-}
+\label{tab:volume}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.0pt}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lrrrrrrr}
+\toprule
+\multirow{2}{*}{Geometry source} & \multicolumn{4}{c}{Volume $V$ [cm$^3$]} & \multirow{2}{*}{\shortstack{Total $V$\\APE [\%] $\downarrow$}} & \multirow{2}{*}{\shortstack{Part $V$\\MARE [\%] $\downarrow$}} & \multirow{2}{*}{\shortstack{Centroid\\Error [mm] $\downarrow$}} \\
+\cmidrule(lr){2-5}
+& Base & Support & Head & Total & & & \\
+\midrule
+Ground truth      & 273.0 & 84.5 & 64.1 & 421.6 & -- & -- & -- \\
+\midrule
+PUGS$^{\mathrm D}$              & 340.0 & 24.3 & 35.7 & 400.0 & 3.83 & 38.80 & 362.7 \\
+PhysX-Omni$^{\mathrm D}$        & 102.7 & 104.6 & 91.7 & 298.9 & 29.11 & 60.50 & 36.3 \\
+2DGS                        & \NA & \NA & \NA & 503.3 & 19.38 & \NA & \NA \\
+\textbf{\ours} & \textbf{272.8} & \textbf{87.6} & \textbf{66.4} & \textbf{426.7} & \textbf{1.22} & \textbf{2.42} & \textbf{5.86} \\
+\bottomrule
+\end{tabular}}
+\vspace{2pt}
+\parbox{\columnwidth}{\scriptsize\textit{$^{\mathrm D}$Derived from each method's frozen geometry and canonical-part mapping.}}
+\end{table}
