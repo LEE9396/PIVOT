@@ -635,3 +635,147 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ===========================================================================
+# 동적 여기(dynex) 용 실물 훅 — **미검증** (2026-09-11 추가, 장비 없이 작성)
+#
+# 세 가지가 필요하다.
+#   1) 궤적 스트리밍: rbpodo move_servo_j 를 5 ms 주기로 보내며 실행 관절각을 기록
+#   2) 렌치 스트리밍: AFT200 Modbus 를 100 Hz 로 계속 읽고 호스트 시각을 찍는다
+#   3) 시각 정렬 회귀: 관절각을 렌치 시각으로 보간하고 수치 미분해 회귀행렬을 만든다
+# 첫 실물 시험은 반드시 물체 없이, 작은 진폭부터, 비상정지를 손에 들고 한다.
+# ===========================================================================
+import collections
+import threading
+
+
+def _servo_j(backend, q_rad):
+    """RbpodoBackend 로 관절 서보 지령 하나. rbpodo 예제(move_servo_j.cpp) 의 인자:
+    t1=0.01, t2=0.1, gain=1.0, alpha=1.0, 5 ms 주기."""
+    backend._connect()
+    target = np.asarray(backend._from_rad(q_rad), dtype=float)
+    backend._cobot.move_servo_j(backend._rc, target, 0.01, 0.1, 1.0, 1.0)
+
+
+def _joint_state(backend):
+    backend._connect()
+    reply = backend._data.request_data(0.5)
+    if reply is None:
+        return None
+    return backend._to_rad(np.asarray(reply.sdata.jnt_ang[:N_ARM_JOINT], dtype=float))
+
+
+def rb5_stream(driver, q_fn, duration_s, dt=0.005):
+    """궤적 q_fn(t) -> (q, qd, qdd) 를 dt 주기로 서보 전송하며 (t_host, q_measured) 를 모은다.
+
+    지령이 아니라 **실행값**을 돌려주는 것이 핵심이다. 회귀행렬은 실행값으로 만든다.
+    """
+    import time as _time
+    backend = driver.backend
+    out = []
+    t0 = _time.monotonic()
+    k = 0
+    while True:
+        t = k * dt
+        if t > duration_s:
+            break
+        q_cmd = q_fn(t)[0]
+        _servo_j(backend, q_cmd)
+        q_meas = _joint_state(backend)
+        if q_meas is not None:
+            out.append((_time.monotonic() - t0, q_meas))
+        k += 1
+        _time.sleep(max(0.0, t0 + (k * dt) - _time.monotonic()))
+    return out
+
+
+class Aft200Stream:
+    """AFT200 을 배경 스레드에서 계속 읽는다. read_one() 은 최신값, drain() 은 누적 (t, raw)."""
+
+    def __init__(self, host, hz=100.0, meshpca_root="~/MeshPCA"):
+        import sys as _sys
+        from pathlib import Path as _Path
+        _sys.path.insert(0, str(_Path(meshpca_root).expanduser() / "pivot"))
+        from aft_tare import Aft200Sensor as _Raw
+        self._raw = _Raw(host, hz=hz)
+        self.hz = hz
+        self._buf = collections.deque(maxlen=int(hz * 600))
+        self._latest = None
+        self._t0 = None
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self):
+        import time as _time
+        self._t0 = _time.monotonic()
+        for sample in self._raw.stream():
+            t = _time.monotonic() - self._t0
+            self._latest = sample
+            self._buf.append((t, np.asarray(sample, dtype=float)))
+
+    def read_one(self):
+        import time as _time
+        while self._latest is None:
+            _time.sleep(0.01)
+        return np.asarray(self._latest, dtype=float)
+
+    def drain(self):
+        out = list(self._buf)
+        self._buf.clear()
+        return out
+
+    def now(self):
+        import time as _time
+        return _time.monotonic() - (self._t0 or _time.monotonic())
+
+
+def pose_file_reader(path, keys):
+    """FoundationPose latest.json 을 읽는 (pose_fn, stamp_fn). dual_view._pose_fn 과 같은 규약."""
+    import json as _json
+    from pathlib import Path as _Path
+    path = _Path(path).expanduser()
+    state = {"stamp": 0.0}
+
+    def read():
+        data = _json.loads(path.read_text())
+        state["stamp"] = float(data.get("timestamp_s", 0.0))
+        angles = np.array([float(data[k]) for k in keys])
+        sigma = np.array([float(data.get(f"{k}_sigma", 1.0)) for k in keys])
+        return angles, sigma
+
+    return read, (lambda: state["stamp"])
+
+
+def align_and_regress(session, d, joints, wrenches, theta, writer, t_clock):
+    """관절 샘플 [(t, q)] 을 렌치 시각 [(t, raw)] 에 맞춰 보간·미분하고 회귀행렬을 만든다.
+
+    두 시계는 모두 호스트 monotonic 이어야 한다 (rb5_stream, Aft200Stream 이 그렇게 찍는다).
+    수치 미분은 Savitzky–Golay (창 0.2 s). 지연 Δt 는 아는 추로 미리 식별해 --ft-delay 로 뺀다.
+    """
+    from scipy.signal import savgol_filter
+    from dynex.regressor import rigid_body_regressor
+    tj = np.array([t for t, _ in joints]); qj = np.vstack([q for _, q in joints])
+    tw = np.array([t for t, _ in wrenches]); w = np.vstack([r for _, r in wrenches])
+    keep = (tw >= tj[0]) & (tw <= tj[-1])
+    tw, w = tw[keep], w[keep]
+    q = np.column_stack([np.interp(tw, tj, qj[:, i]) for i in range(qj.shape[1])])
+    dt = np.median(np.diff(tw)) if tw.size > 1 else 0.01
+    win = max(5, int(round(0.2 / dt)) | 1)
+    qd = savgol_filter(q, win, 3, deriv=1, delta=dt, axis=0)
+    qdd = savgol_filter(q, win, 3, deriv=2, delta=dt, axis=0)
+    Yp, y = [], []
+    for k in range(tw.size):
+        kin = session.model.evaluate(q[k], qd[k], qdd[k], theta)
+        Y = rigid_body_regressor(kin["a_o"], kin["omega"], kin["alpha"], kin["g"])
+        Yp.append(Y @ d.Mstack)
+        y.append(w[k] - Y @ session.tool_est)
+        writer.writerow([t_clock + tw[k], *q[k], *w[k], *(w[k] - Y @ session.tool_est)])
+    return np.vstack(Yp), np.concatenate(y)
+
+
+class Rb5Driver(Rb5Driver):          # noqa: F811  — stream 메서드를 덧붙인다
+    def stream(self, q_fn, duration_s, dt=0.005):
+        if not getattr(self, "_servo_on", True):
+            raise SafetyViolation("서보가 꺼진 상태에서 궤적을 보내려 했다")
+        return rb5_stream(self, q_fn, duration_s, dt)

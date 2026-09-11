@@ -33,3 +33,16 @@ calibration/*.json
 
 # 실험 설정은 PC 마다 다르다 (example 만 올린다)
 setup/experiment.conf
+my_work/.cache_labels/
+
+# 편집 백업과 실행 중 생기는 세션·원본 trial (요약·CSV 만 올린다)
+*.bak
+*.bak?
+*.v1bak
+my_work/sessions/
+my_work/results/dynex_nlink/trial_*.json
+my_work/results/dynex_nlink/logs/
+my_work/results/dynex_nlink_test/
+my_work/results/dynex/*.log
+calibration/tool_dynamic*.json
+calibration/tool_dynamic*.csv

@@ -52,3 +52,15 @@ TARGET=0.05
 MAX_ROUNDS=8
 # 이동 하나에 쓰는 시간 [s]. 클수록 준정적.
 MOVE_DURATION=8
+
+# ---- 동적 여기 식별 (dynex) --------------------------------------------------
+# METHOD=dynamic 이면 pivot_ui 의 4단계가 dual_view 대신 dynex.session 을 부른다.
+METHOD=dynamic
+# F/T 기록 속도 프리셋: datasheet_100hz (Modbus 폴링 100 Hz 확인) / datasheet_50hz / datasheet_1khz
+SENSOR=datasheet_100hz
+# 힌지 유지토크 [N·m] — 반드시 토크 게이지 실측값. 안전계수 1.5 는 코드 안에 있다.
+HINGE_TORQUE=0.5
+# 툴(그리퍼+퍽 위쪽) 10개 파라미터 파일 — dynex.tool_id 로 물체 없이 먼저 만든다
+TOOL_FILE=~/Desktop/PIVOT/calibration/tool_dynamic.json
+# 조립된 물체 총질량 [kg] — 저울
+TOTAL_MASS_KG=0.343

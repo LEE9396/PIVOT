@@ -42,12 +42,13 @@ TOOLS = HERE.parent / "tools"
 class Conductor:
     """단계 기계. 창 1 이 이걸 돌린다."""
 
-    def __init__(self, conf_path, session, console=None, auto=False):
+    def __init__(self, conf_path, session, console=None, auto=False, sim=False):
         self.conf_path = Path(conf_path)
         self.conf = self._read_conf()
         self.session = session
         self.console = console
         self.auto = auto
+        self.sim = sim            # True 면 장비·캘리브레이션 없이 모의 장비로 끝까지
         self.round = 0
 
     # -- 설정 -------------------------------------------------------------
@@ -91,7 +92,11 @@ class Conductor:
                              "--conf", str(self.conf_path), "--json", str(out)])
         data = self.session.read("preflight.json", {})
         verdict = data.get("verdict", "FAIL")
-        if verdict == "FAIL" or result.returncode != 0:
+        failed = verdict == "FAIL" or result.returncode != 0
+        if failed and self.sim:
+            print("\n  [모의] 준비 점검 실패 항목이 있지만 모의 장비이므로 계속합니다.")
+            failed, verdict = False, "WARN"
+        if failed:
             print("\n  준비 점검에 **실패**가 있습니다. 고치기 전에는 못 갑니다.")
             print("  (고친 뒤 이 프로그램을 다시 실행하세요)")
             return False
@@ -106,8 +111,12 @@ class Conductor:
         self.bar()
         print("  창 1 에 물체만 띄웁니다. 파지 후보를 보고 창 3 으로 무세요.")
         print("  창 2 에도 같은 점이 겹쳐 보입니다.")
-        self.show_object_only()
+        if self.conf.get("OBJECT", "desklamp") == "desklamp":
+            self.show_object_only()
         self.ask("파지 완료 — 물체를 물렸고 손을 뗐습니다")
+        if self.sim:
+            print("  [모의] 파지 변환은 공칭값을 씁니다.")
+            return True
 
         print("\n  파지 변환을 **잽니다** (짐작하지 않습니다)")
         pose_file = self.conf.get("FP_OUTPUT", "")
@@ -189,10 +198,12 @@ class Conductor:
 
     # -- 4~5단계 ----------------------------------------------------------
     def phase_explore(self):
-        """탐색은 기존 dual_view 에 맡긴다. 세션을 환경변수로 물려준다."""
+        """탐색은 기존 dual_view(정적) 또는 dynex.session(동적) 에 맡긴다."""
         self.session.set_phase("explore", self.round)
         self.bar()
         env = dict(os.environ, PIVOT_SESSION=str(self.session.root))
+        if self.conf.get("METHOD", "static").lower() == "dynamic":
+            return self.phase_explore_dynamic(env)
         grasp = self.session.path("grasp.json")
         if grasp.is_file():
             env["PIVOT_GRASP_FILE"] = str(grasp)
@@ -220,9 +231,41 @@ class Conductor:
         print("  탐색을 시작합니다 (dual_view). 창 3·4 가 갱신됩니다.")
         return subprocess.run(command, env=env).returncode == 0
 
+    def phase_explore_dynamic(self, env):
+        """동적 여기 세션. 라운드 하나를 돌고 posterior_round_N.json 을 남긴다."""
+        conf = self.conf
+        hardware = "real" if conf.get("ROBOT_HOST") and not self.sim else "sim"
+        command = self.python() + ["-m", "dynex.session",
+                                   "--session", str(self.session.root),
+                                   "--round", str(self.round + 1), "--rounds", "1",
+                                   "--hardware", hardware,
+                                   "--object", conf.get("OBJECT", "3link"),
+                                   "--sensor", conf.get("SENSOR", "datasheet_100hz"),
+                                   "--hinge-torque", conf.get("HINGE_TORQUE", "0.5"),
+                                   "--grip-force", conf.get("GRIPPER_FORCE", "205"),
+                                   "--move-duration", conf.get("MOVE_DURATION", "8")]
+        if self.auto:
+            command.append("--auto")
+        if hardware == "real":
+            for flag, key in (("--tool-file", "TOOL_FILE"), ("--total-mass-kg", "TOTAL_MASS_KG"),
+                              ("--aft-host", "AFT_HOST"), ("--robot-host", "ROBOT_HOST")):
+                if conf.get(key):
+                    command += [flag, conf[key]]
+            if conf.get("FP_OUTPUT"):
+                command += ["--pose-file", str(Path(conf["FP_OUTPUT"]) / "latest.json")]
+        print("  동적 여기 탐색을 시작합니다 (dynex.session).")
+        return subprocess.run(command, env=env, cwd=str(HERE)).returncode == 0
+
     def phase_export(self):
         self.session.set_phase("export", self.round)
         self.bar()
+        if self.conf.get("METHOD", "static").lower() == "dynamic":
+            asset = self.session.path("export") / "asset_dynamic.json"
+            if asset.is_file():
+                print(f"  동적 식별 자산: {asset}")
+            else:
+                print("  [주의] asset_dynamic.json 이 없습니다 — 탐색이 한 라운드도 끝나지 않았습니다.")
+            return True
         target = self.session.path("export")
         command = self.python() + [str(HERE / "export_urdf.py"),
                                    "--output", str(target)]
@@ -249,9 +292,14 @@ class Conductor:
             if not self.ask("승인 — 로봇을 움직입니다"):
                 return 1
             self.phase_explore()
-            posterior = self.session.read(f"posterior_round_{self.round}.json")
+            posterior = (self.session.read(f"posterior_round_{self.round + 1}.json")
+                         if self.conf.get("METHOD", "static").lower() == "dynamic"
+                         else self.session.read(f"posterior_round_{self.round}.json"))
             done = bool(posterior and posterior.get("converged"))
-            if done or self.auto:
+            dynamic = self.conf.get("METHOD", "static").lower() == "dynamic"
+            # 정적 탐색기는 한 번 호출에 모든 라운드를 돌므로 자동 모드에서는 한 번이면 된다.
+            # 동적 세션은 라운드 하나씩 돌므로 수렴하거나 최대 라운드까지 계속한다.
+            if done or (self.auto and not dynamic):
                 break
             print("\n  불확실성이 목표 밖입니다. 각도를 다시 조정합니다.")
             self.round += 1
@@ -277,6 +325,8 @@ def main():
                     help="사람 확인을 건너뛴다 (리허설용)")
     ap.add_argument("--dry-run", action="store_true",
                     help="단계 기계만 돌려 본다 (Drake·장비 불필요)")
+    ap.add_argument("--sim", action="store_true",
+                    help="장비 없이 모의 장비로 끝까지 돈다 (준비 점검 실패는 주의로)")
     args = ap.parse_args()
 
     session = (Session(args.session) if args.session
@@ -299,7 +349,7 @@ def main():
         console = Console(StartMeshcat(), auto=args.auto)
     except Exception as exc:                                    # noqa: BLE001
         print(f"[주의] Meshcat 콘솔을 못 띄웁니다 ({exc}) — 터미널로 갑니다")
-    return Conductor(args.conf, session, console, args.auto).run()
+    return Conductor(args.conf, session, console, args.auto, sim=args.sim).run()
 
 
 if __name__ == "__main__":

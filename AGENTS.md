@@ -138,3 +138,10 @@ my_work/
 - `assets/desk_lamp_minimal_sim/` 안을 고치기 (협업자가 준 스캔 배달물입니다)
 - `third_party/` 안의 자산을 다른 곳에 퍼 나르기 — 원저작자 것이고 일부는
   재배포 라이선스가 확인되지 않았습니다 (`third_party/HTD/THIRD_PARTY_ASSETS.md`).
+
+
+## 동적 여기 식별 (2026-09-11)
+
+`my_work/dynex/` 가 새 탐색 방법이다. `METHOD=dynamic` 이면 `pivot_ui.py` 4단계가 `dynex.session` 을 부른다.
+실물 순서와 프롬프트는 `TEAMMATE_DYNAMIC.md`, 수식·검증·힌지 처리는 `my_work/dynex/README.md`,
+실물에서 직접 재야 하는 값은 `my_work/dynex/GIVENS_AND_RISKS.md`. 실물 스트리밍 훅(`hardware_real.py` 끝)은 미검증.

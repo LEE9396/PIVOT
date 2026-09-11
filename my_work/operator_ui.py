@@ -71,7 +71,13 @@ class Console:
         self._sliders = []
 
     # --- 표시등 -------------------------------------------------------
+    _NAMED = {"blue": (0.15, 0.45, 0.85), "green": (0.10, 0.62, 0.30),
+              "red": (0.80, 0.13, 0.10), "orange": (0.85, 0.55, 0.05), "grey": (0.45, 0.45, 0.45)}
+
     def lamp(self, color, label):
+        # pivot_ui 는 색 이름 문자열을 넘긴다. Meshcat 은 Rgba 만 받으므로 여기서 바꾼다.
+        if isinstance(color, str):
+            color = Rgba(*self._NAMED.get(color, self._NAMED["grey"]), 1.0)
         self.meshcat.SetObject(STATUS_PATH, Box(0.6, 0.02, 0.22), color)
         self.meshcat.SetTransform(
             STATUS_PATH, RigidTransform([0.55, 0.42, 0.75]))
