@@ -241,9 +241,10 @@ class Conductor:
                                    "--hardware", hardware,
                                    "--object", conf.get("OBJECT", "3link"),
                                    "--sensor", conf.get("SENSOR", "datasheet_100hz"),
-                                   "--hinge-torque", conf.get("HINGE_TORQUE", "0.5"),
                                    "--grip-force", conf.get("GRIPPER_FORCE", "205"),
                                    "--move-duration", conf.get("MOVE_DURATION", "8")]
+        if conf.get("HINGE_TORQUE"):
+            command += ["--hinge-torque", conf["HINGE_TORQUE"]]     # 없으면 '버틴 만큼만' 자동 모드
         if self.auto:
             command.append("--auto")
         if hardware == "real":

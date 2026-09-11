@@ -131,7 +131,7 @@ class DynexSession:
         self.limits = Limits(workspace_lower=rs.WORKSPACE_LOWER_M - 0.05,
                              workspace_upper=rs.WORKSPACE_UPPER_M + 0.05,
                              min_distance_m=self.model.min_distance_m,
-                             hinge_budget_nm=np.full(len(self.spec.joints), args.hinge_torque / args.safety),
+                             hinge_budget_nm=np.full(len(self.spec.joints), 1e-3),   # 라운드마다 _budget() 이 정한다
                              robust_k=args.robust_k, grasp_force_cap_n=f_cap, grasp_torque_cap_nm=t_cap)
         self.opts = dict(period=args.period, harmonics=args.harmonics, samples=args.samples,
                          starts=args.starts, steps=args.steps, top=args.top, poses=1,
@@ -238,6 +238,8 @@ class DynexSession:
             d = np.load(path)
             self.est = GaussianEstimate(d["mean"], d["cov"], int(d["n_bias"]))
             self.round_done = int(d["round"])
+            self.certified = d["certified"] if "certified" in d else np.zeros(len(self.spec.joints))
+            self.cap = d["cap"] if "cap" in d else np.full(len(self.spec.joints), np.inf)
             print(f"  사후분포 이어받음: 라운드 {self.round_done} 까지")
         else:
             bf, bt = self.args.bias_sigma
@@ -246,13 +248,47 @@ class DynexSession:
                                        bias_sigma=(bf, bf, bf, bt, bt, bt))
             self.est = apply_total_mass(self.est, self.total_mass, 0.002)
             self.round_done = 0
+            self.certified = np.zeros(len(self.spec.joints))      # 버틴 것으로 확인된 최대 힌지 토크
+            self.cap = np.full(len(self.spec.joints), np.inf)     # 미끄러진 토크 (상한)
+        self._budget()
 
     def _save_state(self, r):
         np.savez(self.session.path("dynex_state.npz"), mean=self.est.mean, cov=self.est.cov,
-                 n_bias=self.est.n_bias, round=r)
+                 n_bias=self.est.n_bias, round=r, certified=self.certified, cap=self.cap)
+
+    def _budget(self):
+        """이번 라운드에 허용할 힌지 축 토크 예산 (관절별).
+
+        자동 모드: 이미 버틴 최대값 × growth, 최소 floor. 미끄러진 적이 있으면 그 값 × 0.8 아래.
+        토크 게이지 값이 있으면 그 값/안전계수를 넘지 않는다.
+        """
+        a = self.args
+        if a.hinge_torque is not None:
+            # 토크 게이지 값이 있으면 그 값/안전계수를 바로 믿는다 (미끄러지면 상한만 내린다)
+            b = np.full(len(self.spec.joints), a.hinge_torque / a.safety)
+        else:
+            b = np.maximum(self.certified, a.hinge_floor_nm) * a.hinge_growth   # 버틴 값(최소 floor)의 growth 배
+        b = np.minimum(b, self.cap * 0.8)
+        self.limits.hinge_budget_nm = b
+        return b
+
+    def _slipped(self, theta_ref):
+        """궤적·자세 뒤 카메라 각도가 허용치보다 움직였으면 관절별 True."""
+        theta_after, sigma = self.read_theta()
+        drift = np.degrees(np.abs(theta_after - theta_ref))
+        # 두 판독 모두 잡음이 섞이므로 허용치는 카메라 잡음의 3배 이상이어야 한다
+        tol = np.maximum(self.args.slip_tol_deg, 3.0 * np.degrees(sigma) * np.sqrt(2.0))
+        return drift > tol, theta_after
+
+    def _sim_slip(self, peak_true):
+        """모의: 참 유지토크를 넘긴 관절을 몇 도 밀어 미끄러짐을 흉내낸다."""
+        for i, tau in enumerate(np.atleast_1d(peak_true)):
+            if tau > self.args.sim_hinge_torque:
+                self.theta_true[i] += np.deg2rad(self.args.slip_drift_deg) * self.rng.choice([-1.0, 1.0])
 
     # -- 한 라운드 ------------------------------------------------------------
     def recommend(self):
+        self._budget()                      # 형상 선택도 지금 예산 안에서
         ranked = rank_candidates(self.model, self.checker, self._subset(), self.est, self.noise,
                                  self.limits, self.opts, self.rng, verbose=True)
         if not ranked:
@@ -301,7 +337,8 @@ class DynexSession:
         else:
             pick = self.recommend()
             if pick is None:
-                print("  실현 가능한 형상이 없습니다 — 라운드 중단")
+                print(f"  실현 가능한 형상이 없습니다 (힌지 예산 {np.round(self._budget(), 3)} N·m) —"
+                      f" 힌지가 최소 예산도 못 버티거나 도달 가능한 자세가 없습니다. 라운드 중단")
                 return False
             theta_cmd = pick[0]
             rec["recommended_deg"] = np.degrees(theta_cmd).tolist()
@@ -326,16 +363,52 @@ class DynexSession:
         writer = csv.writer(fh)
         writer.writerow(["t"] + [f"q{i}" for i in range(6)] + [f"raw{i}" for i in range(6)] + [f"obj{i}" for i in range(6)])
         t_clock = 0.0
-        # 정적 3방향 먼저 (사후분포를 좁혀야 힌지 예산의 보수적 경계가 풀린다)
+        # 정적 3방향 먼저 (사후분포를 좁혀야 힌지 예산의 보수적 경계가 풀린다).
+        # 예산 안의 자세만, 예측 토크가 작은 것부터. 자세마다 카메라로 버텼는지 확인한다.
         self.session.set_phase("explore", r)
-        for k, q in enumerate(poses):
-            self.lamp("moving", f"정적 자세 {k + 1}/{len(poses)} 로 이동")
+        budget = self._budget()
+        print(f"  힌지 예산 {np.round(budget, 3)} N·m (인증 {np.round(self.certified, 3)},"
+              f" 상한 {np.round(self.cap, 3)})")
+        predicted = []
+        for q in poses:
+            d0 = ExcitationDesigner(self.model, theta, q, self.est, self.noise, self.limits,
+                                    period_s=a.hold_s, n_harmonics=2, n_samples=4)
+            ev0 = d0.evaluate(np.zeros(d0.n_free), times=np.array([0.0]))
+            predicted.append((ev0["hinge_bound"][0], np.abs(ev0["hinge_mean"][0]), q))
+        predicted.sort(key=lambda t: t[0].max())
+        used_poses = []
+        for k, (bound, mean_t, q) in enumerate(predicted):
+            if (bound > budget).any():
+                print(f"  정적 자세 {k + 1}: 예측 힌지 토크 {np.round(bound, 3)} 가 예산 밖 — 건너뜀")
+                continue
+            self.lamp("moving", f"정적 자세 {k + 1}/{len(predicted)} 로 이동")
             self.arm.move_to(q, a.move_duration)
             self.show(q, theta if a.hardware == "real" else self.theta_true)
             time.sleep(a.settle_s if a.hardware == "real" else 0.0)
+            if a.hardware == "sim":
+                Mt = np.hstack(self.model.part_transports(self.theta_true))
+                kin0 = self.model.evaluate(q, np.zeros(6), np.zeros(6), self.theta_true)
+                Y0 = rigid_body_regressor(kin0["a_o"], kin0["omega"], kin0["alpha"], kin0["g"])
+                from .regressor import hinge_axis_row
+                peak_true = np.array([abs((hinge_axis_row(Y0, rh, ah) @ Mt * mask) @ np.concatenate(self.phis_true))
+                                      for (rh, ah), mask in zip(self.model.hinge_geometry(self.theta_true), d0.down_mask)])
+                self._sim_slip(peak_true)
             Yp, y, n = self.hold_and_sample(q, theta, a.hold_s, writer, t_clock)
             t_clock += n / self.sensor.rate_hz
+            slipped, theta_after = self._slipped(theta)
+            if slipped.any():
+                # 미끄러진 토크는 '시도한 예산' 이하라는 것만 안다 (예측 평균이 0 에 가까워도)
+                self.cap = np.where(slipped, np.minimum(self.cap, np.maximum(mean_t, budget)), self.cap)
+                print(f"  [주의] 정적 자세 {k + 1} 에서 관절 {np.where(slipped)[0] + 1} 이 움직였습니다"
+                      f" (예측 토크 {np.round(mean_t, 3)}) — 이 자세 데이터는 버리고 상한을 내립니다")
+                theta = theta_after                      # 각도가 바뀌었으니 이후는 새 각도로
+                budget = self._budget()
+                continue
+            self.certified = np.maximum(self.certified, mean_t)
             self.est = update(self.est, Yp, y, np.tile(self.noise.r_diag6, n))
+            used_poses.append(q)
+        poses = used_poses or poses[:1]
+        budget = self._budget()
         # 여기 궤적 설계 (좁아진 사후분포로)
         pick = design_at(self.model, theta, poses, self.est, self.noise, self.limits, self.opts,
                          self.rng, verbose=True)
@@ -371,6 +444,11 @@ class DynexSession:
             if a.hardware == "sim":
                 samples = self.arm.stream(lambda t: tuple(v[0] for v in d.traj.evaluate(x, [t])), d.traj.T, dt)
                 Yp, y = [], []
+                from .regressor import hinge_axis_row
+                Mt = np.hstack(self.model.part_transports(self.theta_true))
+                hinges_t = self.model.hinge_geometry(self.theta_true)
+                Phi_t = np.concatenate(self.phis_true)
+                peak_true = np.zeros(len(hinges_t))
                 for t, q in samples:
                     q_, qd_, qdd_ = (v[0] for v in d.traj.evaluate(x, [t]))
                     raw = self.wrench.read_at(q_, qd_, qdd_)
@@ -379,18 +457,24 @@ class DynexSession:
                     Yp.append(Y @ d.Mstack)
                     y.append(raw - Y @ self.tool_est)
                     writer.writerow([t_clock + t, *q_, *raw, *(raw - Y @ self.tool_est)])
+                    for i, ((rh, ah), mask) in enumerate(zip(hinges_t, d.down_mask)):
+                        peak_true[i] = max(peak_true[i], abs((hinge_axis_row(Y, rh, ah) @ Mt * mask) @ Phi_t))
                 Yp, y = np.vstack(Yp), np.concatenate(y)
+                self._sim_slip(peak_true)
             else:
                 Yp, y = self._execute_real(d, x, theta, writer, t_clock)
             t_clock += d.traj.T
-            self.est = update(self.est, Yp, y, np.tile(self.noise.r_diag6, Yp.shape[0] // 6))
             self.lamp("stopped", "여기 궤적 종료")
-            # 미끄러짐 검사
-            theta_after, _ = self.read_theta()
-            drift = np.degrees(np.abs(theta_after - theta))
-            if (drift > a.slip_tol_deg).any():
-                print(f"  [주의] 궤적 뒤 관절각이 {np.round(drift, 1)} deg 움직였습니다 — 힌지 미끄러짐 의심,"
-                      f" 예산을 줄이세요 (--hinge-torque)")
+            slipped, theta_after = self._slipped(theta)
+            peak_mean = np.abs(ver["ev"]["hinge_mean"]).max(axis=0)
+            if slipped.any():
+                self.cap = np.where(slipped, np.minimum(self.cap, np.maximum(peak_mean, budget)), self.cap)
+                print(f"  [주의] 궤적 뒤 관절 {np.where(slipped)[0] + 1} 이 움직였습니다 — 데이터를 버리고"
+                      f" 힌지 상한을 {np.round(self.cap, 3)} N·m 로 내립니다")
+                ver = dict(ver, ig=0.0, slipped=True)
+            else:
+                self.certified = np.maximum(self.certified, peak_mean)
+                self.est = update(self.est, Yp, y, np.tile(self.noise.r_diag6, Yp.shape[0] // 6))
         fh.close()
         self.est, projected = project_physical(self.est)
 
@@ -411,7 +495,10 @@ class DynexSession:
                                                for kk, vv in part_errors(mu, self.phis_true[k]).items()}
         rec_post = dict(round=r, theta_deg=np.degrees(theta).tolist(), parts=parts, base=base,
                         converged=converged, projected=projected, ig=ver["ig"],
-                        hinge_peak_ratio=ver["hinge_peak_ratio"], seconds=time.time() - t0)
+                        hinge_peak_ratio=ver["hinge_peak_ratio"], slipped=bool(ver.get("slipped", False)),
+                        hinge_budget_nm=np.asarray(budget).tolist(), hinge_certified_nm=self.certified.tolist(),
+                        hinge_cap_nm=[None if not np.isfinite(c) else float(c) for c in self.cap],
+                        seconds=time.time() - t0)
         self.session.write(f"posterior_round_{r}.json", rec_post)
         self._save_state(r)
         # 다음 라운드 추천 각도
@@ -420,7 +507,7 @@ class DynexSession:
             if pick is not None:
                 self.session.write(f"angle_round_{r + 1}.json", dict(recommended_deg=np.degrees(pick[0]).tolist()))
         print(f"[round {r}] σ(정적조합) {100 * base['static_sd_med']:.2f}%  σ(관성조합) {100 * base['dyn_sd_med']:.0f}%"
-              f"  {'수렴' if converged else '계속'}  {time.time() - t0:.0f}s")
+              f"  힌지 인증 {np.round(self.certified, 3)} N·m  {'수렴' if converged else '계속'}  {time.time() - t0:.0f}s")
         for p in parts:
             e = p.get("error_vs_truth")
             extra = f"  오차: 질량 {e['mass_pct']:.1f}% 무게중심 {e['com_mm']:.1f} mm 관성 {e['inertia_pct']:.0f}%" if e else ""
@@ -483,7 +570,15 @@ def main():
     ap.add_argument("--rounds", type=int, default=1, help="이어서 돌 라운드 수")
     ap.add_argument("--auto", action="store_true")
     ap.add_argument("--no-meshcat", action="store_true")
-    ap.add_argument("--hinge-torque", type=float, default=0.5)
+    ap.add_argument("--hinge-torque", type=float, default=None,
+                    help="힌지 유지토크 [N·m] (토크 게이지). 없으면 '버틴 만큼만' 자동 모드")
+    ap.add_argument("--hinge-growth", type=float, default=1.5,
+                    help="자동 모드: 이미 버틴 최대 토크의 몇 배까지 다음 라운드에 시도하나")
+    ap.add_argument("--hinge-floor-nm", type=float, default=0.05,
+                    help="자동 모드: 아무것도 버틴 적 없을 때 허용하는 최소 예산")
+    ap.add_argument("--sim-hinge-torque", type=float, default=0.5,
+                    help="모의 장비의 참 유지토크. 넘으면 관절이 미끄러진 것으로 흉내낸다")
+    ap.add_argument("--slip-drift-deg", type=float, default=10.0)
     ap.add_argument("--safety", type=float, default=1.5)
     ap.add_argument("--robust-k", type=float, default=2.0)
     ap.add_argument("--grip-force", type=float, default=205.0)

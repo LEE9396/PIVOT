@@ -16,7 +16,7 @@
 2. 센서 100 Hz 확인       Aft200Stream 으로 60 초 정지 기록 → 잡음·분해능·드리프트
 3. 툴 식별 ★             물체 없이, 실험 벌림량으로  → calibration/tool_dynamic.json
 4. 아는 강체 검사 ★       질량·무게중심을 아는 덩어리 → 질량 2 %, 무게중심 2 mm 안
-5. 힌지 유지토크 실측     토크 게이지 → experiment.conf HINGE_TORQUE
+5. (선택) 힌지 유지토크   토크 게이지가 있으면 HINGE_TORQUE 로. 없으면 자동 모드가 버틴 만큼만 시도한다
 6. 3링크 실험            pivot_ui.py (METHOD=dynamic), 라운드 4개, 세션 폴더 통째로 공유
 ```
 
@@ -72,13 +72,16 @@ Drake 1.54 고정.
   통과 기준: 질량 2 % 안, 무게중심 2 mm 안. 틀리면 토크 기준점(AFT200 퍽 중심 가정)이나
   시각 지연을 의심 — 이것이 3링크보다 먼저 잡아야 할 오차다.
 
-━━ 5. 힌지 유지토크 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  토크 게이지로 두 힌지의 미끄러지기 시작하는 토크를 잰다. 없으면 정적 자세에서
-  버틴 최대 토크가 하한이다. experiment.conf 에 HINGE_TORQUE=<N·m> 로 넣는다.
+━━ 5. 힌지 유지토크 (선택) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  토크 게이지가 있으면 두 힌지의 미끄러지기 시작하는 토크를 재서 experiment.conf 에
+  HINGE_TORQUE=<N·m> 로 넣는다 (상한으로만 쓰인다). 없으면 비워 둔다: 세션이 "이미 버틴
+  최대 토크"를 인증값으로 기억하고 그 1.25 배까지만 다음 자세·궤적을 시도한다. 첫 라운드는
+  0.05 N·m 부터라 느리고, 카메라로 각도가 2° 이상 움직인 것이 보이면 그 데이터를 버리고
+  상한을 내린다. 그래서 물체가 떨어지거나 관절이 크게 돌아가는 일은 없다.
 
 ━━ 6. 3링크 실험 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   setup/experiment.conf: OBJECT=3link GRASP_PART=link0_base METHOD=dynamic SENSOR=datasheet_100hz
-    HINGE_TORQUE=<실측> TOOL_FILE=calibration/tool_dynamic.json TOTAL_MASS_KG=<저울 kg>
+    HINGE_TORQUE=<있으면> TOOL_FILE=calibration/tool_dynamic.json TOTAL_MASS_KG=<저울 kg>
     MAX_ROUNDS=4 GRIPPER_FORCE=205 + 기존 ROBOT_HOST/AFT_HOST/FP_OUTPUT
   창 2(FoundationPose)는 3링크 메시로 latest.json 에 joint1/joint2 각도를 내야 한다.
   $R python pivot_ui.py --conf ../setup/experiment.conf
