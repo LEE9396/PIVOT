@@ -23,10 +23,12 @@ grasp_rotation, 볼록 조각 정점평균 같은 짐작이 전부 필요 없어
 """
 
 import argparse
+import fcntl
 import os
 import subprocess
 import sys
 import time
+import webbrowser
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -36,19 +38,43 @@ sys.path.insert(0, str(HERE.parent / "tools"))
 from pivot_session import PHASES, Session, describe          # noqa: E402
 
 TOOLS = HERE.parent / "tools"
+INSTANCE_LOCK = Path("/tmp/pivot_ui.lock")
+
+
+def acquire_instance_lock():
+    """통합 UI가 두 세션을 동시에 조종하지 못하게 막는다."""
+    lock = INSTANCE_LOCK.open("a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close()
+        return None
+    lock.seek(0)
+    lock.truncate()
+    lock.write(f"{os.getpid()}\n")
+    lock.flush()
+    return lock
 
 
 # ---------------------------------------------------------------------------
 class Conductor:
     """단계 기계. 창 1 이 이걸 돌린다."""
 
-    def __init__(self, conf_path, session, console=None, auto=False, sim=False):
+    def __init__(self, conf_path, session, console=None, auto=False, sim=False,
+                 dashboard=None, rehearse=False):
         self.conf_path = Path(conf_path)
         self.conf = self._read_conf()
         self.session = session
         self.console = console
+        self.dashboard = dashboard
         self.auto = auto
         self.sim = sim            # True 면 장비·캘리브레이션 없이 모의 장비로 끝까지
+        # 리허설: 장비·추적기 없이 **같은 단계 기계**를 끝까지 밟는다.
+        #   - 0단계: preflight 를 돌리되 FAIL 에 멈추지 않는다 (목록만 보여 준다)
+        #   - 1단계: FoundationPose 로 파지를 재는 대신 자산의 짐작 파지로 간다
+        #   - 4단계: dual_view 는 conf 의 ROBOT_HOST 가 비어 있으면 --hardware sim
+        # 실물 세션과 다른 길은 위 둘뿐이고, 화면(창 1·대시보드)은 같다.
+        self.rehearse = bool(rehearse)
         self.round = 0
 
     # -- 설정 -------------------------------------------------------------
@@ -67,43 +93,93 @@ class Conductor:
     def bar(self):
         line = describe(self.session)
         print(f"\n{'=' * 78}\n{line}\n{'=' * 78}")
+        if self.dashboard is not None:
+            self.dashboard.set_status(line)
         if self.console is not None:
-            self.console.lamp("blue", line)
+            from pydrake.geometry import Rgba
+            self.console.lamp(Rgba(0.10, 0.37, 0.72, 1.0), line)
 
     def ask(self, label):
         """사람이 누를 때까지 기다린다. 콘솔이 없으면 터미널로."""
         if self.auto:
             print(f"  [자동] {label}")
             return True
+        if self.dashboard is not None:
+            self.dashboard.prompt(label)
         if self.console is None:
-            input(f"  >>> {label} — Enter")
+            if self.dashboard is None:
+                input(f"  >>> {label} — Enter")
+            else:
+                while not self.dashboard.consume(label):
+                    time.sleep(0.05)
+                self.dashboard.clear_prompt()
             return True
+        self.console.clear()
         name = self.console.button(label)
-        self.console.wait_for(name)
+        start = self.console.meshcat.GetButtonClicks(name)
+        while self.console.meshcat.GetButtonClicks(name) == start:
+            if self.dashboard is not None and self.dashboard.consume(label):
+                break
+            time.sleep(0.05)
+        if self.dashboard is not None:
+            self.dashboard.clear_prompt()
         return True
 
     # -- 0단계 ------------------------------------------------------------
+    def wait_for_tracker(self, timeout_s=180):
+        output = self.conf.get("FP_OUTPUT")
+        if not output:
+            return True
+        latest = Path(output).expanduser() / "latest.json"
+        print(f"  FoundationPose 첫 각도를 기다립니다: {latest}")
+        if self.dashboard is not None:
+            self.dashboard.set_status("[0 준비] 카메라 마스크와 FoundationPose 대기")
+        if self.console is not None:
+            from pydrake.geometry import Rgba
+            self.console.lamp(
+                Rgba(0.10, 0.37, 0.72, 1.0),
+                "[0 준비] 카메라 마스크와 FoundationPose 대기")
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if latest.is_file() and time.time() - latest.stat().st_mtime <= 2.0:
+                if self.dashboard is not None:
+                    self.dashboard.set_status("[0 준비] FoundationPose 연결됨")
+                return True
+            time.sleep(0.5)
+        print("  [실패] FoundationPose가 180초 안에 새 각도를 내지 않았습니다.")
+        return False
+
     def phase_preflight(self):
         self.session.set_phase("preflight")
         self.bar()
-        out = self.session.path("preflight.json")
-        result = subprocess.run(
-            self.python() + [str(TOOLS / "preflight.py"),
-                             "--conf", str(self.conf_path), "--json", str(out)])
-        data = self.session.read("preflight.json", {})
-        verdict = data.get("verdict", "FAIL")
-        failed = verdict == "FAIL" or result.returncode != 0
-        if failed and self.sim:
-            print("\n  [모의] 준비 점검 실패 항목이 있지만 모의 장비이므로 계속합니다.")
-            failed, verdict = False, "WARN"
-        if failed:
+        self.show_object_only()  # 재마스킹 중에도 창 1에서 부위 이름을 대조한다.
+        while True:
+            tracker_ready = self.wait_for_tracker()
+            out = self.session.path("preflight.json")
+            result = subprocess.run(
+                self.python() + [str(TOOLS / "preflight.py"),
+                                 "--conf", str(self.conf_path),
+                                 "--json", str(out)])
+            data = self.session.read("preflight.json", {})
+            verdict = data.get("verdict", "FAIL")
+            if self.rehearse or self.sim:
+                failed = [r["name"] for r in data.get("rows", []) if r.get("level") == "FAIL"]
+                print("\n  [리허설] 준비 점검 결과를 보기만 하고 넘어갑니다."
+                      + (f" 실물이라면 막혔을 항목: {', '.join(failed)}" if failed else ""))
+                if self.dashboard is not None:
+                    self.dashboard.set_status("[0 준비] 리허설 — 장비 없이 진행")
+                return True
+            if tracker_ready and verdict != "FAIL" and result.returncode == 0:
+                if verdict == "WARN":
+                    print("\n  주의 항목이 있습니다. 결과가 조용히 나빠질 수 있습니다.")
+                    self.ask("주의를 알고도 계속한다")
+                return True
             print("\n  준비 점검에 **실패**가 있습니다. 고치기 전에는 못 갑니다.")
-            print("  (고친 뒤 이 프로그램을 다시 실행하세요)")
-            return False
-        if verdict == "WARN":
-            print("\n  주의 항목이 있습니다. 결과가 조용히 나빠질 수 있습니다.")
-            self.ask("주의를 알고도 계속한다")
-        return True
+            if self.dashboard is not None:
+                self.dashboard.set_status("[0 준비] 실패 항목을 고친 뒤 다시 점검하세요")
+            if self.auto:
+                return False
+            self.ask("준비 점검 다시 실행")
 
     # -- 1단계 ------------------------------------------------------------
     def phase_grasp(self):
@@ -118,21 +194,67 @@ class Conductor:
             print("  [모의] 파지 변환은 공칭값을 씁니다.")
             return True
 
+        if self.rehearse:
+            print("\n  [리허설] 카메라가 없어 파지 변환을 재지 않습니다 —"
+                  " 자산에 적힌 짐작 파지로 갑니다 (3단계에 [주의]로 표시됩니다).")
+            return True
         print("\n  파지 변환을 **잽니다** (짐작하지 않습니다)")
         pose_file = self.conf.get("FP_OUTPUT", "")
         command = self.python() + [
             str(TOOLS / "grasp_measure.py"),
             "--pose-file", str(Path(pose_file) / "latest.json"),
             "--session", str(self.session.root),
-            "--part", self.conf.get("FP_GRASP_PART", "support")]
+            "--part", self.conf.get("FP_GRASP_PART", "support"),
+            "--grasp-target", str(HERE / "outputs" /
+                                  f"grasp_target_{self.conf.get('OBJECT', 'desklamp')}.json")]
         host = self.conf.get("ROBOT_HOST")
         if host:
             command += ["--robot-host", host]
         if subprocess.run(command).returncode != 0:
             print("  [실패] 파지 변환을 못 쟀습니다.")
             print("  창 2 가 각도를 내고 있는지, 핸드아이가 있는지 보세요.")
-            print("  그냥 진행하면 예전처럼 **짐작한 파지**로 돕니다.")
-            return self.ask("짐작한 파지로 계속한다 (권장하지 않음)")
+            print("  실측 파지 없이는 자세·충돌 계산이 실제 물체 배치와 다르므로"
+                  " 진행하지 않습니다.")
+            return False
+        return self.grasp_frame_check()
+
+    GRASP_ROTATION_MAX_DEG = 30.0
+
+    def grasp_frame_check(self):
+        """잰 파지로 두 가상환경의 좌표계 규약이 같은지 바로 검사한다.
+
+        회전 차이가 수십 도면 사람의 파지 오차가 아니라 카메라 메시와 밀도
+        모델 메시의 좌표계가 다른 것이다. 그 상태로 measured 프레임을 켜면
+        173.9 mm 가 다른 숫자로 돌아온다. 예전에는 사람이 파지 뒤에
+        tools/check_grasp_frames.py 를 손으로 돌려야 했다.
+        """
+        grasp = self.session.path("grasp.json")
+        if not grasp.is_file():
+            return True
+        print("\n  파지 좌표계 검사 (tools/check_grasp_frames.py)")
+        result = subprocess.run(
+            self.python() + [str(TOOLS / "check_grasp_frames.py"),
+                             "--object", self.conf.get("OBJECT", "desklamp"),
+                             "--grasp", str(grasp)],
+            capture_output=True, text=True)
+        text = (result.stdout or "") + (result.stderr or "")
+        for line in text.splitlines():
+            if "회전 차이" in line or "두 점 사이 거리" in line or "위치 차이" in line:
+                print("  " + line.strip())
+        import re
+        m = re.search(r"회전 차이\s+([0-9.]+)\s*deg", text)
+        if m is None:
+            print("  [주의] 회전 차이를 못 읽었습니다 — 검사 출력을 확인하세요")
+            return self.ask("좌표계 검사를 못 했지만 계속한다")
+        rot = float(m.group(1))
+        if rot > self.GRASP_ROTATION_MAX_DEG:
+            print(f"  [중단] 회전 차이 {rot:.1f}° > {self.GRASP_ROTATION_MAX_DEG:.0f}° —"
+                  " 카메라 메시와 밀도 모델 메시의 좌표계가 다릅니다."
+                  " conf 의 LAMP_ASSET_DIR / FP_MESH_DIR 가 같은 트리인지 보세요.")
+            if self.dashboard is not None:
+                self.dashboard.set_status(f"[1 파지점] 좌표계 불일치 {rot:.0f}° — 메시 설정을 확인하세요")
+            return False
+        print(f"  OK  회전 차이 {rot:.2f}° (허용 {self.GRASP_ROTATION_MAX_DEG:.0f}°)")
         return True
 
     def show_object_only(self):
@@ -140,22 +262,81 @@ class Conductor:
         try:
             import numpy as np
             from pydrake.geometry import Mesh, Rgba, Sphere, StartMeshcat
-            from pydrake.math import RigidTransform
+            from pydrake.math import RigidTransform, RotationMatrix
+            from pydrake.perception import BaseField, Fields, PointCloud
             import desk_lamp
+            import density_id_objects as density_obj
+            from make_part_legend import read_ply_cloud
         except Exception as exc:                                # noqa: BLE001
             print(f"  [주의] 물체 뷰를 못 띄웁니다: {exc}")
             return None
         spec = desk_lamp.build_spec()
-        meshcat = self.object_meshcat = StartMeshcat()
-        for index, part in enumerate(spec.parts):
-            path = f"object/{part.name}"
+        self.object_spec = spec
+        meshcat = (self.console.meshcat if self.console is not None
+                   else StartMeshcat())
+        self.object_meshcat = meshcat
+        label_colors = {
+            "base": (20 / 255, 100 / 255, 1.0, 1.0),
+            "support": (40 / 255, 210 / 255, 40 / 255, 1.0),
+            "head": (240 / 255, 40 / 255, 30 / 255, 1.0),
+        }
+        plant, bodies = density_obj.build_plant(
+            spec, np.ones(len(density_obj.body_table(spec))))
+        context = plant.CreateDefaultContext()
+        latest = Path(self.conf.get("FP_OUTPUT", "")) / "latest.json"
+        pose = self.session.read(latest, {}) if latest.is_file() else {}
+        from dual_view import observed_to_model_deg
+        theta = np.deg2rad(observed_to_model_deg(
+            "desklamp", [pose.get("base_support_deg", 0.0),
+                         pose.get("support_head_deg", 0.0)]))
+        if theta.size == plant.num_positions():
+            plant.SetPositions(context, theta)
+        upright = RigidTransform(RotationMatrix(desk_lamp.DISPLAY_ROTATION))
+        poses = {part.name: upright @ plant.EvalBodyPoseInWorld(context, bodies[part.name])
+                 for part in spec.parts}
+        origins = np.array([body_pose.translation() for body_pose in poses.values()])
+        extents = np.array([np.asarray(part.bbox_mm) * 1e-3 for part in spec.parts])
+        center = 0.5 * (origins.min(axis=0) + origins.max(axis=0))
+        size = float(np.max(origins.max(axis=0) - origins.min(axis=0)
+                            + extents.max(axis=0)))
+        separation = 1.35 * size
+        mesh_shift = RigidTransform([-0.5 * separation, 0.0, 0.0])
+        gaussian_shift = RigidTransform([0.5 * separation, 0.0, 0.0])
+        meshcat.Delete("object")
+        meshcat.Delete("grasp")
+        for part in spec.parts:
+            path = f"object/urdf/{part.name}"
             offset = RigidTransform(np.array(part.mesh_offset_m))
             if part.visual_mesh:
                 meshcat.SetObject(path, Mesh(str(part.visual_mesh), 1.0),
-                                  Rgba(*part.color))
-                meshcat.SetTransform(path, offset)
-        # 파지 후보 — 볼록 조각 중심들. 사람이 보고 고른다.
-        root = spec.parts[0]
+                                  Rgba(*label_colors[desk_lamp.FINAL_PART[part.name]]))
+                meshcat.SetTransform(path, mesh_shift @ poses[part.name] @ offset)
+
+        gaussian_dir = Path(self.conf.get("GAUSSIAN_DIR", "")).expanduser()
+        gaussian_files = dict(item.split("=", 1) for item in
+                              self.conf.get("GAUSSIAN_FILES", "").split(",")
+                              if "=" in item)
+        for part in spec.parts:
+            semantic = desk_lamp.FINAL_PART[part.name]
+            source = gaussian_dir / gaussian_files.get(semantic, "")
+            if not source.is_file():
+                continue
+            points, colors = read_ply_cloud(source, limit=20000)
+            cloud = PointCloud(len(points), Fields(BaseField.kXYZs |
+                                                    BaseField.kRGBs))
+            cloud.mutable_xyzs()[:] = points.T
+            cloud.mutable_rgbs()[:] = colors.T
+            path = f"object/3dgs/{part.name}"
+            meshcat.SetObject(path, cloud, point_size=0.0025)
+            meshcat.SetTransform(
+                path, gaussian_shift @ poses[part.name]
+                @ RigidTransform(-points.mean(axis=0)))
+        meshcat.SetCameraPose(center + np.array([0.2, -3.8, 1.0]) * size,
+                              center)
+        # 파지 후보 — 설정에서 고른 부위의 볼록 조각 중심들.
+        grasp_part = self.conf.get("GRASP_PART", spec.parts[0].name)
+        root = next((part for part in spec.parts if part.name == grasp_part),
+                    spec.parts[0])
         for index, piece in enumerate(root.collision_meshes):
             points = np.array([[float(t) for t in line.split()[1:4]]
                                for line in open(piece)
@@ -164,11 +345,48 @@ class Conductor:
             meshcat.SetObject(f"grasp/cand_{index}", Sphere(0.006),
                               Rgba(0.95, 0.35, 0.05, 0.9))
             meshcat.SetTransform(f"grasp/cand_{index}",
-                                 RigidTransform(centre))
+                                 mesh_shift @ poses[root.name]
+                                 @ RigidTransform(centre))
         print(f"  물체 뷰: {meshcat.web_url()}")
+        print("  왼쪽=URDF/충돌 메시, 오른쪽=3DGS Gaussian 중심점")
         print(f"  파지 후보 {len(root.collision_meshes)}개를 주황 점으로 표시했습니다"
               f" (잡는 부위 = {root.name})")
         return meshcat
+
+    def show_density_meshes(self, posterior=None):
+        """창 1의 실제 메시를 탐색 전/후 밀도 색으로 나란히 표시한다."""
+        try:
+            import numpy as np
+            from density_view import DensityPanel
+            spec = getattr(self, "object_spec", None)
+            meshcat = getattr(self, "object_meshcat", None)
+            if spec is None or meshcat is None:
+                return
+            latest = Path(self.conf.get("FP_OUTPUT", "")) / "latest.json"
+            pose = self.session.read(latest) if latest.is_file() else {}
+            from dual_view import observed_to_model_deg
+            theta = (observed_to_model_deg(
+                "desklamp", [pose.get("base_support_deg"),
+                             pose.get("support_head_deg")])
+                     if pose and all(pose.get(key) is not None for key in
+                                     ("base_support_deg", "support_head_deg"))
+                     else None)
+            meshcat.Delete("object")
+            meshcat.Delete("grasp")
+            panel = DensityPanel(spec, meshcat, theta_deg=theta)
+            prior = np.asarray((posterior or {}).get(
+                "prior_densities_kg_m3", np.full(len(spec.parts), 1000.0)))
+            panel.begin(prior, target_rel=float(self.conf.get("TARGET", 0.05)),
+                        density_range=(300.0, 1700.0))
+            if posterior and posterior.get("densities_kg_m3"):
+                panel.update(posterior["densities_kg_m3"],
+                             posterior.get("relative_half_width",
+                                           np.zeros(len(spec.parts))),
+                             posterior.get("measurement_round", 0),
+                             bool(posterior.get("converged")))
+            self.density_panel = panel
+        except Exception as exc:                                # noqa: BLE001
+            print(f"  [주의] 창 1 밀도 메시 갱신 실패: {exc}")
 
     # -- 2단계 ------------------------------------------------------------
     def phase_angle(self):
@@ -180,6 +398,7 @@ class Conductor:
         if recommended is None:
             print("  (추천 각도는 4단계 탐색기가 계산합니다 — 첫 라운드는"
                   " 지금 자세 그대로 갑니다)")
+            return True
         self.ask("각도 조정 완료")
         return True
 
@@ -201,35 +420,116 @@ class Conductor:
         """탐색은 기존 dual_view(정적) 또는 dynex.session(동적) 에 맡긴다."""
         self.session.set_phase("explore", self.round)
         self.bar()
-        env = dict(os.environ, PIVOT_SESSION=str(self.session.root))
+        self.show_density_meshes()
+        env = dict(os.environ, PIVOT_SESSION=str(self.session.root),
+                   PIVOT_OUTER_ROUND=str(self.round))
+        if self.conf.get("FP_INTRINSICS"):
+            env["PIVOT_CAMERA_INTRINSICS"] = self.conf["FP_INTRINSICS"]
         if self.conf.get("METHOD", "static").lower() == "dynamic":
             return self.phase_explore_dynamic(env)
         grasp = self.session.path("grasp.json")
         if grasp.is_file():
             env["PIVOT_GRASP_FILE"] = str(grasp)
+        for name in ("operator_ui.json", "operator_action.json"):
+            try:
+                self.session.path(name).unlink()
+            except FileNotFoundError:
+                pass
         conf = self.conf
+        urdf_out = self.session.path("export/estimated_desklamp.urdf")
+        urdf_out.parent.mkdir(parents=True, exist_ok=True)
         command = self.python() + [
             str(HERE / "dual_view.py"),
             "--mode", "deploy", "--bus", "local",
             "--hardware", "real" if conf.get("ROBOT_HOST") else "sim",
             "--object", conf.get("OBJECT", "desklamp"),
             "--grasp", "pinch", "--grasp-part", conf.get("GRASP_PART", "link_3"),
-            "--prior", "water",
+            # 저울 총무게를 실제로 쓰는 사전분포. water 는 등방이라
+            # 총질량을 전혀 안 묶고, 그래서 부위가 하한(50)에 붙어도
+            # 막지 못한다 (session_20260904_1736: 416.9 g vs 저울 571.0 g).
+            "--prior", "weight",
             "--target", conf.get("TARGET", "0.05"),
             "--max-rounds", conf.get("MAX_ROUNDS", "8"),
-            "--angle-floor-deg", conf.get("ANGLE_FLOOR_DEG", "2.0"),
-            "--move-duration", conf.get("MOVE_DURATION", "8")]
+            "--angle-floor-deg", conf.get("ANGLE_FLOOR_DEG", "3.0"),
+            "--angle-error", conf.get("ANGLE_REL_ERROR", "0"),
+            "--grasp-sigma-mm", conf.get("GRASP_SIGMA_MM", "10"),
+            "--move-duration", conf.get("MOVE_DURATION", "8"),
+            "--dashboard-session", str(self.session.root),
+            "--skip-grasp", "--no-gripper",
+            "--no-density-view", "--urdf-out", str(urdf_out)]
         for flag, key in (("--gripper-port", "GRIPPER_PORT"),
                           ("--gripper-force", "GRIPPER_FORCE"),
                           ("--tare-file", "TARE_FILE"),
+                          ("--tare-mode", "TARE_MODE"),
+                          ("--tare-max-age-s", "TARE_MAX_AGE_S"),
+                          ("--meshpca-root", "MESHPCA_ROOT"),
                           ("--aft-host", "AFT_HOST"),
+                          # 밀도 계산의 모멘트팔을 무엇으로 세울지.
+                          #   legacy    자산에 적어둔 짐작 파지 (지금까지)
+                          #   measured  사람이 실제로 잡힌 자리를 카메라가
+                          #             읽어 온 값. 이 연구의 설계다.
+                          # 로봇 장면(충돌·도달)은 이미 실측값을 쓰는데
+                          # 밀도 계산만 짐작값을 쓰고 있었다. 설정으로 켤
+                          # 방법조차 없어서 코드를 고쳐야 했다.
+                          ("--grasp-frame", "GRASP_FRAME"),
+                          # 저울로 잰 총질량 [kg]. 토크만 쓰는 설정에서는
+                          # 규모를 정하는 유일한 값이라 반드시 있어야 한다.
+                          ("--total-mass-kg", "TOTAL_MASS_KG"),
+                          # 탐색 속도. 리허설에서 STEPS=3 SELECT=grid 로 두면
+                          # 램프도 몇 분 안에 끝난다 (연속 탐색은 수십 분).
+                          ("--steps", "STEPS"),
+                          ("--select", "SELECT"),
+                          ("--plan-iters", "PLAN_ITERS"),
                           ("--robot-host", "ROBOT_HOST")):
             if conf.get(key):
                 command += [flag, conf[key]]
+        # FoundationPose 가 잰 파지점 어긋남 명목값 [mm] (예: "-49.2 82.0 -145.2")
+        if conf.get("GRASP_MU_MM"):
+            command += ["--grasp-mu-mm", *conf["GRASP_MU_MM"].split()]
+        # 힘 3축을 추정에 다시 넣고 싶을 때만 켠다. 기본은 토크 전용이다.
+        if str(conf.get("USE_FORCE", "")).strip().lower() in ("1", "true", "yes"):
+            command += ["--use-force"]
+        if self.rehearse:
+            # 리허설에는 램프를 접어 줄 사람도 추적기도 없다. 탐색기가 추천 각도를
+            # 모의 자세 센서에 직접 넣게 하고(--auto-adjust), 시작 버튼도 건너뛴다.
+            # 실물에서는 절대 넘기지 않는다 — 아무도 안 접었는데 접었다고 치게 된다.
+            # (첫 리허설이 여기서 멈춰 있었다: "목표 [38.9 36.7] 오차 [51.8 55.6] 아직")
+            command += ["--auto-adjust", "--autostart"]
         if conf.get("FP_OUTPUT"):
             command += ["--pose-file", str(Path(conf["FP_OUTPUT"]) / "latest.json")]
+            command += ["--gripper-status-file", str(Path(conf["FP_OUTPUT"]) / "hardware.json")]
+        if conf.get("START_ARM_DEG"):
+            command += ["--start-arm-deg", *conf["START_ARM_DEG"].split()]
         print("  탐색을 시작합니다 (dual_view). 창 3·4 가 갱신됩니다.")
-        return subprocess.run(command, env=env).returncode == 0
+        process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL)
+        if self.dashboard is not None:
+            self.dashboard.set_experiment_process(process)
+        ok = process.wait() == 0
+        posterior = self.session.read(f"posterior_round_{self.round}.json")
+        if posterior:
+            self.show_density_meshes(posterior)
+        self.round_check()
+        return ok
+
+    def round_check(self):
+        """탐색 뒤 숫자 세 개로 '센서가 모형이 말하는 것을 재고 있나'를 판정한다.
+
+        session_20260904_1736 은 이 셋(힘 크기 58.7 N 오프셋, 잔차팽창 5 527,
+        파지 오프셋 상자에 붙음)이 전부 틀렸는데 사람이 파일을 열어야 알 수
+        있었다. 여기서 바로 찍고 대시보드에도 올린다. 판정은 tools/round_check.py.
+        """
+        if not list(self.session.root.glob("exploration_round_*.json")):
+            return
+        print("\n  --- 라운드 검산 (tools/round_check.py) ---")
+        result = subprocess.run(
+            self.python() + [str(TOOLS / "round_check.py"), str(self.session.root),
+                             "--conf", str(self.conf_path)],
+            capture_output=True, text=True)
+        text = (result.stdout or "") + (result.stderr or "")
+        print("\n".join("  " + line for line in text.rstrip().splitlines()))
+        if self.dashboard is not None:
+            verdict = "통과" if result.returncode == 0 else "실패 — 터미널의 검산을 보세요"
+            self.dashboard.set_status(f"[4 탐색] 라운드 검산 {verdict}")
 
     def phase_explore_dynamic(self, env):
         """동적 여기 세션. 라운드 하나를 돌고 posterior_round_N.json 을 남긴다."""
@@ -267,15 +567,11 @@ class Conductor:
             else:
                 print("  [주의] asset_dynamic.json 이 없습니다 — 탐색이 한 라운드도 끝나지 않았습니다.")
             return True
-        target = self.session.path("export")
-        command = self.python() + [str(HERE / "export_urdf.py"),
-                                   "--output", str(target)]
-        result = subprocess.run(command)
-        if result.returncode == 0:
+        target = self.session.path("export/estimated_desklamp.urdf")
+        if target.is_file():
             print(f"  {target} 에 sim-ready 자산을 냈습니다.")
         else:
-            print("  [주의] 내보내기가 실패했습니다 — export_urdf.py 인자를"
-                  " 확인하세요. 추정 결과는 세션 폴더에 그대로 있습니다.")
+            print("  [주의] 실험 결과 URDF가 없습니다. 밀도 JSON은 세션에 남았습니다.")
         return True
 
     # -- 전체 -------------------------------------------------------------
@@ -290,9 +586,8 @@ class Conductor:
         while True:
             self.phase_angle()
             self.phase_path()
-            if not self.ask("승인 — 로봇을 움직입니다"):
+            if not self.phase_explore():
                 return 1
-            self.phase_explore()
             posterior = (self.session.read(f"posterior_round_{self.round + 1}.json")
                          if self.conf.get("METHOD", "static").lower() == "dynamic"
                          else self.session.read(f"posterior_round_{self.round}.json"))
@@ -324,11 +619,20 @@ def main():
                     help="이어서 할 세션 폴더 (없으면 새로 만든다)")
     ap.add_argument("--auto", action="store_true",
                     help="사람 확인을 건너뛴다 (리허설용)")
+    ap.add_argument("--rehearse", action="store_true",
+                    help="장비·추적기 없이 통합 UI 를 끝까지 돌린다."
+                         " preflight FAIL 에 멈추지 않고, 파지는 짐작값을 쓴다."
+                         " conf 의 ROBOT_HOST 가 비어 있어야 한다 (--hardware sim)")
     ap.add_argument("--dry-run", action="store_true",
                     help="단계 기계만 돌려 본다 (Drake·장비 불필요)")
     ap.add_argument("--sim", action="store_true",
                     help="장비 없이 모의 장비로 끝까지 돈다 (준비 점검 실패는 주의로)")
     args = ap.parse_args()
+
+    instance_lock = None if args.dry_run else acquire_instance_lock()
+    if not args.dry_run and instance_lock is None:
+        print("[중단] PIVOT 통합 UI가 이미 실행 중입니다. 기존 창을 사용하세요.")
+        return 2
 
     session = (Session(args.session) if args.session
                else Session.new(args.sessions))
@@ -343,14 +647,34 @@ def main():
         print(session.read("phase.json"))
         return 0
 
-    console = None
+    console = dashboard = None
     try:
         from pydrake.geometry import StartMeshcat
         from operator_ui import Console
         console = Console(StartMeshcat(), auto=args.auto)
     except Exception as exc:                                    # noqa: BLE001
         print(f"[주의] Meshcat 콘솔을 못 띄웁니다 ({exc}) — 터미널로 갑니다")
-    return Conductor(args.conf, session, console, args.auto, sim=args.sim).run()
+    if args.rehearse:
+        probe = Conductor(args.conf, session, None, args.auto)
+        if probe.conf.get("ROBOT_HOST"):
+            print("[중단] --rehearse 인데 conf 에 ROBOT_HOST 가 있습니다. 실물로 갈 뻔했습니다."
+                  " setup/experiment.sim.conf 처럼 ROBOT_HOST 를 비운 conf 를 쓰세요.")
+            return 2
+    conductor = Conductor(args.conf, session, console, args.auto,
+                          sim=args.sim, rehearse=args.rehearse)
+    if console is not None:
+        from pivot_dashboard import Dashboard
+        dashboard = Dashboard(session, conductor.conf,
+                              console.meshcat.web_url()).start()
+        conductor.dashboard = dashboard
+        url = dashboard.web_url()
+        print(f"통합 지휘 UI: {url}")
+        webbrowser.open(url)
+    try:
+        return conductor.run()
+    finally:
+        if dashboard is not None:
+            dashboard.stop()
 
 
 if __name__ == "__main__":

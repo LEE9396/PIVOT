@@ -149,11 +149,13 @@ def board_spec(args):
     import density_id_objects as obj
 
     thickness_mm = args.board_thickness_mm
-    size = (args.board_width_mm, args.board_height_mm, thickness_mm)
+    actual_size = np.array(
+        [args.board_width_mm, args.board_height_mm, thickness_mm], dtype=float)
+    size = tuple(actual_size + 2.0 * args.board_margin_mm)
     part = obj.Part(
         name="calib_board",
         bbox_mm=size,
-        volume_cm3=1e-3 * size[0] * size[1] * size[2],
+        volume_cm3=1e-3 * np.prod(size),
         rho_gt=700.0,                     # 알루미늄판 + 종이. 값은 안 쓰인다.
         bbox_center_in_link_mm=(0.0, 0.0, 0.0),
         shell_centroid_in_link_mm=(0.0, 0.0, 0.0),
@@ -163,7 +165,7 @@ def board_spec(args):
     return obj.ObjectSpec(
         key="calib_board", label="캘리브레이션 보정판",
         parts=[part], joints=[],
-        base_bbox_center_in_sensor_mm=(0.0, 0.0, 0.5 * thickness_mm),
+        base_bbox_center_in_sensor_mm=(0.0, 0.0, 0.0),
         notes="손-눈 캘리브레이션용. 그리퍼에 볼트로 고정된 판.")
 
 
@@ -176,7 +178,8 @@ def _calibration_scene(args):
     rho = obj.bind_object(spec)
     checker = rs.PoseChecker(spec, densities=rho, joint_limits_rad=[],
                              min_distance_m=rs.MIN_DISTANCE_M,
-                             gripper=args.gripper)
+                             gripper=args.gripper,
+                             payload_pose_tcp=board_offset(args))
     return spec, checker
 
 
@@ -316,14 +319,37 @@ def run(args):
         input("  준비되면 Enter: ")
 
     driver = None
+    moves = [(arm_q, X_WE, None) for arm_q, X_WE in chosen]
     if not args.simulate and not args.dry_run:
         import dual_view as dv
+        import path_planning as pp
         driver, *_ = dv.connect_hardware(args)
 
+        theta0 = np.zeros(len(checker.object_joints))
+        current = driver.joint_positions()
+        planner = pp.ArmPathPlanner(
+            checker.plant, checker.context, checker.arm_joints,
+            checker.min_distance_m, _full_q(checker, current, theta0),
+            seed=args.seed)
+        moves = []
+        for index, (arm_q, X_WE) in enumerate(chosen, start=1):
+            planner.set_fixed(_full_q(checker, current, theta0))
+            path = planner.plan(current, arm_q)
+            if path is None:
+                print(f"  {index:>3}/{len(chosen)}  건너뜀 — 충돌 없는 이동 경로 없음")
+                continue
+            moves.append((arm_q, X_WE, path))
+            current = arm_q
+        if len(moves) < 5:
+            raise SystemExit(
+                f"충돌 없는 경로로 갈 수 있는 자세가 {len(moves)}개뿐이라 못 풉니다.")
+        print(f"  현재 자세부터 {len(moves)}개 calibration 자세까지 RRT 경로 확인")
+
     X_WE_list, X_CT_list, rows = [], [], []
-    for index, (arm_q, X_WE) in enumerate(chosen, start=1):
+    for index, (arm_q, X_WE, path) in enumerate(moves, start=1):
         if driver is not None:
-            driver.follow([arm_q], args.move_duration)
+            segment_s = args.move_duration / max(len(path) - 1, 1)
+            driver.follow(path[1:], segment_s)
             driver.stop()
             import time
             time.sleep(args.settle_s)

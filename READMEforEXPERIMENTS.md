@@ -1,5 +1,7 @@
 # 실험용 파일 안내 — 무엇을 어떤 순서로 보나
 
+실제 실행 기록: [2026-09-04 desk lamp 세션](experiments/session_20260904_1736/README.md)
+
 이 브랜치(`real-experiment-ready`)에 실물 실험에 필요한 것이 전부 들어 있다.
 파일이 많으니 **어떤 순서로 무엇을 보면 되는지**를 여기 적는다.
 
@@ -72,11 +74,13 @@ integration/meshpca/tare_real.py                    ->  체크리스트 5번을 
 0 픽셀로 잡아 FoundationPose 가 시작조차 못 했고, 런처는 180 초 기다리다
 종료했다.
 
-`tare_real.py` 는 그쪽 PC 에 **세 번째 버전**이 있다(`joint_deg` 를 쓰는 것).
-통째로 덮지 말고 `--manual` / `--verify` 부분만 떼어 붙여라.
+손목 자동 타어는 PIVOT 안의 검증본을 실행기로 호출한다. 기본 `--plan`은
+로봇을 움직이지 않고 J1~J3 고정 여부와 충돌 여유만 확인한다. 실제 실행은
+반드시 `--run`을 명시한다. 세 번째 자세에서 바로 저장하며 원위치 복귀는 없다.
 
 ```bash
-grep -l joint_deg $(find ~ -name tare_real.py 2>/dev/null)
+setup/wrist_tare.sh --plan
+setup/wrist_tare.sh --run
 ```
 
 ---

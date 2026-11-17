@@ -40,7 +40,7 @@ calibration/camera_cam_d456_front.json      <- 이 이름이면 자동으로 읽
 ### 1. 보정판 만들기
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 python3 calib_detect.py --make-board board.png      # 시스템 python
 ```
 
@@ -72,7 +72,7 @@ python3 calib_detect.py --preview --square-mm <자로 잰 값>
 python3 calib_detect.py --serve --port 5566 --square-mm <자로 잰 값>
 
 # 터미널 2 — Drake 환경
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 ../robot_learning/scripts/run_drake_env.sh python calibrate_camera.py \
     --run --poses 20 --detector-port 5566
 ```

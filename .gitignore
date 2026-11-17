@@ -46,3 +46,12 @@ my_work/results/dynex_nlink_test/
 my_work/results/dynex/*.log
 calibration/tool_dynamic*.json
 calibration/tool_dynamic*.csv
+
+# 통합 UI 세션 산출물과 리허설 conf (생성물)
+my_work/sessions/
+setup/experiment.sim.conf
+
+# 팀원 원시 F/T 기록(수백 MB)과 램프 자산 사본은 올리지 않는다 (DYNAMIC_FT_INTEGRATION.md)
+my_work/outputs/ft_records/
+assets/Lamp_Final/
+my_work/outputs/joint_design_repro/

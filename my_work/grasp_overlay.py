@@ -28,6 +28,7 @@ cv2 가 없다. 그래서 이 파일은 **numpy 만으로 계산**하고, 그리
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -41,10 +42,26 @@ COLOR_TEXT = (255, 255, 255)
 
 def load_target(path):
     """grasp_target.py 가 낸 JSON 을 읽어 넘파이로 바꾼다."""
-    data = json.loads(Path(path).read_text())
+    path = Path(path)
+    data = json.loads(path.read_text())
     for key in ("point", "jaw_axis", "long_axis"):
         data[key] = np.asarray(data[key], dtype=float)
+    # FoundationPose 트래커는 이 dict 를 시작할 때 한 번만 받는다.
+    # 파지 직후 grasp_measure.py 가 같은 JSON 을 실측값으로 바꾸면,
+    # draw() 가 다음 프레임에서 새 값을 읽을 수 있게 경로를 남겨 둔다.
+    data["_path"] = path
+    data["_mtime_ns"] = path.stat().st_mtime_ns
     return data
+
+
+def refresh_target(target):
+    """파지 후 명목점이 실측점으로 바뀐 경우 dict 를 제자리에서 갱신한다."""
+    path = target.get("_path")
+    if path is None or path.stat().st_mtime_ns == target.get("_mtime_ns"):
+        return target
+    target.clear()
+    target.update(load_target(path))
+    return target
 
 
 def intrinsic_matrix(fx, fy, cx, cy):
@@ -91,6 +108,13 @@ def target_geometry(target, X_CM, pad_half_len_m=0.018):
         pad_bars    패드마다 장축을 따라 그은 선분의 양 끝 (2, 2, 3)
         long_bar    장축 방향 안내선의 양 끝
     """
+    refresh_target(target)
+    # 대칭 부위 단독 추적의 앞뒤 모호성은 세 부위 정렬에서 얻은 동일 메시 좌표 보정으로 해소한다.
+    if 'tracking_mesh_correction' in target:
+        correction = np.asarray(target['tracking_mesh_correction'], dtype=float)
+        if correction.shape != (4,4) or not np.isfinite(correction).all():
+            raise ValueError('잘못된 추적 메시 좌표 보정')
+        X_CM = np.asarray(X_CM) @ correction
     point = np.asarray(target["point"], dtype=float)
     jaw = np.asarray(target["jaw_axis"], dtype=float)
     jaw = jaw / np.linalg.norm(jaw)
@@ -138,6 +162,14 @@ def draw(image, target, X_CM, K, label=None, thickness=2):
     def xy(index):
         return tuple(int(round(v)) for v in pixels[index])
 
+    if target.get('point_only'):
+        if 0 <= xy(0)[0] < width and 0 <= xy(0)[1] < height:
+            cv2.circle(view, xy(0), 4, COLOR_POINT, -1, cv2.LINE_AA)
+        else:
+            cv2.putText(view, "grasp point is outside the image", (24, height-24),
+                        cv2.FONT_HERSHEY_SIMPLEX, .7, COLOR_POINT, 2)
+        return view
+
     # 장축 안내선 -> 패드 막대 -> 죠 사이 선 -> 파지점 순으로 겹쳐 그린다.
     if visible[3] and visible[4]:
         cv2.line(view, xy(3), xy(4), COLOR_LONG, 1, cv2.LINE_AA)
@@ -147,11 +179,10 @@ def draw(image, target, X_CM, K, label=None, thickness=2):
             cv2.line(view, xy(a), xy(b), COLOR_JAW, thickness + 1, cv2.LINE_AA)
     if visible[1] and visible[2]:
         cv2.line(view, xy(1), xy(2), COLOR_JAW, 1, cv2.LINE_AA)
-    cv2.circle(view, xy(0), 7, COLOR_POINT, -1, cv2.LINE_AA)
+    cv2.drawMarker(view, xy(0), COLOR_POINT, cv2.MARKER_CROSS, 11, 1, cv2.LINE_AA)
     cv2.circle(view, xy(0), 12, COLOR_POINT, thickness, cv2.LINE_AA)
 
-    text = label or (f"grasp {1000*target['width_m']:.0f} mm"
-                     f" / open {1000*target['opening_m']:.0f} mm")
+    text = label or "grasping point"
     origin = (min(max(xy(0)[0] + 18, 8), width - 260), max(xy(0)[1] - 14, 22))
     cv2.putText(view, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (0, 0, 0), 3, cv2.LINE_AA)
@@ -161,6 +192,22 @@ def draw(image, target, X_CM, K, label=None, thickness=2):
         cv2.putText(view, "grasp point is outside the image",
                     (24, height - 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
                     COLOR_POINT, 2)
+    actual = target.get('gripper_point_camera_m')
+    if actual is not None:
+        stamp = target.get('gripper_timestamp_s', 0)
+        actual = np.asarray(actual, dtype=float)
+        if actual.shape == (3,) and np.isfinite(actual).all() and 0 <= time.time()-stamp < 1.5:
+            uv, valid = project(K, actual[None, :])
+            u, v = uv[0]
+            if valid[0] and 0 <= u < width and 0 <= v < height:
+                point = (int(round(u)), int(round(v)))
+                cv2.drawMarker(view, point, (255,255,0), cv2.MARKER_CROSS, 17, 1, cv2.LINE_AA)
+                cv2.line(view, xy(0), point, (255,255,0), 1, cv2.LINE_AA)
+            error_mm = 1000*np.linalg.norm(actual-geometry['point'])
+            cv2.putText(view, f'Red: object target / Cyan: gripper FK | delta {error_mm:.1f} mm',
+                        (8,height-32), cv2.FONT_HERSHEY_SIMPLEX,.45,(255,255,255),1,cv2.LINE_AA)
+            cv2.putText(view, 'Calibration + tracking error included; alignment not verified',
+                        (8,height-12), cv2.FONT_HERSHEY_SIMPLEX,.42,(255,255,255),1,cv2.LINE_AA)
     return view
 
 
@@ -237,6 +284,18 @@ def self_check(verbose=True):
         assert visible[0]
         assert np.allclose(pixels[0], [320.0, 240.0], atol=1e-6), pixels
 
+    def t_tracking_frame():
+        target = dict(point=[.1,.2,.3], jaw_axis=[1,0,0], long_axis=[0,1,0], opening_m=.016)
+        observed = np.eye(4)
+        observed[:3,:3] = np.diag([-1,-1,1])
+        fitted = np.eye(4)
+        fitted[:3,3] = [.02,.03,.7]
+        target['tracking_mesh_correction'] = np.linalg.inv(observed)@fitted
+        got = target_geometry(target, observed)
+        np.testing.assert_allclose(got['point'], transform(fitted, target['point'])[0])
+        np.testing.assert_allclose(got['pads'].mean(0), got['point'])
+
+    case("추적 앞뒤 보정과 동일 3D 파지점", t_tracking_frame)
     case("광축 위의 점은 주점에", t_center)
     case("깊이에 따라 화소가 줄어든다", t_scale)
     case("카메라 뒤의 점은 안 보인다", t_behind)

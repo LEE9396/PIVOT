@@ -4,7 +4,7 @@
 > 유도·수치·구조·현재 상태가 전부 여기 있습니다. 다른 문서를 안 읽어도 됩니다.
 >
 > **논문 소스**: 사용자가 주는 zip (OpenAI Prism). **이것이 최신이다.**
-> **코드·근거**: `~/Desktop/PIVOT/my_work/`
+> **코드·근거**: `~/Research/1.PIVOT/code/PIVOT/my_work/`
 
 ---
 

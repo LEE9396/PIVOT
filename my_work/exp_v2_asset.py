@@ -37,7 +37,7 @@
   (c) PUSH     탁자 위에 놓고 한 부위에 고정 크기의 옆방향 힘을 잠깐 준다.
 
 실행:
-    cd ~/Desktop/PIVOT/my_work
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python exp_v2_asset.py
 """
 

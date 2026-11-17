@@ -98,7 +98,7 @@ PIVOT link_3 (623 정점)      같은 방법으로            16~23 mm (정점�
 
 ## 팀원 저장소에만 있는 것
 
-`~/MeshPCA/pivot/tare_real.py` 는 `hw.Rb5Driver(ip, enable_motion=True,
+`~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py` 는 `hw.Rb5Driver(ip, enable_motion=True,
 max_speed_deg_s=..., max_accel_deg_s2=...)` 를 부르는데, PIVOT 의
 `hardware.Rb5Driver` 는 아직 `NotImplementedError` 입니다. **구현이 팀원
 PC 에만 있습니다.** 받아 와야 3~6 단계가 이 저장소에서 돕니다.

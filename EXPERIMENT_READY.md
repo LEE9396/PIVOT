@@ -1,5 +1,7 @@
 # 실물 실험 준비 완료 보고서
 
+> **2026-09-08 통합 UI 새 PC 설치:** [setup/REPRODUCE.md](setup/REPRODUCE.md)를 먼저 따르세요. 아래의 과거 4창/드라이버 미구현 설명보다 이 문서가 우선합니다.
+
 대상 물체 세 개 — **2-link**, **3-link**, **desk lamp** — 로 실물 실험을 할 수
 있도록 코드·UI·검증을 마쳤다. 이 문서 하나로 무엇을 어떻게 하는지 알 수 있다.
 
@@ -102,7 +104,7 @@ $R python tools/angle_signs.py --pose-file /tmp/lamp_foundationpose_live/latest.
 
 ```bash
 # 7) 3자세 타어 (직접교시. 로봇에 명령하지 않는다)
-PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --manual --setup \
+PIVOT_WORKDIR=$PWD $R python ~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py --manual --setup \
     --output calibration/aft_tare_current.json --overwrite
 ```
 
@@ -110,7 +112,7 @@ PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --manual --setup \
 
 ```bash
 # 8) 타어 드리프트 확인. 문턱 안이면 세팅 때 값을 그대로 쓴다
-PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --verify \
+PIVOT_WORKDIR=$PWD $R python ~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py --verify \
     --output calibration/aft_tare_current.json
 ```
 
@@ -261,8 +263,8 @@ PIVOT 실물 실험 환경을 이 PC 에 새로 구성해 줘. 세 물체(2-link
 desk lamp)로 실험할 거야.
 
 ━━ 저장소 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  git clone -b real-experiment-ready https://github.com/LEE9396/PIVOT.git ~/PIVOT
-  git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/MeshPCA
+  git clone -b real-experiment-ready https://github.com/Yuseong-Cheon/PIVOT.git ~/PIVOT
+  git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/Research/1.PIVOT/code/MeshPCA
 
   ★ 할 일 목록은 ~/PIVOT/TEAMMATE_CHECKLIST.md 에 있다. **그것부터 읽어라.**
     빠뜨리면 조용히 틀리는 항목에 ★ 가 붙어 있다.
@@ -330,7 +332,7 @@ desk lamp)로 실험할 거야.
                     --joint 1 --seconds 40 --output calibration/angle_signs.json
                 관절마다 한 번씩. 나온 **잔차를 ANGLE_FLOOR_DEG 에 넣어라.**
    e) 타어      ★ 여기서 로봇이 처음 움직인다. 나한테 확인받아라.
-                PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py \
+                PIVOT_WORKDIR=$PWD $R python ~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py \
                     --manual --setup --output calibration/aft_tare_current.json
                 직접교시로 자세를 만들면 로봇에 명령하지 않는다.
 

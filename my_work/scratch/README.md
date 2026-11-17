@@ -18,7 +18,7 @@
 평소처럼 `my_work/` 에서 돌리면 됩니다.
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 ../robot_learning/scripts/run_drake_env.sh python scratch/_grasp_flow.py
 ```
 

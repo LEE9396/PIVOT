@@ -40,8 +40,8 @@
 ## 1. 저장소 받기
 
 ```bash
-git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT
-git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/MeshPCA
+git clone https://github.com/LEE9396/PIVOT.git ~/Research/1.PIVOT/code/PIVOT
+git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/Research/1.PIVOT/code/MeshPCA
 ```
 
 ## 2. 환경 세 개
@@ -49,7 +49,7 @@ git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/MeshPCA
 **① PIVOT (Drake 1.54 고정)** — 창 1·4
 
 ```bash
-cd ~/Desktop/PIVOT && ./setup/bootstrap.sh
+cd ~/Research/1.PIVOT/code/PIVOT && ./setup/bootstrap.sh
 cd my_work && ../robot_learning/scripts/run_drake_env.sh python ../setup/doctor.py
 ```
 
@@ -58,7 +58,7 @@ cd my_work && ../robot_learning/scripts/run_drake_env.sh python ../setup/doctor.
 
 > **모든 PIVOT 실행에 래퍼를 붙입니다.** 편하게 쓰려면:
 > ```bash
-> cd ~/Desktop/PIVOT/my_work
+> cd ~/Research/1.PIVOT/code/PIVOT/my_work
 > export R=../robot_learning/scripts/run_drake_env.sh
 > ```
 > 맨 `python` 으로 부르면 pydrake 가 조용히 깨집니다.
@@ -66,7 +66,7 @@ cd my_work && ../robot_learning/scripts/run_drake_env.sh python ../setup/doctor.
 **② MeshPCA** — 창 3
 
 ```bash
-cd ~/MeshPCA && python -m venv .venv && source .venv/bin/activate
+cd ~/Research/1.PIVOT/code/MeshPCA && python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -77,12 +77,12 @@ pip install -r requirements.txt
 - <https://github.com/Yuseong-Cheon/Foundation_pose_edit>
 - <https://github.com/facebookresearch/sam3>
 
-자세한 것은 `~/MeshPCA/foundationpose/README.md`.
+자세한 것은 `~/Research/1.PIVOT/code/MeshPCA/foundationpose/README.md`.
 
 ## 3. 장비 확인 (움직이기 전에)
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 
 # 그리퍼 — 키보드로 여닫아 본다 (a/d 개구, w/s 파지력)
 $R python gripper_hw.py --port /dev/ttyUSB0 --keyboard --plan-mm 44
@@ -101,15 +101,15 @@ $R python hardware_real.py --check
 
 ```bash
 # 1) 카메라 <-> 로봇 (EasyHeC -> MeshPCA 형식)
-cd ~/MeshPCA && python calibration/import_easyhec.py ...   # CALIBRATION.md 참고
+cd ~/Research/1.PIVOT/code/MeshPCA && python calibration/import_easyhec.py ...   # CALIBRATION.md 참고
 
 # 2) 그 결과를 PIVOT 형식으로 옮긴다  ★ 안 하면 PIVOT 은 명목 위치로 돕니다
-cd ~/Desktop/PIVOT/my_work
-$R python import_calibration.py --input ~/MeshPCA/calibration/handeye_d456.json
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
+$R python import_calibration.py --input ~/Research/1.PIVOT/code/MeshPCA/calibration/handeye_d456.json
 
 # 3) 3자세 타어 — 빈 그리퍼로. 물체를 물기 전에 한다
-PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --plan-only   # 먼저 계획만
-PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py \
+PIVOT_WORKDIR=$PWD $R python ~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py --plan-only   # 먼저 계획만
+PIVOT_WORKDIR=$PWD $R python ~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py \
     --output calibration/aft_tare_current.json --overwrite
 ```
 
@@ -122,17 +122,17 @@ PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py \
 FoundationPose 가 **추적하는 그 메시** 위에서 계산해야 카메라 화면에 맞습니다.
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 $R python grasp_target.py \
-    --mesh ~/MeshPCA/foundationpose/assets/lamp/support_metric_watertight.ply \
+    --mesh ~/Research/1.PIVOT/code/MeshPCA/foundationpose/assets/lamp/support_metric_watertight.ply \
     --part support --out outputs/grasp_target_lamp.json
 ```
 
 ## 6. 창 2 에 오버레이 패치 붙이기 (한 번)
 
 ```bash
-cd ~/MeshPCA
-git apply ~/Desktop/PIVOT/my_work/integration/foundationpose_grasp_overlay.patch
+cd ~/Research/1.PIVOT/code/MeshPCA
+git apply ~/Research/1.PIVOT/code/PIVOT/my_work/integration/foundationpose_grasp_overlay.patch
 ```
 
 기존 동작은 안 바뀌고 `--grasp-target` 플래그가 생깁니다.
@@ -144,7 +144,7 @@ git apply ~/Desktop/PIVOT/my_work/integration/foundationpose_grasp_overlay.patch
 ### 런처로 (권장)
 
 ```bash
-cd ~/Desktop/PIVOT
+cd ~/Research/1.PIVOT/code/PIVOT
 cp setup/experiment.conf.example setup/experiment.conf
 $EDITOR setup/experiment.conf          # 경로·IP·물체를 PC 에 맞게
 
@@ -168,18 +168,18 @@ $EDITOR setup/experiment.conf          # 경로·IP·물체를 PC 에 맞게
 ### 창 3 — 그리퍼 + F/T
 
 ```bash
-cd ~/MeshPCA && source .venv/bin/activate
+cd ~/Research/1.PIVOT/code/MeshPCA && source .venv/bin/activate
 python pivot/rb5_ui.py \
     --host 192.168.50.51 \
     --port /dev/ttyUSB0 \
-    --tare ~/Desktop/PIVOT/my_work/calibration/aft_tare_current.json
+    --tare ~/Research/1.PIVOT/code/PIVOT/calibration/aft_tare_current.json
 ```
 
 ### 창 2 — 카메라 뷰 + 파지점 오버레이
 
 ```bash
 conda activate bundlesdf
-cd ~/MeshPCA
+cd ~/Research/1.PIVOT/code/MeshPCA
 python foundationpose/run_desk_lamp_live.py \
     --foundationpose-root /path/to/FoundationPose \
     --sam3-root /path/to/sam3 --sam3-python /path/to/sam3/env/bin/python \
@@ -187,7 +187,7 @@ python foundationpose/run_desk_lamp_live.py \
     --init-rgb /tmp/lamp_live_rgb.png --init-depth /tmp/lamp_live_depth_m.npy \
     --intrinsics /tmp/lamp_live_intrinsics.json --masks /tmp/lamp_sam3_masks \
     --output /tmp/lamp_foundationpose_live \
-    --grasp-target ~/Desktop/PIVOT/my_work/outputs/grasp_target_lamp.json \
+    --grasp-target ~/Research/1.PIVOT/code/PIVOT/my_work/outputs/grasp_target_lamp.json \
     --grasp-part support
 ```
 
@@ -199,7 +199,7 @@ python foundationpose/run_desk_lamp_live.py \
 한 명령이 두 화면을 띄웁니다.
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 $R python dual_view.py \
     --mode deploy --bus local --hardware real \
     --object desklamp --grasp pinch --grasp-part link_3 \
@@ -224,7 +224,7 @@ $R python dual_view.py \
 **권장합니다.** 실물 코드가 지나가는 길을 그대로 밟습니다.
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 $R python dual_view.py --mode deploy --bus local --hardware sim \
     --object 3link --prior water --max-rounds 3 --steps 3 --target 0.05
 ```
@@ -253,7 +253,7 @@ $R python dual_view.py --mode deploy --bus local --hardware sim \
    그 앞의 어떤 것도 실행되지 않습니다. `joint_positions / move_to / halt /
    set_servo` 네 함수만 채우면 됩니다.
 
-   팀원 `~/MeshPCA/pivot/tare_real.py` 는 `rbpodo.CobotData(ip)` 와
+   팀원 `~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py` 는 `rbpodo.CobotData(ip)` 와
    `data.request_data(2.0).sdata.jnt_ang[:6]` 로 관절각을 읽고 있으므로,
    그 PC 에 도는 구현이 이미 있습니다. **그 파일을 받아 오는 것이 가장
    빠릅니다.**

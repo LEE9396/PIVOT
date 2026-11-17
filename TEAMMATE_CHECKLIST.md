@@ -2,6 +2,7 @@
 
 > **2026-09-11 방법 변경.** 탐색 단계가 정적 3방향에서 동적 여기 궤적으로 바뀌었다.
 > 바뀐 실험 순서와 프롬프트는 [TEAMMATE_DYNAMIC.md](TEAMMATE_DYNAMIC.md) 에 있다. 아래 0~5번(환경·자산·캘리브레이션)은 그대로 필요하다.
+> **2026-09-08 통합 UI 새 PC 설치:** [setup/REPRODUCE.md](setup/REPRODUCE.md)를 먼저 따르세요. 아래의 과거 4창/드라이버 미구현 설명보다 이 문서가 우선합니다.
 
 실물 실험까지 해야 할 것 전부. **순서대로** 하고, 각 항목의 통과 기준을 확인한
 뒤 다음으로 간다. 앞이 막히면 뒤는 의미가 없다.
@@ -16,10 +17,10 @@
 지금 PC 에 네 개가 있다. 어느 것이 진짜인지 먼저 정해야 한다.
 
 ```
-~/Desktop/PIVOT              assets/final_objects/lamp 를 가짐
+~/Research/1.PIVOT/code/PIVOT              assets/final_objects/lamp 를 가짐
 ~/Desktop/PIVOT-real-setup   런처가 실제로 쓰던 것 (traceback 이 가리킴)
-~/MeshPCA                    clean
-~/MeshPCA-real-setup         두 conf 가 모두 이쪽을 가리킴
+~/Research/1.PIVOT/code/MeshPCA                    clean
+~/Research/1.PIVOT/code/MeshPCA         두 conf 가 모두 이쪽을 가리킴
 ```
 
 - [ ] **PIVOT 을 하나로 합친다.** 두 체크아웃이 갈라진 채로 둔 것이 이번
@@ -31,15 +32,15 @@
 
 - [ ] PIVOT
       ```bash
-      cd ~/Desktop/PIVOT
+      cd ~/Research/1.PIVOT/code/PIVOT
       git fetch origin && git checkout real-experiment-ready
       ```
 - [ ] ★ **MeshPCA 쪽 두 파일도 반드시 적용한다.** PIVOT 저장소의
       `integration/` 에 들어 있다. 이걸 빠뜨리면 창 2 가 여전히 죽고,
       타어에 직접교시 모드가 없다.
       ```bash
-      cp ~/Desktop/PIVOT/integration/foundationpose/make_desk_lamp_masks.py \
-         ~/MeshPCA-real-setup/foundationpose/
+      cp ~/Research/1.PIVOT/code/PIVOT/integration/foundationpose/make_desk_lamp_masks.py \
+         ~/Research/1.PIVOT/code/MeshPCA/foundationpose/
       # tare_real.py 는 아래 5번을 먼저 읽을 것
       ```
 - [ ] `$R python setup/doctor.py` 전부 통과
@@ -81,6 +82,13 @@
 - [ ] `$R python tools/preflight.py --conf setup/experiment.conf`
       캘리브레이션 항목은 4번 뒤에 통과한다
 - [ ] `$R python my_work/pivot_ui.py --dry-run`
+- [ ] **통합 UI 리허설** — 장비 없이 대시보드까지 그대로 띄워 끝까지 한 번
+      ```bash
+      ./setup/quickstart_sim.sh --auto        # http://localhost:8080
+      ```
+      통과 기준: `sessions/<세션>/experiment_results.json` 이 생기고
+      `exploration_round_1.json` 에 `wrench_raw` 18개가 있음. 실물 세션에서
+      보게 될 화면·파일이 전부 같은 자리에 생긴다
 - [ ] `$R python my_work/hardware_real.py --check` (10/10)
 - [ ] `$R python my_work/gripper_hw.py --check` (9/9)
 - [ ] `$R python my_work/grasp_overlay.py --check` (7/7)
@@ -103,8 +111,8 @@
       python integration/MeshPCA/import_easyhec.py \
           --transform <EasyHeC>/models/.../Tc_c2b.txt \
           --intrinsics <EasyHeC>/data/.../K.txt \
-          --output ~/MeshPCA/calibration/handeye.json
-      $R python my_work/import_calibration.py --input ~/MeshPCA/calibration/handeye.json
+          --output ~/Research/1.PIVOT/code/MeshPCA/calibration/handeye.json
+      $R python my_work/import_calibration.py --input ~/Research/1.PIVOT/code/MeshPCA/calibration/handeye.json
       ```
 - [ ] 검산: `Tc_c2b @ X_WC` 가 단위행렬
 
@@ -171,6 +179,50 @@
       실제 중력방향을 복원하면 라벨과 **정확히 90° 어긋난다**(3개 중 2개).
       새로 `--setup` 하면 `direction_error_deg` 가 기록되므로 그때 판별된다.
       값이 1° 안이면 정상, 90° 근처면 프레임 규약이 어긋난 것이다
+
+## 6-0. session_20260904_1736 재발 방지 — 실험 전에 순서대로
+
+> 이 절부터는 **로봇 PC** 에서 한다. 개발 PC 에서 할 수 있는 것은 §3 의 리허설
+> (`quickstart_sim.sh`) 까지다. 보정·타어 파일은 로봇 PC 에서 새로 만들고 복사하지 않는다.
+
+원인과 숫자는 `SESSION_20260904_ROOT_CAUSE.md`, 코드 변경은 `TORQUE_ONLY.md`.
+
+- [ ] **코드**: `torque-only-given-mass` 브랜치가 들어가 있나
+      (`grep -n '"--prior", "weight"' my_work/pivot_ui.py` 가 잡혀야 한다.
+      `"water"` 면 총질량 −27 % 가 그대로 재발한다)
+- [ ] **어느 `desk_lamp.py` 인가** — 파지점을 핀치 점으로 잡는지 부피 도심으로
+      잡는지에 따라 기준점 거리가 173.9 / 187.7 mm 로 달라진다. 지금 트리의
+      정의를 그대로 쓰기로 정하면 된다 (measured 모드는 실측 파지를 쓴다).
+      ```bash
+      grep -c 'geometry\[root\]\["centroid"\]' my_work/desk_lamp.py
+      ```
+- [ ] **타어를 이 PC·이 배선으로 새로 잰다** (옛 파일·다른 PC 파일 재사용 금지)
+      ```bash
+      PIVOT_WORKDIR=$PWD $R python integration/meshpca/tare_real.py --setup --dirs 8 \
+          --tool-kg 0.65 --output calibration/aft_tare_current.json --overwrite
+      $R python my_work/tare_check.py calibration/aft_tare_current.json
+      ```
+      합격: 힘 잔차 **≤ 0.5 N**, 토크 ≤ 0.02 N·m, 센서 축 ≤ 5°.
+      지난 세션 수준(4.35 N)이면 거부된다 — 센서가 아니라 **케이블을 팔에
+      고정**하고 다시 잰다 (tare_check 가 그 처방을 찍어 준다)
+- [ ] **AFT200 렌치 기준점**: 코드는 `ft_mount` 원통(52.3 mm) 중심을 쓴다.
+      데이터시트의 기준 평면이 다르면 그 상수(최대 ~26 mm)를
+      `robot_scene.sensor_object_transform` 에 넣는다
+- [ ] **conf**: `GRASP_FRAME=measured`, `TOTAL_MASS_KG=<저울 kg>`,
+      `GRASP_SIGMA_MM=15`, `GRASP_MU_MM` 비움, `TARE_MODE=gravity`.
+      preflight 가 이 넷을 검사한다 (`토크 기준점 / 저울 총질량 / 파지 사전평균 / 파지 불확실성`)
+- [ ] **파지 단계 직후** 좌표계 규약 검사 — 회전 차이가 **수십 도**면 중단
+      ```bash
+      $R python tools/check_grasp_frames.py --object desklamp --grasp sessions/<세션>/grasp.json
+      ```
+      (09-04 세션 파지로는 10.07° = 정상)
+- [ ] **탐색 1라운드 뒤** `sessions/<세션>/exploration_round_1.json` 에
+      `wrench_raw` 18개가 있는지, 영점 뺀 힘의 크기가 **≈ 5.6 N**(571 g)인지.
+      크게 다르면 파지/타어/부호 중 하나가 틀린 것이다.
+      토크는 추정에, 힘은 **검산에** 쓴다
+- [ ] **실패 판독**: `estimated_grasp_offset_mm` 이 ±50 에 붙어 있으면 기준점,
+      `prior_densities` 가 `[1000,1000,1000]` 이면 prior, 총질량이 저울과
+      다르면 `TOTAL_MASS_KG` 배선을 의심한다
 
 ## 6. 실험
 

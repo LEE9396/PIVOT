@@ -11,7 +11,7 @@
   - 버튼      "카메라 시점으로 보기" 를 누르면 화면이 D456 위치로 이동
 
 실행:
-    cd ~/Desktop/PIVOT/my_work
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python lab_view.py \
         --plan outputs/plan_3link.json
     # 계획 없이 배치만 보려면
@@ -181,9 +181,7 @@ def main():
                     changed = True
             if meshcat.GetButtonClicks(camera_button) != camera_clicks:
                 camera_clicks = meshcat.GetButtonClicks(camera_button)
-                meshcat.SetCameraPose(
-                    np.array(rs.CAMERA["position_xyz_m"]),
-                    np.array(rs.CAMERA["look_at_xyz_m"]))
+                meshcat.SetCameraPose(*rs.camera_view(rs.CAMERA))
                 print("  -> D456 시점")
             if meshcat.GetButtonClicks(reset_button) != reset_clicks:
                 reset_clicks = meshcat.GetButtonClicks(reset_button)

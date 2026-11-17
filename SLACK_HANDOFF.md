@@ -19,7 +19,7 @@ PIVOT 에 이어 붙여서 **실험용 창 4개**를 띄울 수 있게 만들었
 **막혀 있는 것 하나**
 - `hardware_real.RbpodoBackend` 가 `NotImplementedError` 입니다.
   `--hardware real` 이 `connect_hardware` 에서 바로 죽어서 **실물 실험이 시작조차 안 됩니다.**
-- `~/MeshPCA/pivot/tare_real.py` 가 `hw.Rb5Driver(ip, enable_motion=True, ...)` 와
+- `~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py` 가 `hw.Rb5Driver(ip, enable_motion=True, ...)` 와
   `rbpodo.CobotData(ip)` 를 쓰고 있으니, **그쪽 PC 에 도는 구현이 이미 있을 것 같습니다.**
   그 코드를 받을 수 있을까요? `joint_positions / move_to / halt / set_servo` 네 개면 됩니다.
 
@@ -33,17 +33,17 @@ Claude Code 에 아래를 그대로 붙여 넣으시면 됩니다.
 PIVOT 실물 실험 환경을 이 PC 에 구성해 줘. 캘리브레이션은 이미 끝난 상태야.
 
 저장소 두 개:
-  git clone -b theory-and-deploy https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT
-  git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/MeshPCA
+  git clone -b theory-and-deploy https://github.com/LEE9396/PIVOT.git ~/Research/1.PIVOT/code/PIVOT
+  git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/Research/1.PIVOT/code/MeshPCA
 
-절차는 ~/Desktop/PIVOT/EXPERIMENT.md 에 전부 있어. 그걸 읽고 따라가 줘.
+절차는 ~/Research/1.PIVOT/code/PIVOT/EXPERIMENT.md 에 전부 있어. 그걸 읽고 따라가 줘.
 저장소 규칙은 AGENTS.md, 부위 이름 대응은 my_work/NAMING.md 에 있어.
 
 ━━ 가장 먼저 할 일 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 이 PC 에서 RB5 를 실제로 움직이는 코드를 찾아 줘.
 
-~/MeshPCA/pivot/tare_real.py 가 이렇게 부르고 있어:
+~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py 가 이렇게 부르고 있어:
     hw.Rb5Driver(ip, enable_motion=True, max_speed_deg_s=..., max_accel_deg_s2=...)
     rbpodo.CobotData(ip) / data.request_data(2.0).sdata.jnt_ang[:6]
 
@@ -72,24 +72,24 @@ connect_hardware 에서 바로 죽어서 실물 실험이 시작조차 안 돼.
      ../setup/doctor.py
 
 3. 캘리브레이션 결과를 PIVOT 형식으로 옮긴다
-     cd ~/Desktop/PIVOT/my_work
+     cd ~/Research/1.PIVOT/code/PIVOT/my_work
      $R python import_calibration.py --input <MeshPCA handeye JSON 경로>
    ★ 이걸 안 하면 PIVOT 이 명목 카메라 위치로 조용히 돌아. 라운드를
      늘려도 안 없어지는 치우침이 생겨.
 
 4. 3자세 타어를 잰다 (빈 그리퍼로, 물체 물기 전에)
-     PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --plan-only
-     PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py \
+     PIVOT_WORKDIR=$PWD $R python ~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py --plan-only
+     PIVOT_WORKDIR=$PWD $R python ~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py \
          --output calibration/aft_tare_current.json --overwrite
    ★ --plan-only 로 먼저 경로를 확인하고, 로봇을 실제로 움직이기 전에
      나한테 확인받아 줘.
 
 5. 창 2 오버레이 패치 적용
-     cd ~/MeshPCA && git apply \
-       ~/Desktop/PIVOT/my_work/integration/foundationpose_grasp_overlay.patch
+     cd ~/Research/1.PIVOT/code/MeshPCA && git apply \
+       ~/Research/1.PIVOT/code/PIVOT/my_work/integration/foundationpose_grasp_overlay.patch
 
 6. 런처 설정
-     cd ~/Desktop/PIVOT
+     cd ~/Research/1.PIVOT/code/PIVOT
      cp setup/experiment.conf.example setup/experiment.conf
    이 PC 의 실제 경로·IP·conda 환경 이름으로 채워 줘.
 
@@ -116,7 +116,7 @@ connect_hardware 에서 바로 죽어서 실물 실험이 시작조차 안 돼.
 ## GUI 띄우는 코드
 
 ```bash
-cd ~/Desktop/PIVOT
+cd ~/Research/1.PIVOT/code/PIVOT
 cp setup/experiment.conf.example setup/experiment.conf   # 경로·IP·물체 설정
 $EDITOR setup/experiment.conf
 

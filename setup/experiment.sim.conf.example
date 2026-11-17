@@ -1,0 +1,53 @@
+# 장비 없이 통합 UI 를 끝까지 돌려보는 설정 — 데스크 램프
+#
+#   cp setup/experiment.sim.conf.example setup/experiment.sim.conf
+#   ./setup/quickstart_sim.sh
+#
+# 실물 conf(experiment.conf.example)와 키가 같다. 다른 점은 셋뿐이다.
+#   ROBOT_HOST 비움   -> dual_view 가 --hardware sim (모의 렌치·자세·타어)
+#   FP_OUTPUT 비움    -> 0단계가 FoundationPose 를 기다리지 않는다
+#   GRASP_FRAME=legacy -> 실측 파지 파일이 없으므로 자산의 짐작 파지
+# 나머지(총질량, 파지 불확실성, 각도 오차, 목표)는 실물과 같은 값을 둔다.
+# 그래야 리허설에서 본 화면과 숫자가 실물과 같은 뜻을 가진다.
+
+# ---- 저장소 위치 -----------------------------------------------------------
+PIVOT_ROOT=~/Desktop/PIVOT
+# 아래 셋은 리허설에서 쓰지 않는다. 비워 둬도 된다.
+MESHPCA_ROOT=
+FOUNDATIONPOSE_ROOT=
+SAM3_ROOT=
+
+# ---- 장비: 전부 비움 = 모의 --------------------------------------------------
+ROBOT_HOST=
+AFT_HOST=
+GRIPPER_PORT=none
+
+# ---- 물체 -----------------------------------------------------------------
+LAMP_ASSET_DIR=~/Desktop/PIVOT/assets/final_objects/lamp
+OBJECT=desklamp
+GRASP_PART=link_3
+GRASP_FRAME=legacy
+FP_GRASP_PART=support
+FP_MESH_DIR=~/Desktop/PIVOT/assets/final_objects/lamp/visual_meshes
+FP_OUTPUT=
+
+# ---- 추정기 — 실물과 같은 값 ----------------------------------------------------
+TOTAL_MASS_KG=0.571
+GRASP_SIGMA_MM=15
+GRASP_MU_MM=
+TARE_MODE=table
+ANGLE_FLOOR_DEG=3.0
+ANGLE_REL_ERROR=0.0
+ANGLE_MARGIN_DEG=0.0
+PART_NAMES=base,support,head
+
+# ---- 탐색 — 빨리 보려고 줄인 값 ----------------------------------------------------
+TARGET=0.05
+MAX_ROUNDS=3
+MOVE_DURATION=1
+# 관절당 후보 3개 (기본 5)
+STEPS=3
+# 격자 탐색. 연속 탐색은 램프에서 수십 분 걸린다
+SELECT=grid
+# RRT 반복 (기본 20000)
+PLAN_ITERS=3000

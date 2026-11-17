@@ -30,9 +30,9 @@
      "opening_m": 0.0452}     죠를 벌려 둘 개구량 (폭 + 여유)
 
 실행:
-    cd ~/Desktop/PIVOT/my_work
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python grasp_target.py \\
-        --mesh ~/MeshPCA/foundationpose/assets/lamp/support_metric_watertight.ply \\
+        --mesh ~/Research/1.PIVOT/code/MeshPCA/foundationpose/assets/lamp/support_metric_watertight.ply \\
         --part support --out outputs/grasp_target_lamp.json
 """
 

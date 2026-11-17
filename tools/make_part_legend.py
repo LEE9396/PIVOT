@@ -47,6 +47,48 @@ def read_vertices(path, limit=40000):
     return vertices
 
 
+def read_ply_cloud(path, limit=40000):
+    """삼각 메시 PLY와 3DGS PLY에서 위치와 표시색을 읽는다."""
+    types = {"char": "i1", "uchar": "u1", "int8": "i1", "uint8": "u1",
+             "short": "<i2", "ushort": "<u2", "int16": "<i2", "uint16": "<u2",
+             "int": "<i4", "uint": "<u4", "int32": "<i4", "uint32": "<u4",
+             "float": "<f4", "float32": "<f4", "double": "<f8", "float64": "<f8"}
+    properties, count, vertex = [], 0, False
+    with open(path, "rb") as handle:
+        header = []
+        while True:
+            line = handle.readline().decode("ascii").strip()
+            header.append(line)
+            if line.startswith("format "):
+                binary = "binary_little_endian" in line
+            elif line.startswith("element "):
+                vertex = line.startswith("element vertex ")
+                if vertex:
+                    count = int(line.split()[2])
+            elif vertex and line.startswith("property ") and " list " not in line:
+                _, kind, name = line.split()
+                properties.append((name, types[kind]))
+            elif line == "end_header":
+                break
+        if binary:
+            rows = np.fromfile(handle, np.dtype(properties), count=count)
+            values = {name: rows[name] for name, _ in properties}
+        else:
+            data = np.loadtxt(handle, max_rows=count, ndmin=2)
+            values = {name: data[:, index]
+                      for index, (name, _) in enumerate(properties)}
+    points = np.column_stack([values[key] for key in ("x", "y", "z")])
+    if all(key in values for key in ("red", "green", "blue")):
+        colors = np.column_stack([values[key] for key in ("red", "green", "blue")])
+    elif all(key in values for key in ("f_dc_0", "f_dc_1", "f_dc_2")):
+        colors = 255.0 * np.clip(0.5 + 0.28209479177387814 * np.column_stack(
+            [values[key] for key in ("f_dc_0", "f_dc_1", "f_dc_2")]), 0.0, 1.0)
+    else:
+        colors = np.full((len(points), 3), 180.0)
+    step = max(1, len(points) // limit + 1)
+    return points[::step], np.asarray(colors[::step], dtype=np.uint8)
+
+
 def render(clouds, out_path, title):
     import matplotlib
     matplotlib.use("Agg")
@@ -99,24 +141,35 @@ def main():
                     default=Path("/tmp/part_legend.png"))
     ap.add_argument("--parts", default=None,
                     help="쉼표로 구분한 부위 이름 (기본: 폴더의 .obj/.ply 전부)")
+    ap.add_argument("--files", default=None,
+                    help="표시명=파일명 목록. 예: base=gaussian_1.ply,head=gaussian_2.ply")
     ap.add_argument("--title", default=None)
     args = ap.parse_args()
 
     folder = args.mesh_dir.expanduser()
-    if args.parts:
+    file_map = dict(item.split("=", 1) for item in args.files.split(",")) \
+        if args.files else {}
+    if file_map:
+        names = list(file_map)
+    elif args.parts:
         names = [n.strip() for n in args.parts.split(",") if n.strip()]
     else:
         names = sorted({p.stem for p in folder.iterdir()
                         if p.suffix.lower() in (".obj", ".ply")})
     clouds = {}
     for name in names:
+        if name in file_map:
+            path = folder / file_map[name]
+            if path.is_file():
+                clouds[name] = read_ply_cloud(path)[0]
+            continue
         for suffix in (".obj", ".ply"):
             path = folder / f"{name}{suffix}"
             if path.is_file() and suffix == ".obj":
                 clouds[name] = read_vertices(path)
                 break
             if path.is_file():                    # .ply 는 헤더를 건너뛴다
-                clouds[name] = read_ply_vertices(path)
+                clouds[name] = read_ply_cloud(path)[0]
                 break
     missing = [n for n in names if n not in clouds]
     if missing:
@@ -133,22 +186,7 @@ def main():
 
 
 def read_ply_vertices(path, limit=40000):
-    with open(path, "rb") as handle:
-        header, count = [], 0
-        while True:
-            line = handle.readline().decode("ascii", "ignore")
-            header.append(line)
-            if line.startswith("element vertex"):
-                count = int(line.split()[2])
-            if line.strip() == "end_header":
-                break
-        text = "ascii" in "".join(header)
-        if not text:
-            raise SystemExit(f"{path} 는 binary PLY 다 — .obj 를 쓰라")
-        rows = [handle.readline().decode().split()[:3] for _ in range(count)]
-    points = np.asarray(rows, dtype=float)
-    step = len(points) // limit + 1
-    return points[::step]
+    return read_ply_cloud(path, limit)[0]
 
 
 if __name__ == "__main__":

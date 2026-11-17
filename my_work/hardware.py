@@ -6,13 +6,13 @@ dual_view 의 오른쪽 화면은 이미 '로봇에게 시키고 렌치를 받�
 그 일을 하는 주체를 갈아끼울 수 있게 인터페이스로 뽑아 둔 것이 이 모듈이다.
 
     RobotDriver   팔을 궤적대로 움직이고 현재 관절각을 알려준다
-    WrenchSensor  손목 렌치를 읽는다 (평균 + 타어링)
+    WrenchSensor  손목 렌치를 읽는다 (평균 + 영점 조정)
     PoseSensor    물체 관절각을 알려준다 (FoundationPose)
 
 각각 Sim* 구현이 기본으로 들어 있어 하드웨어 없이도 전 과정을 돌릴 수 있고,
 Rb5Driver / Aft200Sensor / FoundationPoseSensor 는 실물 붙일 자리다.
 
-실물에서 반드시 해야 하는 것 — 타어링
+실물에서 반드시 해야 하는 것 — 영점 조정
 --------------------------------------
 모형의 y 는 **물체만** 만드는 렌치다. 그런데 센서는 이것까지 다 읽는다.
 
@@ -28,6 +28,7 @@ Rb5Driver / Aft200Sensor / FoundationPoseSensor 는 실물 붙일 자리다.
 """
 
 from abc import ABC, abstractmethod
+import time
 
 import numpy as np
 
@@ -73,7 +74,7 @@ class WrenchSensor(ABC):
 
     @abstractmethod
     def read_raw(self, n_samples):
-        """평균 렌치 [Fx Fy Fz Tx Ty Tz]. 타어링 전 원값."""
+        """평균 렌치 [Fx Fy Fz Tx Ty Tz]. 영점 조정 전 원값."""
 
 
 class PoseSensor(ABC):
@@ -85,7 +86,7 @@ class PoseSensor(ABC):
 
 
 # ---------------------------------------------------------------------------
-# 타어링 — 실물에서 가장 놓치기 쉬운 단계
+# 영점 조정 — 실물에서 가장 놓치기 쉬운 단계
 # ---------------------------------------------------------------------------
 class TareTable:
     """중력 방향별 공회전 렌치.
@@ -94,7 +95,7 @@ class TareTable:
     그 값이 그리퍼 + 마운트 + 손가락이 만드는 몫이다.
 
     주의: 그리퍼를 열고 닫으면 손가락 위치가 바뀌어 무게중심이 움직인다.
-    타어링과 측정에서 **같은 개구량** 을 써야 한다.
+    영점 조정과 측정에서 **같은 개구량** 을 써야 한다.
     """
 
     def __init__(self):
@@ -110,12 +111,85 @@ class TareTable:
         offset = self.table.get(self.key(g_hat))
         if offset is None:
             raise KeyError(
-                f"중력 방향 {np.round(g_hat, 3)} 의 타어링 값이 없다. "
+                f"중력 방향 {np.round(g_hat, 3)} 의 영점 조정값이 없다. "
                 "물체를 잡기 전에 run_tare() 를 먼저 돌려야 한다.")
         return np.asarray(wrench, dtype=float) - offset
 
     def is_complete(self, g_dirs):
         return all(self.key(g) in self.table for g in g_dirs)
+
+
+class GravityTare:
+    """빈 공구 질량/1차 모멘트/바이어스를 고정하고 현재 센서 중력으로 보정한다.
+
+    물체 파지 후에는 계수를 다시 맞추지 않는다. g_hat은 월드 중력을 FK로
+    센서 좌표계에 옮긴 단위벡터이며, 회전된 공구 성분만 원시값에서 제거한다.
+    """
+
+    def __init__(self, payload, max_age_s=0., clock=time.time):
+        import tare_check as tc
+
+        if (payload.get("wrench_frame") != "ft_mount"
+                or payload.get("measured", {}).get("passed") is not True):
+            raise ValueError("ft_mount 좌표계에서 검증된 빈 공구 영점이 필요합니다")
+        entries = payload["entries"]
+        directions = np.asarray([e["achieved_g_hat"] for e in entries], dtype=float)
+        values = np.asarray([e["wrench"] for e in entries], dtype=float)
+        if (directions.ndim != 2 or directions.shape[1] != 3 or len(directions) < 4
+                or values.shape != (len(directions), 6)
+                or not np.all(np.isfinite(directions)) or not np.all(np.isfinite(values))
+                or not np.allclose(np.linalg.norm(directions, axis=1), 1., atol=1e-5)):
+            raise ValueError("실제 중력 방향과 6축 빈 공구 렌치가 4자세 이상 필요합니다")
+        # 한 자세 근처의 자료를 넓은 방향의 중력 보정으로 외삽하지 않는다.
+        design = np.column_stack([np.ones(len(directions)), directions])
+        self.condition = float(np.linalg.cond(design))
+        if np.linalg.matrix_rank(design) < 4 or self.condition > 100.:
+            raise ValueError("중력 방향의 분포가 부족해 연속 영점을 식별할 수 없습니다")
+        bf, weight, force_residual = tc.fit_force(directions, values[:, :3])
+        bt, moment, torque_residual = tc.fit_torque(directions, values[:, 3:])
+        if not np.all(np.isfinite(np.r_[bf, weight, bt, moment,
+                                       force_residual, torque_residual])):
+            raise ValueError("빈 공구 중력 모델 계수가 유한하지 않습니다")
+        if weight * alg.FORCE_SIGN <= 0:
+            raise ValueError("공구 힘의 부호가 추정기 중력 부호와 다릅니다")
+        self.bias = np.r_[bf, bt]
+        self.weight_n = weight
+        self.moment_kg_m = moment
+        self.mass_kg = abs(weight) / alg.G_ACC
+        self.com_m = moment / (weight / alg.G_ACC)
+        self.created_at_s = float(payload["created_at_s"])
+        self.max_age_s, self.clock = float(max_age_s), clock
+        if (not np.isfinite(self.created_at_s) or self.created_at_s <= 0
+                or not np.isfinite(self.max_age_s) or self.max_age_s < 0):
+            raise ValueError("유효한 영점 측정 시각과 유효기간이 필요합니다")
+        residual = values - np.asarray([self.predict(g) for g in directions])
+        self.residual_rms = np.sqrt(np.mean(residual**2, axis=0))
+        # 허용치는 방향 수에 비례하고(3방향 기준 성분당 RMS 유지), 환경변수 override 가
+        # 있으면 그것을 쓴다 — tare_check 와 같은 규칙, 같은 기록.
+        limits = tc.residual_limits(len(directions))
+        self.residual_limits = limits
+        if (force_residual > limits["force_n"]
+                or torque_residual > limits["torque_nm"]):
+            raise ValueError(
+                f"빈 공구 중력 모델의 맞춤 잔차가 허용치를 넘습니다 "
+                f"(힘 {force_residual:.3f}/{limits['force_n']:.3f} N, "
+                f"토크 {torque_residual:.4f}/{limits['torque_nm']:.4f} N·m, {len(directions)}방향)")
+
+    def predict(self, g_hat):
+        g = np.asarray(g_hat, dtype=float)
+        if (g.shape != (3,) or not np.all(np.isfinite(g))
+                or not np.isclose(np.linalg.norm(g), 1., atol=1e-5)):
+            raise ValueError("센서 좌표계의 유한한 단위 중력 방향이 필요합니다")
+        return self.bias + np.r_[self.weight_n * g,
+                                 alg.G_ACC * np.cross(self.moment_kg_m, g)]
+
+    def apply(self, g_hat, wrench):
+        if self.max_age_s > 0 and self.clock() - self.created_at_s > self.max_age_s:
+            raise RuntimeError("연속 중력 보정의 빈 공구 측정 유효기간이 지났습니다")
+        raw = np.asarray(wrench, dtype=float)
+        if raw.shape != (6,) or not np.all(np.isfinite(raw)):
+            raise ValueError("유한한 6축 원시 렌치가 필요합니다")
+        return raw - self.predict(g_hat)
 
 
 def run_tare(robot, sensor, arm_poses, n_samples, settle_s=1.0,
@@ -127,7 +201,7 @@ def run_tare(robot, sensor, arm_poses, n_samples, settle_s=1.0,
     import time
 
     table = TareTable()
-    log("[타어] 물체를 잡지 않은 상태인지 확인하세요. 그리퍼 개구량은"
+    log("[영점 조정] 물체를 잡지 않은 상태인지 확인하세요. 그리퍼 개구량은"
         " 측정 때와 같아야 합니다.")
     for g_hat, arm_q in arm_poses.items():
         robot.follow([arm_q], duration_s)
@@ -135,7 +209,7 @@ def run_tare(robot, sensor, arm_poses, n_samples, settle_s=1.0,
         time.sleep(settle_s)
         raw = sensor.read_raw(n_samples)
         table.record(g_hat, raw)
-        log(f"[타어] g={np.round(g_hat, 2)}  "
+        log(f"[영점 조정] g={np.round(g_hat, 2)}  "
             f"F={np.round(raw[:3], 4)} N  T={np.round(raw[3:], 5)} N·m")
     return table
 
@@ -175,7 +249,7 @@ class SimRobot(RobotDriver):
 
 
 class SimWrench(WrenchSensor):
-    """진리 plant 에서 계산한 렌치 + 잡음. 타어링 값은 0 이다."""
+    """진리 plant 에서 계산한 렌치 + 잡음. 영점 조정값은 0 이다."""
 
     def __init__(self, theta_getter, g_hat_getter, rng=None):
         self.theta_getter = theta_getter
@@ -247,7 +321,8 @@ class Aft200Sensor(WrenchSensor):
       read_raw : n_samples 개를 모아 축별 평균
 
     주의
-      - 온도 드리프트가 있다. 세션 시작 때, 그리고 30분마다 타어링을 다시 한다.
+      - 이 실험은 세션 시작 때 한 번 영점을 조정하고 세션 동안 재사용한다.
+        온도 변화나 드리프트가 의심될 때만 작업자가 다시 측정한다.
       - 코드의 잡음 모형은 1000 샘플 평균 + 평균으로 안 줄어드는 5 % 바이어스
         를 가정한다 (obj.set_measurement_averaging).
       - 센서 좌표계가 모형의 센서 프레임과 같은 방향인지 확인해야 한다.

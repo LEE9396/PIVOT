@@ -11,7 +11,7 @@
 섞지 않도록 패널을 나눴다.
 
 실행:
-    cd ~/Desktop/PIVOT/my_work
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python figures/make_ppt_figures.py
 """
 import numpy as np

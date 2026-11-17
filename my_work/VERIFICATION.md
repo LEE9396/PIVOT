@@ -211,7 +211,7 @@ Drake가 물체의 총질량과 무게중심에서 정확한 힘·토크를 계�
 ### 실행
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 R=../robot_learning/scripts/run_drake_env.sh
 
 # 데스크 램프 (스캔 메시)
@@ -329,7 +329,8 @@ Robotiq 2F-85만 해도 0.4 kg가 넘습니다. 램프 전체가 0.56 kg인데 �
 자세마다 그리퍼 무게가 다른 방향으로 실리므로 **방향별로 따로** 재야 합니다.
 그리고 손가락 개구량이 바뀌면 무게중심도 바뀌니 **같은 개구량**으로 재세요.
 
-센서에 온도 드리프트가 있으므로 **30분마다 다시** 재는 것이 안전합니다.
+영점 조정은 **실험 시작 때 한 번** 측정하고 같은 세션에서 재사용합니다.
+온도 변화나 드리프트가 의심될 때만 작업자가 다시 측정합니다.
 
 **② 파지 위치 고정 — 그리고 남는 어긋남은 함께 풉니다**
 
@@ -604,7 +605,7 @@ desklamp   robotiq2f85     27.4mm   78mm     20/25     52.6s
 ## 5. 명령 모음
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 R=../robot_learning/scripts/run_drake_env.sh
 ```
 

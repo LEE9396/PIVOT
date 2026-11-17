@@ -1,6 +1,6 @@
 #!/bin/bash
 # p=5 가 끝나면 p=6 을 이어서 돌린다. 세션이 끝나도 살아남는다.
-cd /home/junhyeoklee/Desktop/PIVOT/my_work
+cd /home/junhyeoklee/Research/1.PIVOT/code/PIVOT/my_work
 
 echo "[$(date +%H:%M:%S)] p=5 종료 대기 중..."
 while pgrep -f "study_scaling.py --parts 5" > /dev/null; do sleep 60; done

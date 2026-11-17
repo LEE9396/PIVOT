@@ -1,0 +1,38 @@
+{
+  "round": 0,
+  "measurement_round": 3,
+  "parts": [
+    {
+      "name": "link_3",
+      "label": "\uc5f0\uacb0\ubd80(Arm)",
+      "volume_m3": 8.759413206132561e-05
+    },
+    {
+      "name": "link_1",
+      "label": "\ubca0\uc774\uc2a4",
+      "volume_m3": 0.0002727843079799923
+    },
+    {
+      "name": "link_2",
+      "label": "Head",
+      "volume_m3": 6.635301167887799e-05
+    }
+  ],
+  "prior_densities_kg_m3": [
+    1000.0,
+    1000.0,
+    1000.0
+  ],
+  "densities_kg_m3": [
+    50.00000000213091,
+    1500.2605181060007,
+    50.00000000304894
+  ],
+  "relative_half_width": [
+    27433.569030881034,
+    283.34471203153913,
+    10477.914676008162
+  ],
+  "converged": false,
+  "updated_at": 1788512623.697168
+}

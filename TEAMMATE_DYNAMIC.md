@@ -32,7 +32,7 @@ my_work/ 에서 ../robot_learning/scripts/run_drake_env.sh python ... 으로 한
 Drake 1.54 고정.
 
 ━━ 0. 저장소·환경 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  cd ~/Desktop/PIVOT && git fetch origin && git checkout real-experiment-ready && git pull
+  cd ~/Research/1.PIVOT/code/PIVOT && git fetch origin && git checkout real-experiment-ready && git pull
   ./setup/bootstrap.sh
   $R python setup/doctor.py                      # 전부 통과
   먼저 읽을 것: TEAMMATE_DYNAMIC.md (이 파일), my_work/dynex/README.md 6·7절,

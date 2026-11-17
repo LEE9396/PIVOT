@@ -20,7 +20,7 @@
 | `grasp_check_3link` | `study_grasp.py` | 후보 자세의 파지 가능성 판정 | III-D 여유 시 |
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 R=../robot_learning/scripts/run_drake_env.sh
 
 $R python figures/make_ppt_figures.py          # nullspace / column_angle / spread_source

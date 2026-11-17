@@ -24,7 +24,7 @@
 
 ```bash
 # 작업 PC
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 ../robot_learning/scripts/run_drake_env.sh python dual_view.py \
     --mode deploy --object 3link --bus tcp --bus-port 5555
 # 로봇 PC
