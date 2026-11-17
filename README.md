@@ -30,8 +30,8 @@ URDF 를 내놓는 연구 코드입니다.
 ## 빨리 시작하기
 
 ```bash
-git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT
-cd ~/Desktop/PIVOT
+git clone https://github.com/LEE9396/PIVOT.git ~/Research/1.PIVOT/code/PIVOT
+cd ~/Research/1.PIVOT/code/PIVOT
 ./setup/bootstrap.sh                    # 파이썬 3.12 + Drake 1.54 + 자가 진단
 
 cd my_work
@@ -55,7 +55,7 @@ AI 에게 시킬 거라면 [AGENTS.md](AGENTS.md) 를 읽히세요.
 그냥 `python` 을 부르면 pydrake 임포트가 조용히 깨집니다.
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 R=../robot_learning/scripts/run_drake_env.sh
 ```
 

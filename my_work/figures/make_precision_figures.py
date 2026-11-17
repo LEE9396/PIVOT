@@ -17,7 +17,7 @@ p 는 순서가 있는 양이므로 범주형 색이 아니라 **단일 색상 �
 담당하므로 색만으로 식별하지 않는다.
 
 실행:
-    cd ~/Desktop/PIVOT/my_work
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python figures/make_precision_figures.py
 """
 import json

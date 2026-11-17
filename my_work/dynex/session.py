@@ -225,8 +225,10 @@ class DynexSession:
             backend = hr.RbpodoBackend(host=a.robot_host)
             self.arm = hr.Rb5Driver(backend)
             self.wrench = hr.Aft200Stream(a.aft_host, a.aft_hz)          # 스트리밍 + 호스트 시각
-            self.pose = hr.FoundationPoseSensor(*hr.pose_file_reader(a.pose_file, a.pose_keys),
-                                                n_joint=len(self.spec.joints))
+            read_fn, stamp_fn = hr.pose_file_reader(a.pose_file, a.pose_keys)
+            # 시각 함수를 꼭 넘긴다: 트래커가 멈춰 옛 값을 계속 주면 미끄러짐을 영영 못 본다
+            self.pose = hr.FoundationPoseSensor(read_fn, len(self.spec.joints), default_sigma_deg=2.0,
+                                                stamp_fn=stamp_fn, max_age_s=2.0)
             self.total_mass = a.total_mass_kg
             if self.total_mass is None:
                 raise SystemExit("--total-mass-kg (저울) 이 필요합니다")
@@ -303,6 +305,13 @@ class DynexSession:
             return [self.candidates[i] for i in idx]
         return self.candidates
 
+    def _move(self, q, duration_s):
+        """팔 이동. 실물 Rb5Driver 는 move_to 가 없고 follow(경유점) 만 있다."""
+        if hasattr(self.arm, "move_to"):
+            self.arm.move_to(q, duration_s)
+        else:
+            self.arm.follow([np.asarray(q, float)], duration_s)
+
     def read_theta(self):
         deg, sigma = self.pose.object_joint_deg()
         return np.deg2rad(np.atleast_1d(deg)), np.deg2rad(np.atleast_1d(sigma))
@@ -314,16 +323,25 @@ class DynexSession:
                                period_s=hold_s, n_harmonics=2, n_samples=4)
         Yp, y = [], []
         zero = np.zeros(6)
-        for k in range(n):
-            if self.args.hardware == "sim":
-                raw = self.wrench.read_at(q, zero, zero)
-            else:
-                raw = self.wrench.read_one()
-            kin = self.model.evaluate(q, zero, zero, theta)
-            Y = rigid_body_regressor(kin["a_o"], kin["omega"], kin["alpha"], kin["g"])
+        kin = self.model.evaluate(q, zero, zero, theta)
+        Y = rigid_body_regressor(kin["a_o"], kin["omega"], kin["alpha"], kin["g"])
+        if self.args.hardware == "sim":
+            samples = [(k / self.sensor.rate_hz, self.wrench.read_at(q, zero, zero)) for k in range(n)]
+        else:
+            # read_one() 은 새 샘플을 기다리지 않고 최신값을 돌려주므로 반복해 부르면 같은 샘플을
+            # 수십 번 세게 된다 (σ 과신 → 힌지 예산 과성장). 스트림 버퍼를 비우고 hold_s 뒤에 쌓인 것만 쓴다.
+            self.wrench.drain()
+            time.sleep(hold_s)
+            drained = self.wrench.drain()
+            if not drained:
+                raise RuntimeError("렌치 샘플이 없습니다 — AFT200 스트림을 확인하세요")
+            t0 = drained[0][0]
+            samples = [(t - t0, np.asarray(raw, float)) for t, raw in drained]
+            n = len(samples)
+        for t, raw in samples:
             Yp.append(Y @ d.Mstack)
             y.append(raw - Y @ self.tool_est)
-            writer.writerow([t_offset + k / self.sensor.rate_hz, *q, *raw, *(raw - Y @ self.tool_est)])
+            writer.writerow([t_offset + t, *q, *raw, *(raw - Y @ self.tool_est)])
         return np.vstack(Yp), np.concatenate(y), n
 
     def run_round(self, r):
@@ -382,7 +400,7 @@ class DynexSession:
                 print(f"  정적 자세 {k + 1}: 예측 힌지 토크 {np.round(bound, 3)} 가 예산 밖 — 건너뜀")
                 continue
             self.lamp("moving", f"정적 자세 {k + 1}/{len(predicted)} 로 이동")
-            self.arm.move_to(q, a.move_duration)
+            self._move(q, a.move_duration)
             self.show(q, theta if a.hardware == "real" else self.theta_true)
             time.sleep(a.settle_s if a.hardware == "real" else 0.0)
             if a.hardware == "sim":
@@ -439,7 +457,7 @@ class DynexSession:
             self.ask("여기 궤적 승인 — 로봇이 8초간 움직입니다")
             # 3) 실행 + 샘플
             self.lamp("moving", "여기 궤적 실행 중")
-            self.arm.move_to(pick["q0"], a.move_duration)
+            self._move(pick["q0"], a.move_duration)
             dt = 1.0 / self.sensor.rate_hz
             if a.hardware == "sim":
                 samples = self.arm.stream(lambda t: tuple(v[0] for v in d.traj.evaluate(x, [t])), d.traj.T, dt)
@@ -539,7 +557,9 @@ class DynexSession:
         null = np.linalg.svd(self.V_all.T, full_matrices=True)[2][self.V_all.shape[1]:]
         asset = dict(object=self.spec.key, sensor=self.args.sensor, rounds=self.round_done,
                      parts=[], invisible_combinations=null.tolist(),
-                     note="invisible_combinations 방향의 값은 측정이 아니라 사전분포(균일 밀도, 힌지는 자식 링크 핀 축)로 정해졌다. 이 방향은 시뮬레이션 결과를 바꾸지 않는다.")
+                     note="invisible_combinations 방향의 값은 측정이 아니라 사전분포(균일 밀도, 힌지는 자식 링크 핀 축)로 정해졌다. "
+                          "관절당 4개 중 3개(축 위 질량·축상 위치·축 방향 퍼짐)는 시뮬레이션 결과를 바꾸지 않지만, "
+                          "1개(힌지축 둘레 관성)는 관절이 움직이는 시뮬레이션의 결과를 바꾼다 (논의정리 2026-09-12 4절).")
         for k, p in enumerate(self.spec.parts):
             mu = self.est.mean[10 * k:10 * (k + 1)]
             asset["parts"].append(dict(name=p.name, mass_kg=float(mu[0]), com_m=com(mu).tolist(),

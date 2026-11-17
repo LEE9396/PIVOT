@@ -2,8 +2,8 @@
 
 ## 0. 무엇을 하는 작업인가
 `~/Downloads/ICRA-27-ROBIN` (v1 초안) 을 **`paper guideline v2.txt` 방향으로 개정**한다.
-작업 트리는 `~/Desktop/PIVOT/paper_v2/` (v1 을 복사해 둠). v1 파일을 **고쳐 쓴다**.
-가이드라인 원문: `~/Desktop/PIVOT/paper guideline v2.txt` — **반드시 먼저 읽을 것.**
+작업 트리는 `~/Research/1.PIVOT/code/PIVOT/paper_v2/` (v1 을 복사해 둠). v1 파일을 **고쳐 쓴다**.
+가이드라인 원문: `~/Research/1.PIVOT/code/PIVOT/paper guideline v2.txt` — **반드시 먼저 읽을 것.**
 
 ## 1. 양식 규칙 (v1 과 동일하게 유지)
 - IEEEtran conference, `main.tex` 가 `1_intro/2_relwork/3_method/4_exp/5_conclusion` 을 `\input`.
@@ -102,7 +102,7 @@ custom object 2개는 힌지를 **독립 미지수**로 둔다 (플랜트의 별
 → **틀렸는데 맞았다고 확신하는 실패**. 힌지를 부위로 세어야 하는 이유의 정량적 근거.
 
 ## 5. 실험 물체 (사용자 확정)
-GT 는 `~/Downloads/gt_list.md` 가 **권위 있는 최신본**. v1 표의 부피와 다르므로 v1 값을 쓰지 말 것.
+GT 는 `~/Research/1.PIVOT/notes/gt_list.md` 가 **권위 있는 최신본**. v1 표의 부피와 다르므로 v1 값을 쓰지 말 것.
 
 | 물체 | part | 부피 cm^3 | 질량 g | 밀도 g/cm^3 |
 |---|---|---|---|---|

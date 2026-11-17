@@ -693,7 +693,7 @@ def rb5_stream(driver, q_fn, duration_s, dt=0.005):
 class Aft200Stream:
     """AFT200 을 배경 스레드에서 계속 읽는다. read_one() 은 최신값, drain() 은 누적 (t, raw)."""
 
-    def __init__(self, host, hz=100.0, meshpca_root="~/MeshPCA"):
+    def __init__(self, host, hz=100.0, meshpca_root="~/Research/1.PIVOT/code/MeshPCA"):
         import sys as _sys
         from pathlib import Path as _Path
         _sys.path.insert(0, str(_Path(meshpca_root).expanduser() / "pivot"))

@@ -22,9 +22,9 @@ PIVOT 의 월드는 **로봇 베이스**다 (robot_scene 이 link0 을 월드에
 안 없어지는 치우침이다 (calibration/README.md).
 
 실행:
-    cd ~/Desktop/PIVOT/my_work
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python import_calibration.py \\
-        --input ~/MeshPCA/calibration/handeye_d456.json
+        --input ~/Research/1.PIVOT/code/MeshPCA/calibration/handeye_d456.json
 """
 
 import argparse

@@ -38,7 +38,7 @@ Claude 앱에서 이 파일 하나로 PPT 초안이 나오도록 만든 문서�
 2. 맨 아래 [§5 프롬프트](#5-claude-앱에-붙여넣을-프롬프트)를 복사해 붙여넣는다.
 3. 나온 초안을 보고 슬라이드 단위로 고쳐 달라고 한다.
 
-### 첨부할 그림 (`~/Desktop/PIVOT/my_work/figures/`)
+### 첨부할 그림 (`~/Research/1.PIVOT/code/PIVOT/my_work/figures/`)
 
 | 파일 | 쓰는 곳 | 무엇이 보이나 |
 | --- | --- | --- |

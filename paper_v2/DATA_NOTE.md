@@ -1,6 +1,6 @@
 # GT 데이터 정합성 문제 (초안 작성 중 발견) — 사용자 확인 요망
 
-`~/Downloads/gt_list.md` 의 **밀도 열이 부피 열과 맞지 않습니다.**
+`~/Research/1.PIVOT/notes/gt_list.md` 의 **밀도 열이 부피 열과 맞지 않습니다.**
 custom object 는 완전히 정합하나, **Stand Lamp 3개 part 전부와 Laptop Base** 가 어긋납니다.
 
 | 물체 | part | V (gt_list) | M (gt_list) | rho (gt_list) | M/V 계산값 | 판정 | 구 부피로 계산 |

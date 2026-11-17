@@ -13,7 +13,7 @@
 직육면체 공식으로 닫힌 형태가 나온다. 값은 Drake 로 되읽어 검증한다.
 
 실행:
-    cd ~/Desktop/PIVOT/my_work
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python export_urdf.py \
         --object 3link --out outputs/estimated_3link.urdf
 """

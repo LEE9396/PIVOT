@@ -1,7 +1,7 @@
 # PIVoT v2 — 확보된 실험 결과 (Experiments 절 집필용 원자료)
 
 모든 수치는 **시뮬레이션**이다. 실물 로봇 데이터는 아직 없다 (`REAL_ROBOT_TODO.md`).
-원본 JSON 은 `~/Desktop/PIVOT/my_work/figures/v2/`, 로그는 `~/Desktop/PIVOT/my_work/logs_v2/`.
+원본 JSON 은 `~/Research/1.PIVOT/code/PIVOT/my_work/figures/v2/`, 로그는 `~/Research/1.PIVOT/code/PIVOT/my_work/logs_v2/`.
 
 ---
 

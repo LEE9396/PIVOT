@@ -42,13 +42,14 @@ TOOLS = HERE.parent / "tools"
 class Conductor:
     """단계 기계. 창 1 이 이걸 돌린다."""
 
-    def __init__(self, conf_path, session, console=None, auto=False, sim=False):
+    def __init__(self, conf_path, session, console=None, auto=False, sim=False, terminal=False):
         self.conf_path = Path(conf_path)
         self.conf = self._read_conf()
         self.session = session
         self.console = console
         self.auto = auto
         self.sim = sim            # True 면 장비·캘리브레이션 없이 모의 장비로 끝까지
+        self.terminal = terminal  # True 면 브라우저 없이 터미널 Enter 로만 진행 (SSH/헤드리스)
         self.round = 0
 
     # -- 설정 -------------------------------------------------------------
@@ -113,6 +114,15 @@ class Conductor:
         print("  창 2 에도 같은 점이 겹쳐 보입니다.")
         if self.conf.get("OBJECT", "desklamp") == "desklamp":
             self.show_object_only()
+        if self.method() == "density":
+            manifest = self.session.read("empty_manifest.json") or {}
+            opening = manifest.get("opening_m")
+            counts = manifest.get("gripper_counts")
+            if opening is not None:
+                print(f"\n  ★ 빈 기록은 벌림량 {1000 * float(opening):.1f} mm"
+                      + (f" (그리퍼 카운트 {counts})" if counts is not None else "")
+                      + " 로 했습니다. 물체도 **같은 벌림량**으로 물려야 차감이 맞습니다.")
+                print("    창 3 에서 그 벌림량으로 grip 하고, 물체가 죠 가운데에 오는지 확인하세요.")
         self.ask("파지 완료 — 물체를 물렸고 손을 뗐습니다")
         if self.sim:
             print("  [모의] 파지 변환은 공칭값을 씁니다.")
@@ -174,12 +184,19 @@ class Conductor:
     def phase_angle(self):
         self.session.set_phase("angle", self.round)
         self.bar()
-        print("  창 1 이 정보이득이 가장 큰 각도를 추천합니다.")
-        print("  창 2 를 보며 물체를 그 각도로 접으세요.")
-        recommended = self.session.read(f"angle_round_{self.round}.json")
-        if recommended is None:
-            print("  (추천 각도는 4단계 탐색기가 계산합니다 — 첫 라운드는"
-                  " 지금 자세 그대로 갑니다)")
+        per_round = self.method() in ("dynamic", "density")
+        rec = self.session.read(f"angle_round_{self.round + 1 if per_round else self.round}.json")
+        deg = (rec or {}).get("recommended_deg")
+        if deg is not None:
+            print(f"  추천 관절각: {[round(float(v), 1) for v in deg]} deg  (정보이득이 가장 큰 형상)")
+            print("  창 2 를 보며 물체를 그 각도로 접으세요. 손으로 맞춘 뒤 손을 떼세요.")
+        elif per_round:
+            print("  첫 라운드의 추천 각도는 탐색기가 시작하면서 계산해 알려 줍니다.")
+        else:
+            print("  (추천 각도는 4단계 탐색기가 계산합니다 — 첫 라운드는 지금 자세 그대로 갑니다)")
+        if per_round:
+            print("  다음 단계의 탐색기가 각도를 한 번 더 보여 주고 '각도 조정 완료' 확인을 받습니다.")
+            return True
         self.ask("각도 조정 완료")
         return True
 
@@ -192,18 +209,26 @@ class Conductor:
             print("  로봇 씬을 세웁니다 — 파지 변환은 **잰 값**을 씁니다.")
         else:
             print("  [주의] 잰 파지 변환이 없어 **짐작**으로 씬을 세웁니다.")
-        print("  도달·충돌·경로를 검사합니다. 실패하면 어느 쌍이 몇 mm"
-              " 겹치는지 알려 줍니다.")
+        if self.method() in ("dynamic", "density"):
+            print("  도달·충돌·힌지 예산 검사는 탐색기가 라운드 시작 때 형상마다 합니다 (건너뛴 자세와 이유를 path_round_N.json 에 남깁니다).")
+        else:
+            print("  도달·충돌·경로를 검사합니다. 실패하면 어느 쌍이 몇 mm"
+                  " 겹치는지 알려 줍니다.")
         return True
 
     # -- 4~5단계 ----------------------------------------------------------
+    def method(self):
+        return self.conf.get("METHOD", "static").lower()
+
     def phase_explore(self):
-        """탐색은 기존 dual_view(정적) 또는 dynex.session(동적) 에 맡긴다."""
+        """탐색은 dual_view(정적) / dynex.session(동적 10P) / dynex.density_session(밀도판) 에 맡긴다."""
         self.session.set_phase("explore", self.round)
         self.bar()
         env = dict(os.environ, PIVOT_SESSION=str(self.session.root))
-        if self.conf.get("METHOD", "static").lower() == "dynamic":
+        if self.method() == "dynamic":
             return self.phase_explore_dynamic(env)
+        if self.method() == "density":
+            return self.phase_density(env, ["--phase", "round", "--round", str(self.round + 1), "--rounds", "1"])
         grasp = self.session.path("grasp.json")
         if grasp.is_file():
             env["PIVOT_GRASP_FILE"] = str(grasp)
@@ -257,9 +282,65 @@ class Conductor:
         print("  동적 여기 탐색을 시작합니다 (dynex.session).")
         return subprocess.run(command, env=env, cwd=str(HERE)).returncode == 0
 
+    def density_command(self, extra):
+        """dynex.density_session 호출 인자. experiment.conf 의 키를 그대로 넘긴다."""
+        conf = self.conf
+        hardware = "real" if conf.get("ROBOT_HOST") and not self.sim else "sim"
+        command = self.python() + ["-m", "dynex.density_session", "--session", str(self.session.root),
+                                   "--hardware", hardware, "--object", conf.get("OBJECT", "3link"),
+                                   "--sensor", conf.get("SENSOR", "datasheet_100hz"),
+                                   "--grip-force", conf.get("GRIPPER_FORCE", "205"),
+                                   "--move-duration", conf.get("MOVE_DURATION", "8"),
+                                   "--template", conf.get("TEMPLATE", "spec"),
+                                   "--protocol", conf.get("PROTOCOL", "static"),
+                                   "--select", conf.get("SELECT", "info"),] + (["--no-eiv"] if conf.get("NO_EIV", "").lower() in ("1", "true", "yes") else []) + [
+                                   "--n-traj", conf.get("N_TRAJ", "0"), "--f-c", conf.get("F_C", "5"),
+                                   ] + (["--target", conf["TARGET"]] if conf.get("TARGET") else []) + list(extra)
+        if conf.get("HINGE_TORQUE"):
+            command += ["--hinge-torque", conf["HINGE_TORQUE"]]
+        if conf.get("HINGE_SELF_HOLD", "").lower() in ("1", "true", "yes"):
+            command.append("--hinge-self-hold")
+        if self.auto:
+            command.append("--auto")
+        if self.terminal:
+            command.append("--no-meshcat")
+        if hardware == "real":
+            for flag, key in (("--total-mass-kg", "TOTAL_MASS_KG"), ("--aft-host", "AFT_HOST"),
+                              ("--robot-host", "ROBOT_HOST"), ("--gripper-port", "GRIPPER_PORT"),
+                              ("--ft-source", "FT_SOURCE"), ("--tool-file", "TOOL_FILE")):
+                if conf.get(key):
+                    command += [flag, conf[key]]
+            if conf.get("FP_OUTPUT"):
+                command += ["--pose-file", str(Path(conf["FP_OUTPUT"]) / "latest.json")]
+            else:
+                command.append("--manual-pose")
+        return command
+
+    def phase_density(self, env, extra):
+        print(f"  밀도판 세션 (dynex.density_session {' '.join(extra)}).")
+        return subprocess.run(self.density_command(extra), env=env, cwd=str(HERE)).returncode == 0
+
+    def phase_empty_records(self):
+        """밀도판: 물체를 잡기 **전에** 빈 그리퍼로 정적 자세·궤적 라이브러리를 전부 기록한다."""
+        self.session.set_phase("preflight", 0, note="빈 기록")
+        self.bar()
+        print("  [빈 기록] 물체를 잡기 전에, 빈 그리퍼로 정적 자세 8개와 여기 궤적 12개를 기록합니다 (약 5~10분).")
+        print("    - 그리퍼에 아무것도 물리지 않은 상태여야 합니다. 벌림량은 탐색기가 자동으로 맞춥니다.")
+        print("    - 로봇이 계속 움직입니다. 작업 공간을 비우고 비상정지를 손에 드세요.")
+        if not self.ask("작업 공간을 비웠고 그리퍼가 비어 있습니다 — 빈 기록을 시작한다 (로봇이 움직입니다)"):
+            return False
+        env = dict(os.environ, PIVOT_SESSION=str(self.session.root))
+        return self.phase_density(env, ["--phase", "empty"])
+
     def phase_export(self):
         self.session.set_phase("export", self.round)
         self.bar()
+        if self.method() == "density":
+            asset = self.session.path("export") / "asset_density.json"
+            print(f"  밀도판 자산: {asset}" if asset.is_file() else "  [주의] asset_density.json 이 없습니다 — 라운드가 끝나지 않았습니다.")
+            if self.ask("세션 끝 빈 기록으로 영점 드리프트를 확인한다 (물체를 치운 뒤)"):
+                self.phase_density(dict(os.environ, PIVOT_SESSION=str(self.session.root)), ["--phase", "close"])
+            return True
         if self.conf.get("METHOD", "static").lower() == "dynamic":
             asset = self.session.path("export") / "asset_dynamic.json"
             if asset.is_file():
@@ -285,19 +366,27 @@ class Conductor:
         print(f"  export PIVOT_SESSION={self.session.root}\n")
         if not self.phase_preflight():
             return 1
+        if self.method() == "density" and not self.session.path("empty_manifest.json").is_file():
+            if not self.phase_empty_records():
+                print("  빈 기록에 실패했습니다 — 물체 실험으로 갈 수 없습니다.")
+                return 1
         if not self.phase_grasp():
             return 1
         while True:
             self.phase_angle()
             self.phase_path()
-            if not self.ask("승인 — 로봇을 움직입니다"):
+            if self.method() in ("dynamic", "density"):
+                # 라운드 방식은 탐색기가 '각도 조정 완료(손을 뗐습니다)' 확인을 받은 뒤에야 움직인다.
+                if not self.ask("탐색기를 시작한다 — 각도 조정 확인을 받은 뒤 로봇이 움직입니다"):
+                    return 1
+            elif not self.ask("승인 — 로봇을 움직입니다"):
                 return 1
             self.phase_explore()
-            posterior = (self.session.read(f"posterior_round_{self.round + 1}.json")
-                         if self.conf.get("METHOD", "static").lower() == "dynamic"
+            per_round = self.method() in ("dynamic", "density")
+            posterior = (self.session.read(f"posterior_round_{self.round + 1}.json") if per_round
                          else self.session.read(f"posterior_round_{self.round}.json"))
             done = bool(posterior and posterior.get("converged"))
-            dynamic = self.conf.get("METHOD", "static").lower() == "dynamic"
+            dynamic = per_round
             # 정적 탐색기는 한 번 호출에 모든 라운드를 돌므로 자동 모드에서는 한 번이면 된다.
             # 동적 세션은 라운드 하나씩 돌므로 수렴하거나 최대 라운드까지 계속한다.
             if done or (self.auto and not dynamic):
@@ -328,6 +417,8 @@ def main():
                     help="단계 기계만 돌려 본다 (Drake·장비 불필요)")
     ap.add_argument("--sim", action="store_true",
                     help="장비 없이 모의 장비로 끝까지 돈다 (준비 점검 실패는 주의로)")
+    ap.add_argument("--terminal", action="store_true",
+                    help="브라우저 버튼 대신 터미널 Enter 로 진행한다 (SSH·헤드리스)")
     args = ap.parse_args()
 
     session = (Session(args.session) if args.session
@@ -344,13 +435,14 @@ def main():
         return 0
 
     console = None
-    try:
-        from pydrake.geometry import StartMeshcat
-        from operator_ui import Console
-        console = Console(StartMeshcat(), auto=args.auto)
-    except Exception as exc:                                    # noqa: BLE001
-        print(f"[주의] Meshcat 콘솔을 못 띄웁니다 ({exc}) — 터미널로 갑니다")
-    return Conductor(args.conf, session, console, args.auto, sim=args.sim).run()
+    if not args.terminal:
+        try:
+            from pydrake.geometry import StartMeshcat
+            from operator_ui import Console
+            console = Console(StartMeshcat(), auto=args.auto)
+        except Exception as exc:                                    # noqa: BLE001
+            print(f"[주의] Meshcat 콘솔을 못 띄웁니다 ({exc}) — 터미널로 갑니다")
+    return Conductor(args.conf, session, console, args.auto, sim=args.sim, terminal=args.terminal).run()
 
 
 if __name__ == "__main__":

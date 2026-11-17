@@ -102,7 +102,7 @@ $R python tools/angle_signs.py --pose-file /tmp/lamp_foundationpose_live/latest.
 
 ```bash
 # 7) 3자세 타어 (직접교시. 로봇에 명령하지 않는다)
-PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --manual --setup \
+PIVOT_WORKDIR=$PWD $R python ~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py --manual --setup \
     --output calibration/aft_tare_current.json --overwrite
 ```
 
@@ -110,7 +110,7 @@ PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --manual --setup \
 
 ```bash
 # 8) 타어 드리프트 확인. 문턱 안이면 세팅 때 값을 그대로 쓴다
-PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py --verify \
+PIVOT_WORKDIR=$PWD $R python ~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py --verify \
     --output calibration/aft_tare_current.json
 ```
 
@@ -262,7 +262,7 @@ desk lamp)로 실험할 거야.
 
 ━━ 저장소 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   git clone -b real-experiment-ready https://github.com/LEE9396/PIVOT.git ~/PIVOT
-  git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/MeshPCA
+  git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/Research/1.PIVOT/code/MeshPCA
 
   ★ 할 일 목록은 ~/PIVOT/TEAMMATE_CHECKLIST.md 에 있다. **그것부터 읽어라.**
     빠뜨리면 조용히 틀리는 항목에 ★ 가 붙어 있다.
@@ -330,7 +330,7 @@ desk lamp)로 실험할 거야.
                     --joint 1 --seconds 40 --output calibration/angle_signs.json
                 관절마다 한 번씩. 나온 **잔차를 ANGLE_FLOOR_DEG 에 넣어라.**
    e) 타어      ★ 여기서 로봇이 처음 움직인다. 나한테 확인받아라.
-                PIVOT_WORKDIR=$PWD $R python ~/MeshPCA/pivot/tare_real.py \
+                PIVOT_WORKDIR=$PWD $R python ~/Research/1.PIVOT/code/MeshPCA/pivot/tare_real.py \
                     --manual --setup --output calibration/aft_tare_current.json
                 직접교시로 자세를 만들면 로봇에 명령하지 않는다.
 

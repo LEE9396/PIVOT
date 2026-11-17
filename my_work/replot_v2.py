@@ -25,8 +25,8 @@ exp_v2_asset.py 의 make_figure() 는 3(시나리오) x 3(물체) = 9칸짜리 �
     27/27 이 모든 시나리오에서 이미 성립함을 보였다.)
 
 실행:
-    cd ~/Desktop/PIVOT/my_work
-    /home/junhyeoklee/Desktop/PIVOT/robot_learning/.venv-drake-1.54-py312/bin/python replot_v2.py
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
+    /home/junhyeoklee/Research/1.PIVOT/code/PIVOT/robot_learning/.venv-drake-1.54-py312/bin/python replot_v2.py
 """
 
 import argparse

@@ -66,5 +66,5 @@ echo "팀원 초대 (아이디를 넣으세요):"
 echo "    ${gh_bin} repo add-collaborator ${account}/${name} <팀원_깃허브_아이디> --permission push"
 echo
 echo "팀원 쪽에서 할 일:"
-echo "    git clone https://github.com/${account}/${name}.git ~/Desktop/PIVOT"
-echo "    cd ~/Desktop/PIVOT && ./setup/bootstrap.sh"
+echo "    git clone https://github.com/${account}/${name}.git ~/Research/1.PIVOT/code/PIVOT"
+echo "    cd ~/Research/1.PIVOT/code/PIVOT && ./setup/bootstrap.sh"

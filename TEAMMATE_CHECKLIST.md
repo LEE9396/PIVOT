@@ -16,10 +16,10 @@
 지금 PC 에 네 개가 있다. 어느 것이 진짜인지 먼저 정해야 한다.
 
 ```
-~/Desktop/PIVOT              assets/final_objects/lamp 를 가짐
+~/Research/1.PIVOT/code/PIVOT              assets/final_objects/lamp 를 가짐
 ~/Desktop/PIVOT-real-setup   런처가 실제로 쓰던 것 (traceback 이 가리킴)
-~/MeshPCA                    clean
-~/MeshPCA-real-setup         두 conf 가 모두 이쪽을 가리킴
+~/Research/1.PIVOT/code/MeshPCA                    clean
+~/Research/1.PIVOT/code/MeshPCA         두 conf 가 모두 이쪽을 가리킴
 ```
 
 - [ ] **PIVOT 을 하나로 합친다.** 두 체크아웃이 갈라진 채로 둔 것이 이번
@@ -31,15 +31,15 @@
 
 - [ ] PIVOT
       ```bash
-      cd ~/Desktop/PIVOT
+      cd ~/Research/1.PIVOT/code/PIVOT
       git fetch origin && git checkout real-experiment-ready
       ```
 - [ ] ★ **MeshPCA 쪽 두 파일도 반드시 적용한다.** PIVOT 저장소의
       `integration/` 에 들어 있다. 이걸 빠뜨리면 창 2 가 여전히 죽고,
       타어에 직접교시 모드가 없다.
       ```bash
-      cp ~/Desktop/PIVOT/integration/foundationpose/make_desk_lamp_masks.py \
-         ~/MeshPCA-real-setup/foundationpose/
+      cp ~/Research/1.PIVOT/code/PIVOT/integration/foundationpose/make_desk_lamp_masks.py \
+         ~/Research/1.PIVOT/code/MeshPCA/foundationpose/
       # tare_real.py 는 아래 5번을 먼저 읽을 것
       ```
 - [ ] `$R python setup/doctor.py` 전부 통과
@@ -103,8 +103,8 @@
       python integration/MeshPCA/import_easyhec.py \
           --transform <EasyHeC>/models/.../Tc_c2b.txt \
           --intrinsics <EasyHeC>/data/.../K.txt \
-          --output ~/MeshPCA/calibration/handeye.json
-      $R python my_work/import_calibration.py --input ~/MeshPCA/calibration/handeye.json
+          --output ~/Research/1.PIVOT/code/MeshPCA/calibration/handeye.json
+      $R python my_work/import_calibration.py --input ~/Research/1.PIVOT/code/MeshPCA/calibration/handeye.json
       ```
 - [ ] 검산: `Tc_c2b @ X_WC` 가 단위행렬
 

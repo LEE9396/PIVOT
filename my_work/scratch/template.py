@@ -1,7 +1,7 @@
 """내 알고리즘을 Drake에서 테스트하기 위한 시작 템플릿.
 
 실행:
-    cd ~/Desktop/PIVOT/robot_learning
+    cd ~/Research/1.PIVOT/code/PIVOT/robot_learning
     ./scripts/run_drake_env.sh python ../my_work/template.py
     ./scripts/run_drake_env.sh python ../my_work/template.py --live   # Meshcat 시각화
 """

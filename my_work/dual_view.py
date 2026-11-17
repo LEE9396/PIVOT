@@ -13,7 +13,7 @@ ROS1 토픽으로 바꿔 끼우면 오른쪽 화면이 그대로 실물 로봇�
     planner <--- measurement ---------- robot        (렌치 측정값)
 
 실행:
-    cd ~/Desktop/PIVOT/my_work
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python dual_view.py \
         --object 3link --joint-range-deg 20 150 --hinge-torque 0.5 --auto-scale
 
@@ -2259,7 +2259,7 @@ def main():
     parser.add_argument("--aft-host", default="192.168.50.51",
                         help="AFT200 컨트롤러 주소 (Modbus TCP 502)")
     parser.add_argument("--aft-hz", type=float, default=50.0)
-    parser.add_argument("--meshpca-root", default="~/MeshPCA",
+    parser.add_argument("--meshpca-root", default="~/Research/1.PIVOT/code/MeshPCA",
                         help="팀원 MeshPCA 체크아웃 (pivot/aft_tare.py 위치)")
     parser.add_argument("--no-density-view", action="store_true",
                         help="탐색이 끝난 뒤 밀도 비교 화면을 띄우지 않는다")

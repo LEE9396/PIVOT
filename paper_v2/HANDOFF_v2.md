@@ -1,8 +1,8 @@
 # PIVoT v2 초안 인계 — 자료가 도착하면 어디를 갈아끼우는가
 
-작업 트리: `~/Desktop/PIVOT/paper_v2/`  ·  빌드: 아래 한 줄
+작업 트리: `~/Research/1.PIVOT/code/PIVOT/paper_v2/`  ·  빌드: 아래 한 줄
 ```bash
-cd ~/Desktop/PIVOT/paper_v2
+cd ~/Research/1.PIVOT/code/PIVOT/paper_v2
 PATH=~/miniconda3/envs/test/bin:$PATH tectonic -X compile main.tex --outdir build
 ```
 (LaTeX 은 conda `test` 환경의 tectonic 을 씁니다. 한글 `kotex` 포함해 정상 동작합니다.)

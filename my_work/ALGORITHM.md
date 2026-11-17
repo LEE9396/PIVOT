@@ -509,7 +509,7 @@ flowchart TD
 ## 14. 실행법
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 ```
 
 **로봇 없이 숫자만** (20초, 조작 없음)

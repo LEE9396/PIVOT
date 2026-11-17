@@ -33,8 +33,8 @@
 ## 1. 받기
 
 ```bash
-git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT
-cd ~/Desktop/PIVOT
+git clone https://github.com/LEE9396/PIVOT.git ~/Research/1.PIVOT/code/PIVOT
+cd ~/Research/1.PIVOT/code/PIVOT
 ```
 
 폴더 이름은 아무거나 좋습니다. 코드가 자기 위치를 스스로 찾습니다.
@@ -94,7 +94,7 @@ cd my_work
 ### 시뮬레이션 검증 (PC 한 대, 데스크 램프)
 
 ```bash
-cd ~/Desktop/PIVOT/my_work
+cd ~/Research/1.PIVOT/code/PIVOT/my_work
 ../robot_learning/scripts/run_drake_env.sh python dual_view.py \
     --mode sim --object desklamp
 ```

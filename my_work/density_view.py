@@ -19,7 +19,7 @@ figures/desklamp_density_render.py 가 논문 그림에 쓴 것과 같은 컬러
 사람이 그걸 보고 다음 자세를 고르게 되고, 그러면 연구가 무의미해진다.
 
 단독 실행 (색과 배치 확인용):
-    cd ~/Desktop/PIVOT/my_work
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python density_view.py \
         --object 3link
 """

@@ -152,3 +152,31 @@ $R python -m dynex.session --hardware real --tool-file calibration/tool_dynamic.
   실물 실험 코드(dual_view, 정적)는 기본값에서 힌지 검사를 안 한다.
 - 무게중심 오프셋(`hinge_com_offset_mm`) 기본 0: 날개가 한쪽으로 뻗은 실제 힌지와 다르지만,
   축에서 벗어난 몫은 측정으로 보정된다.
+
+
+## 8. 밀도판 실험 코드 (2026-09-12 추가) — 논문(main.pdf) 방법을 실물 하드웨어에서
+
+사용자 결정(2026-09-12 밤): 부위당 10개 동적 식별은 접고 **논문 주장을 그대로 검증**한다. `density_session --protocol static`
+(기본) 이 논문 방법이고, `mixed`/`dynamic` 은 연구용 옵션으로만 남겼다 (모의에서 밀도에 더 나빴다, REAL_EXPERIMENT.md 6.2).
+
+논의정리(2026-09-12)는 미지수를 부위별 **밀도 하나**로 되돌리고, 측정을 **빈 그리퍼 기록 차감**으로,
+여기 궤적을 **라이브러리에서 선택**하는 것으로 확정했다. 그 구현이 다음 모듈이다 (위 1~7절의 10P 판은 그대로 남아 있다).
+
+| 파일 | 역할 |
+|---|---|
+| `density.py` | 밀도 추정기 (Π(θ)ρ, R_eff, N_eff, 박스 제약 MAP, 힌지 인증 하한/상한 예산 γ=1.2, 정지 규칙 최대값, 균일밀도 검정) |
+| `library.py`, `records.py`, `devices.py`, `ftcal.py`, `rigs.py` | 라이브러리·기록 차감·장비(모의/실물)·센서 점검 계산·공용 |
+| `ladder.py` | 실물 사다리 `ftcheck` / `static` / `chain` |
+| `density_session.py` | 본실험 세션 (`pivot_ui.py` 의 `METHOD=density`) |
+| `resolve.py` | 세션 기록만으로 다시 풀기 (정적만·파지 오프셋·잡음 바닥 비교, 라운드 수 계산) |
+
+절차와 통과 기준: **`REAL_EXPERIMENT.md`**. 팀원 PC 순서·프롬프트: 저장소 루트 `TEAMMATE_DENSITY.md`.
+
+```bash
+$R python -m dynex.density                                                       # 자기검사
+$R python pivot_ui.py --conf ../setup/experiment_density_sim.conf --sim --auto   # 장비 없이 끝까지
+```
+
+**7절 힌지 문장의 교정 (논의정리 4절):** 관절당 안 보이는 조합 4개 중 3개(축 위 질량·축상 위치·축 방향 퍼짐)는
+어떤 실험·시뮬레이션에도 영향이 없지만, **1개(힌지축 둘레 관성 I_zz)는 관절이 움직이는 시뮬레이션의 결과를 바꾼다.**
+자산 파일의 `invisible_combinations` 주석은 이 구분을 담아야 한다. 밀도판에서는 이 문제가 사라진다(부위당 미지수 1개).

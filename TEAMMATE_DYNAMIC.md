@@ -5,8 +5,10 @@
 
 무엇이 바뀌었나 (한 문단). 논문의 4단계 탐색이 "정지 3방향 측정"에서 "정지 3방향 + 8초 여기 궤적"으로
 바뀌었다. 부위마다 질량·무게중심·관성 10개를 풀되, 관절이 미끄러지지 않도록 힌지 축 토크를
-제약해 궤적을 설계한다. 관절마다 4개 조합은 어떤 실험으로도 안 보이며 시뮬레이션에도 영향이
-없다 — 자산 파일이 그 방향을 표시한다. 자세한 것은 `my_work/dynex/README.md`.
+제약해 궤적을 설계한다. 관절마다 4개 조합은 손목 F/T 로는 안 보인다. 그중 3개(축 위 질량·위치·퍼짐)는
+시뮬레이션에도 영향이 없지만 1개(힌지축 둘레 관성)는 관절이 움직이는 시뮬에서 결과를 바꾼다 — 자산 파일이
+그 방향을 표시한다(논의정리 2026-09-12 4절 교정). 자세한 것은 `my_work/dynex/README.md`.
+**2026-09-12 이후의 확정안(밀도판)은 `TEAMMATE_DENSITY.md` 를 따른다.**
 
 ## 순서 (앞이 안 되면 뒤는 의미가 없다)
 
@@ -32,7 +34,7 @@ my_work/ 에서 ../robot_learning/scripts/run_drake_env.sh python ... 으로 한
 Drake 1.54 고정.
 
 ━━ 0. 저장소·환경 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  cd ~/Desktop/PIVOT && git fetch origin && git checkout real-experiment-ready && git pull
+  cd ~/Research/1.PIVOT/code/PIVOT && git fetch origin && git checkout real-experiment-ready && git pull
   ./setup/bootstrap.sh
   $R python setup/doctor.py                      # 전부 통과
   먼저 읽을 것: TEAMMATE_DYNAMIC.md (이 파일), my_work/dynex/README.md 6·7절,
@@ -75,7 +77,7 @@ Drake 1.54 고정.
 ━━ 5. 힌지 유지토크 (선택) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   토크 게이지가 있으면 두 힌지의 미끄러지기 시작하는 토크를 재서 experiment.conf 에
   HINGE_TORQUE=<N·m> 로 넣는다 (상한으로만 쓰인다). 없으면 비워 둔다: 세션이 "이미 버틴
-  최대 토크"를 인증값으로 기억하고 그 1.25 배까지만 다음 자세·궤적을 시도한다. 첫 라운드는
+  최대 토크"를 인증값으로 기억하고 그 1.5 배(코드 기본값 --hinge-growth)까지만 다음 자세·궤적을 시도한다. 첫 라운드는
   0.05 N·m 부터라 느리고, 카메라로 각도가 2° 이상 움직인 것이 보이면 그 데이터를 버리고
   상한을 내린다. 그래서 물체가 떨어지거나 관절이 크게 돌아가는 일은 없다.
 

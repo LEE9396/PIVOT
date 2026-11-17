@@ -43,7 +43,7 @@ RRT 가 간선 검사에 쓰는 제약과 같은 것이라, 두 경로가 같은
 둘을 따로 집계한다. 섞으면 어느 쪽이 문제인지 표에서 사라진다.
 
 실행:
-    cd ~/Desktop/PIVOT/my_work
+    cd ~/Research/1.PIVOT/code/PIVOT/my_work
     ../robot_learning/scripts/run_drake_env.sh python exp_v2_path.py
     ../robot_learning/scripts/run_drake_env.sh python exp_v2_path.py --objects 3link
 """

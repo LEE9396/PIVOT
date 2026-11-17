@@ -39,7 +39,7 @@
 ## 1. 환경
 
 ```bash
-git clone https://github.com/LEE9396/PIVOT.git ~/Desktop/PIVOT && cd ~/Desktop/PIVOT
+git clone https://github.com/LEE9396/PIVOT.git ~/Research/1.PIVOT/code/PIVOT && cd ~/Research/1.PIVOT/code/PIVOT
 ./setup/bootstrap.sh              # 최초 1회 (5~10분)
 ./setup/bootstrap.sh --check      # 12항목 자가 진단
 ```

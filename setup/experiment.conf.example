@@ -48,19 +48,38 @@ FP_OUTPUT=/tmp/lamp_foundationpose_live
 
 # ---- 탐색 설정 -------------------------------------------------------------
 # 정지 조건: 밀도의 95% 상대 반폭
-TARGET=0.05
+# 정지 목표(95 % 상대 반폭). 비우면 논문 τ(P) = 0.5 % × P (3링크 1.5 %)
+TARGET=
 MAX_ROUNDS=8
 # 이동 하나에 쓰는 시간 [s]. 클수록 준정적.
 MOVE_DURATION=8
 
-# ---- 동적 여기 식별 (dynex) --------------------------------------------------
-# METHOD=dynamic 이면 pivot_ui 의 4단계가 dual_view 대신 dynex.session 을 부른다.
-METHOD=dynamic
+# ---- 탐색 방법 ---------------------------------------------------------------
+#   static  : 논문 원안 (dual_view, 정지 3방향 + 형상 선택, 타어 표)
+#   dynamic : 부위당 10개 동적 식별 (dynex.session, 툴 식별 파일 필요)
+#   density : 밀도판 (dynex.density_session) — 부위별 밀도 + 빈 기록 차감 + 궤적 라이브러리.
+#             PIVoT_논의정리(2026-09-12) 의 확정안. 물체를 잡기 전에 빈 그리퍼 기록 단계가 먼저 돈다.
+METHOD=density
+# density 전용: F/T 취득 경로 rbstate(RB 상태 패킷 eft_*, 관절각과 같은 패킷) | modbus(AFT200 레지스터, 지금 팀 드라이버)
+# 두 경로 모두 모의로 끝까지 검증됐다. modbus 는 관절각을 따로 폴링해 보간하므로 사다리 3단(chain)에서 지연을 꼭 잰다.
+FT_SOURCE=modbus
+# density 전용: 라운드당 여기 궤적 수(거울 짝이면 2), 저역통과 f_c [Hz], 부위 템플릿(spec|box|mesh), 정지 규칙 목표
+# 탐색 프로토콜: static(논문 방법 — 정지 자세 + 빈 기록 차감, 기본) | mixed(정적 뒤 궤적 2개) | dynamic(궤적 주력, 연구용)
+PROTOCOL=static
+# 형상 선택: info(정보이득, 논문) | random(무작위 기준선) | fixed(형상 하나 고정 기준선)
+SELECT=info
+# 각도 오차 무시 기준선(WLS)이면 1. 논문 방법은 비움
+NO_EIV=
+N_TRAJ=0
+F_C=5
+TEMPLATE=spec
 # F/T 기록 속도 프리셋: datasheet_100hz (Modbus 폴링 100 Hz 확인) / datasheet_50hz / datasheet_1khz
 SENSOR=datasheet_100hz
-# 힌지 유지토크 [N·m] — 토크 게이지 값이 있으면 상한으로 쓴다. 비우면 자동 모드:
-# 이미 버틴 토크의 1.25 배까지만 시도하고, 카메라로 미끄러짐이 보이면 상한을 내린다.
+# 힌지 유지토크 [N·m] — 토크 게이지 값이 있으면 상한으로만 쓴다. 비우면 자동 모드:
+# 버틴 것으로 인증된 토크(예측 하한)의 1.2 배까지만 시도하고, 카메라로 미끄러짐이 보이면 상한을 내린다.
 HINGE_TORQUE=
+# 램프처럼 제 무게를 스스로 버티는 관절체면 1: 정지 자세의 중력 토크를 힌지 인증 초기값으로 쓴다
+HINGE_SELF_HOLD=
 # 툴(그리퍼+퍽 위쪽) 10개 파라미터 파일 — dynex.tool_id 로 물체 없이 먼저 만든다
 TOOL_FILE=~/Desktop/PIVOT/calibration/tool_dynamic.json
 # 조립된 물체 총질량 [kg] — 저울

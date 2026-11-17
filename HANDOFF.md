@@ -109,7 +109,7 @@ third_party/            RB5·PGC·AFT200 (HTD) / Robotiq 2F-85 원본 자산
 ## 6. 실행
 
 ```bash
-cd ~/Desktop/PIVOT
+cd ~/Research/1.PIVOT/code/PIVOT
 ./setup/bootstrap.sh                 # 최초 1회 (파이썬 3.12 + Drake 1.54)
 ./setup/bootstrap.sh --check         # 12항목 자가 진단
 
@@ -182,7 +182,7 @@ $R python robot_node.py --host <작업PC IP> --hardware real       # 실물, 로
 ## 10. 이 저장소
 
 - **https://github.com/LEE9396/PIVOT** (공개)
-- 로컬 작업 트리는 `~/Desktop/PIVOT` 자체입니다 (복사본이 아닙니다).
+- 로컬 작업 트리는 `~/Research/1.PIVOT/code/PIVOT` 자체입니다 (복사본이 아닙니다).
 - 팀원 두 명이 작업 PC / 로봇 PC로 씁니다.
 - `third_party/`의 PGC-140-50과 AFT200 자산은 재배포 라이선스가 확인되지
   않았습니다. README에 출처와 내림 안내를 적어 두었습니다.
