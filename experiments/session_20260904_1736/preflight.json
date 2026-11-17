@@ -1,0 +1,72 @@
+{
+  "conf": "../setup/experiment.conf",
+  "verdict": "OK",
+  "rows": [
+    {
+      "level": "OK",
+      "name": "RB5 상태",
+      "detail": "초기화=6, 전원=ON, fault=없음",
+      "fix": null
+    },
+    {
+      "level": "OK",
+      "name": "자산 경로",
+      "detail": "/home/cheon/Desktop/PIVOT/assets/final_objects/lamp",
+      "fix": null
+    },
+    {
+      "level": "OK",
+      "name": "볼록 분해",
+      "detail": "3 부위 모두 조각 있음",
+      "fix": null
+    },
+    {
+      "level": "OK",
+      "name": "빌드 일치",
+      "detail": "충돌·시각 메시가 같은 자산",
+      "fix": null
+    },
+    {
+      "level": "OK",
+      "name": "핸드아이",
+      "detail": "camera_cam_d456_front.json",
+      "fix": null
+    },
+    {
+      "level": "OK",
+      "name": "카메라 내부보정",
+      "detail": "현재 스트림 640x480 · fx=387.55",
+      "fix": null
+    },
+    {
+      "level": "OK",
+      "name": "3자세 영점 조정",
+      "detail": "aft_tare_current.json, 최대 1.00 deg, 세션 재사용",
+      "fix": null
+    },
+    {
+      "level": "OK",
+      "name": "책상 실측",
+      "detail": "기울기 0.88 deg, rms 2.35 mm",
+      "fix": null
+    },
+    {
+      "level": "OK",
+      "name": "각도 부호·영점",
+      "detail": "2 관절, 잔차 최대 0.00 deg (ANGLE_FLOOR_DEG 에 쓰세요)",
+      "fix": null
+    },
+    {
+      "level": "OK",
+      "name": "SAM3 마스크",
+      "detail": "{'base': 3782, 'support': 1062, 'head': 7546}",
+      "fix": null
+    },
+    {
+      "level": "OK",
+      "name": "FoundationPose",
+      "detail": "각도 수신 base_support_deg, support_head_deg, base_support_raw_deg, support_head_raw_deg",
+      "fix": null
+    }
+  ]
+}

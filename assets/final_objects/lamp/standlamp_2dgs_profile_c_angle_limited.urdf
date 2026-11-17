@@ -1,0 +1,76 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="standlamp_2dgs_profile_c_angle_limited">
+  <link name="base">
+    <visual>
+      <origin xyz="-0 -0 -0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="visual_meshes/base.gltf" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="-0 -0 -0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="collision_meshes/base.obj" />
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.13520213 0.508851949 0.303239947" rpy="0 0 0" />
+      <mass value="0.272784312" />
+      <inertia ixx="0.000269988783" ixy="7.18252832e-05" ixz="6.08545685e-05" iyy="0.000851768915" iyz="0.000116287547" izz="0.000853565523" />
+    </inertial>
+  </link>
+  <link name="support">
+    <visual>
+      <origin xyz="-0.189152437 -0.487238263 -0.282938769" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="visual_meshes/support.gltf" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="-0.189152437 -0.487238263 -0.282938769" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="collision_meshes/support.obj" />
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.0566873583 -0.110109203 -0.106626322" rpy="0 0 0" />
+      <mass value="0.0875941338" />
+      <inertia ixx="0.000725515209" ixy="0.000179041134" ixz="0.000173807867" iyy="0.000439569052" iyz="-0.000354896917" izz="0.000460998874" />
+    </inertial>
+  </link>
+  <link name="head">
+    <visual>
+      <origin xyz="-0.295698027 -0.272450321 -0.0735013124" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="visual_meshes/head.gltf" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="-0.295698027 -0.272450321 -0.0735013124" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="collision_meshes/head.obj" />
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="-0.0805220631 -0.0639628067 -0.0681672674" rpy="0 0 0" />
+      <mass value="0.066353012" />
+      <inertia ixx="0.000302659109" ixy="-0.000223568473" ixz="-0.000248483472" iyy="0.00054487998" iyz="-0.000145770254" izz="0.00051442009" />
+    </inertial>
+  </link>
+  <joint name="joint_1_base_to_support" type="revolute">
+    <parent link="base" />
+    <child link="support" />
+    <origin xyz="0.189152437 0.487238263 0.282938769" rpy="0 0 0" />
+    <axis xyz="0.012877855 0.701134686 -0.712912556" />
+    <limit lower="-0.2369497037563444" upper="1.595829644117962" effort="10" velocity="2" />
+    <dynamics damping="0.05" />
+  </joint>
+  <joint name="joint_2_support_to_head" type="revolute">
+    <parent link="support" />
+    <child link="head" />
+    <origin xyz="0.10654559 -0.214787942 -0.209437457" rpy="0 0 0" />
+    <axis xyz="-0.0424409774 -0.707857658 0.705078931" />
+    <limit lower="-1.601358767495191" upper="0.3185466766601766" effort="10" velocity="2" />
+    <dynamics damping="0.05" />
+  </joint>
+</robot>

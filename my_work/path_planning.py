@@ -20,7 +20,34 @@ RRT-Connect: 시작과 목표에서 트리를 하나씩 키우고 서로를 향�
 import numpy as np
 
 DEFAULT_STEP_RAD = 0.20          # 트리를 한 번에 뻗는 거리
-DEFAULT_EDGE_RES_RAD = 0.05      # 간선 검사 해상도
+DEFAULT_EDGE_RES_RAD = 0.05      # 간선 검사 해상도 (아래 resolution_for 가 이긴다)
+
+# 팔이 1 rad 돌 때 로봇·물체의 어떤 점도 이보다 멀리 못 움직인다.
+#   RB5-850E 도달 0.85 m + AFT200·그리퍼 0.2 m + 물체 0.35 m
+MAX_REACH_M = 1.4
+
+
+def resolution_for(min_distance_m, max_reach_m=MAX_REACH_M):
+    """검사 간격을 안전 여유에서 유도한다.
+
+    왜 상수로 두면 안 되나
+    ----------------------
+    경로는 직선 구간을 잘라 그 점들에서만 충돌을 본다. 사이는 안 본다.
+    간격이 0.05 rad 이면 팔 끝이 **4.5 cm 씩 건너뛴다.** 그런데 지키겠다는
+    간격은 1~2 cm 다. 눈을 감았다 떴다 하며 걷는 것과 같아서, 카메라 지지봉
+    (지름 3.2 cm) 이 눈 감은 구간에 통째로 들어가면 한 번도 안 보인다.
+
+    표본 사이에 점이 최대 s 만큼 움직이고 표본에서 여유가 d 이상이면,
+    사이에서 여유는 d - s/2 이상이다. 그러므로
+
+        s <= 2d  이어야 관통이 없음을 보장
+        s <=  d  이어야 여유의 절반이라도 지켜짐
+
+    여기서는 뒤쪽을 쓴다. 여유 20 mm 기준 0.014 rad 이고, 예전 0.05 보다
+    3.5 배 촘촘하다. 계산이 그만큼 늘지만 **보장하지 못하는 값을 보장한다고
+    말하는 것보다 낫다.**
+    """
+    return max(float(min_distance_m) / float(max_reach_m), 1e-3)
 DEFAULT_MAX_ITERS = 4000
 DEFAULT_GOAL_BIAS = 0.10
 
@@ -35,22 +62,57 @@ DEFAULT_GOAL_BIAS = 0.10
 # 쪽이 여유를 갖고 나오므로 계획기는 문턱을 깎을 이유가 없다.
 
 
+def _required_clearance(model_a, model_b, arm_model, min_distance_m,
+                        body_names=()):
+    if arm_model is not None and model_a == arm_model and model_b == arm_model:
+        # 모델이 관통으로 판정하면 실측으로 형상을 바로잡기 전까지 이동하지 않는다.
+        return 0.0
+    return min_distance_m
+
+
+def collision_free(plant, query, min_distance_m, arm_model=None):
+    """RB5 자체는 관통만 금지하고, 외부 형상에는 안전 여유를 적용한다."""
+    inspector = query.inspector()
+    for pair in query.ComputeSignedDistancePairwiseClosestPoints(min_distance_m):
+        bodies = tuple(plant.GetBodyFromFrameId(inspector.GetFrameId(gid))
+                       for gid in (pair.id_A, pair.id_B))
+        models = tuple(body.model_instance() for body in bodies)
+        required = _required_clearance(
+            *models, arm_model, min_distance_m,
+            body_names=tuple(body.name() for body in bodies))
+        if pair.distance < required:
+            return False
+    return True
+
+
+def _collision_policy_self_test():
+    assert _required_clearance(1, 1, 1, 0.01) == 0.0
+    assert _required_clearance(
+        1, 1, 1, 0.02, ("link3", "link5")) == 0.0
+    assert _required_clearance(1, 2, 1, 0.01) == 0.01
+    print("충돌 여유 정책 자기검사 통과")
+
+
 class ArmPathPlanner:
     """물체 관절각을 고정한 채 팔 경로를 계획한다."""
 
     def __init__(self, plant, context, arm_joints, min_distance_m,
-                 fixed_positions, edge_resolution_rad=DEFAULT_EDGE_RES_RAD,
-                 step_rad=DEFAULT_STEP_RAD, seed=0):
+                 fixed_positions, edge_resolution_rad=None,
+                 step_rad=DEFAULT_STEP_RAD, seed=0, pose_is_valid=None):
         self.plant = plant
         self.context = context
         self.arm_joints = arm_joints
         self.indices = [joint.position_start() for joint in arm_joints]
         self.min_distance_m = min_distance_m
         self.fixed = np.asarray(fixed_positions, dtype=float).copy()
-        self.edge_resolution = edge_resolution_rad
+        self.edge_resolution = (resolution_for(min_distance_m)
+                                if edge_resolution_rad is None
+                                else edge_resolution_rad)
         self.step = step_rad
         self.rng = np.random.default_rng(seed)
         self.query_port = plant.get_geometry_query_input_port()
+        self.pose_is_valid = pose_is_valid
+        self.arm_model = arm_joints[0].model_instance()
 
         lower, upper = [], []
         for joint in arm_joints:
@@ -59,10 +121,29 @@ class ArmPathPlanner:
         self.lower = np.array(lower)
         self.upper = np.array(upper)
         self.checks = 0
+        self._paths = {}
+        self.direct_only = False
+
+    def limit_to_start(self, start, radius_rad):
+        """시작점 기준 창을 고정한다. 매 이동마다 갱신하면 조금씩 멀어질 수 있다."""
+        start = np.asarray(start, dtype=float)
+        radius = np.broadcast_to(np.asarray(radius_rad, dtype=float), start.shape)
+        if (start.shape != self.lower.shape or not np.all(np.isfinite(start))
+                or not np.all(np.isfinite(radius)) or np.any(radius < 0)):
+            raise ValueError("시작 자세/이동 제한이 올바르지 않습니다")
+        self.lower = np.maximum(self.lower, start - radius)
+        self.upper = np.minimum(self.upper, start + radius)
+        if np.any(self.lower > self.upper):
+            raise ValueError("시작 자세의 이동 창이 관절 한계 밖입니다")
+        self.direct_only = True
+        self._paths.clear()
 
     def set_fixed(self, positions):
         """물체 관절각이 바뀌면 계획기가 보는 고정 자세도 갱신해야 한다."""
-        self.fixed = np.asarray(positions, dtype=float).copy()
+        positions = np.asarray(positions, dtype=float)
+        if not np.array_equal(self.fixed, positions):
+            self._paths.clear()
+        self.fixed = positions.copy()
 
     # ------------------------------------------------------------------
     def full_q(self, arm_q):
@@ -74,17 +155,24 @@ class ArmPathPlanner:
     def valid(self, arm_q):
         """IK 와 같은 기준: 모든 충돌쌍의 최소거리가 문턱 이상인가."""
         self.checks += 1
+        arm_q = np.asarray(arm_q, dtype=float)
+        if arm_q.shape != self.lower.shape or not np.all(np.isfinite(arm_q)):
+            return False
         if np.any(arm_q < self.lower) or np.any(arm_q > self.upper):
             return False
         self.plant.SetPositions(self.context, self.full_q(arm_q))
         query = self.query_port.Eval(self.context)
-        pairs = query.ComputeSignedDistancePairwiseClosestPoints(
-            self.min_distance_m)
-        return all(pair.distance >= self.min_distance_m for pair in pairs)
+        clear = collision_free(self.plant, query, self.min_distance_m,
+                               self.arm_model)
+        return clear and (self.pose_is_valid is None or self.pose_is_valid())
 
     def edge_valid(self, a, b):
         """두 자세를 잇는 직선을 해상도 단위로 쪼개어 전부 검사한다."""
-        distance = float(np.linalg.norm(b - a))
+        a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+        if not self.valid(a) or not self.valid(b):
+            return False
+        # 여러 관절이 동시에 움직일 때 끝점 이동량을 과소평가하지 않는다.
+        distance = float(np.linalg.norm(b - a, ord=1))
         steps = max(int(np.ceil(distance / self.edge_resolution)), 1)
         for index in range(1, steps + 1):
             if not self.valid(a + (b - a) * (index / steps)):
@@ -111,14 +199,23 @@ class ArmPathPlanner:
         return len(tree) - 1
 
     def plan(self, start, goal, max_iters=DEFAULT_MAX_ITERS,
-             goal_bias=DEFAULT_GOAL_BIAS):
+             goal_bias=DEFAULT_GOAL_BIAS, shortcut_rounds=200):
         """RRT-Connect. 실패하면 None."""
         start = np.asarray(start, dtype=float)
         goal = np.asarray(goal, dtype=float)
+        key = (start.tobytes(), goal.tobytes(), int(shortcut_rounds))
+        if key in self._paths:
+            return self._paths[key]
+        reverse = (key[1], key[0], key[2])
+        if reverse in self._paths:
+            return self._paths[reverse][::-1]
         if not self.valid(start) or not self.valid(goal):
             return None
         if self.edge_valid(start, goal):        # 직선으로 되면 그게 최선
-            return [start, goal]
+            self._paths[key] = [start, goal]
+            return self._paths[key]
+        if self.direct_only:
+            return None                         # 작은 검증 이동에는 우회 탐색 금지
 
         tree_a, parents_a = [start], [-1]
         tree_b, parents_b = [goal], [-1]
@@ -148,12 +245,13 @@ class ArmPathPlanner:
                         path = path_a + path_b[::-1][1:]
                         if not a_is_start:
                             path = path[::-1]
-                        path = self.shortcut(path)
+                        path = self.shortcut(path, rounds=shortcut_rounds)
                         # 마지막으로 한 번 더 확인한다. 방향이 틀린 경로는
                         # 조용히 잘못 움직이므로 여기서 반드시 잡아야 한다.
                         if (np.linalg.norm(path[0] - start)
                                 > np.linalg.norm(path[-1] - start)):
                             path = path[::-1]
+                        self._paths[key] = path
                         return path
             tree_a, tree_b = tree_b, tree_a
             parents_a, parents_b = parents_b, parents_a
@@ -204,12 +302,41 @@ class ArmPathPlanner:
 
     def path_clearance(self, path, samples_per_edge=20):
         """계획한 경로 위의 최소거리. 검증용."""
-        worst = np.inf
+        return self.path_closest_pair(path, samples_per_edge)[0]
+
+    def path_closest_pair(self, path, samples_per_edge=20, external_only=False):
+        """경로 위 최소거리와 **그때 맞닿은 두 물체 이름**.
+
+        숫자만 돌려주면 "여유 13.29 mm" 를 보고도 그것이 진짜 위험인지
+        모형의 허상인지 알 수가 없다. 실제로 그 13.29 mm 는 볼트로 붙어
+        있어 절대 안 변하는 두 물건 사이 거리였고, 안전 여유를 올리면
+        영원히 통과 못 하는 상태였다. 이름을 같이 찍으면 바로 보인다.
+        """
+        worst, who = np.inf, ("", "")
+        inspector = None
         for a, b in zip(path[:-1], path[1:]):
             for s in np.linspace(0.0, 1.0, samples_per_edge):
                 self.plant.SetPositions(self.context, self.full_q(a + (b - a) * s))
                 query = self.query_port.Eval(self.context)
                 pairs = query.ComputeSignedDistancePairwiseClosestPoints(0.05)
-                if pairs:
-                    worst = min(worst, min(p.distance for p in pairs))
-        return worst
+                if external_only:
+                    inspect = query.inspector()
+                    pairs = [pair for pair in pairs if not all(
+                        self.plant.GetBodyFromFrameId(inspect.GetFrameId(gid)).model_instance()
+                        == self.arm_model for gid in (pair.id_A, pair.id_B))]
+                if not pairs:
+                    continue
+                near = min(pairs, key=lambda p: p.distance)
+                if near.distance < worst:
+                    worst = near.distance
+                    if inspector is None:
+                        inspector = query.inspector()
+                    who = tuple(
+                        self.plant.GetBodyFromFrameId(
+                            inspector.GetFrameId(gid)).name()
+                        for gid in (near.id_A, near.id_B))
+        return worst, who[0], who[1]
+
+
+if __name__ == "__main__":
+    _collision_policy_self_test()

@@ -89,8 +89,8 @@ def _robotiq():
     return f"개구 최대 {1000 * gr.GRIPPERS['robotiq2f85'].max_opening_m:.0f} mm"
 
 
-@check("데스크 램프 스캔 (assets/desk_lamp_minimal_sim)",
-       "assets/desk_lamp_minimal_sim 이 없습니다. "
+@check("데스크 램프 스캔 (assets/final_objects/lamp)",
+       "assets/final_objects/lamp 이 없습니다. "
        "다른 곳에 뒀다면 export DESK_LAMP_DELIVERY=/그/경로")
 def _lamp():
     import desk_lamp as dl

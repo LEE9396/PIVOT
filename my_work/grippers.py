@@ -64,6 +64,17 @@ ROBOTIQ_TCP_Z_M = np.array([0.1365, 0.1381, 0.1397, 0.1411, 0.1424, 0.1435,
                             0.1479, 0.1479, 0.1478])
 
 
+def validate_robotiq_opening(opening_m):
+    """실측 패드 간격 [m]만 받는다. 카운트나 표 밖 값을 잘라 맞추지 않는다."""
+    opening = np.asarray(opening_m, dtype=float)
+    if (opening.shape != () or not np.isfinite(opening)
+            or not ROBOTIQ_GAP_M.min() <= opening <= ROBOTIQ_GAP_M.max()):
+        raise ValueError(
+            "Robotiq 실측 개구는 0.0035~0.0785 m 범위의 유한한 스칼라여야 합니다 "
+            "(장치 위치 카운트는 별도 실측 환산이 필요합니다)")
+    return float(opening)
+
+
 def robotiq_angle_for_opening(opening_m):
     """원하는 개구량을 만드는 finger_joint 각도 [rad]."""
     opening = float(np.clip(opening_m, ROBOTIQ_GAP_M.min(), ROBOTIQ_GAP_M.max()))

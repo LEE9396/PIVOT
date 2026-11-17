@@ -1,0 +1,67 @@
+{
+  "session": "session_20260904_1736",
+  "timezone": "Asia/Seoul",
+  "host": {
+    "os": "Ubuntu 24.04.4 LTS",
+    "kernel": "Linux 7.0.0-30-generic x86_64",
+    "gpu": "NVIDIA GeForce RTX 5080 16303 MiB",
+    "nvidia_driver": "580.173.02"
+  },
+  "repositories": {
+    "PIVOT": {
+      "url": "https://github.com/LEE9396/PIVOT.git",
+      "branch": "real-experiment-ready",
+      "base_commit_before_local_experiment_changes": "8ba1dcd7bf7e92a4e51a75b5f8659a54d892eb67"
+    },
+    "MeshPCA": {
+      "url": "https://github.com/Yuseong-Cheon/MeshPCA.git",
+      "base_commit": "4911bef41bf8bd5ffe6bad8b2ea0d4fea28e1107",
+      "patch": "integration/meshpca/session_20260904_1736.patch.b64",
+      "patch_sha256": "05d821a68fd533aa2305ada6b8518892409bbce958b8c8e8c34592df41de40c2",
+      "decoded_patch_sha256": "c6ee404e5392802167e086aaf7abdc13aa8d726ed9ff50c0338fab9f27b01e2f"
+    },
+    "FoundationPose": {
+      "url": "https://github.com/NVlabs/FoundationPose.git",
+      "commit": "df490a5be025e87afe6895b7ba8dcfd4b4034abe"
+    },
+    "sam3": {
+      "url": "https://github.com/facebookresearch/sam3.git",
+      "base_commit": "46957e47805eaa273f4aa7bbbd25a88bca9108ce",
+      "patch": "integration/sam3/session_20260904_1736.patch.b64",
+      "patch_sha256": "2343df5d1755c4cb5ad55fba85287891c2bf5172cfcd20754447e50725ce7cdd",
+      "decoded_patch_sha256": "b9af0e631a960694f5e388cefb436c8d324d94f5a059908d2c176873e9718221"
+    }
+  },
+  "software": {
+    "pivot_python": "3.12.14",
+    "drake": "1.54.0",
+    "numpy": "2.5.1",
+    "scipy": "1.18.0",
+    "rbpodo": "0.16.10",
+    "foundationpose_python": "3.10.14",
+    "foundationpose_torch": "2.8.0+cu128",
+    "pyrealsense2": "2.58.3.10794",
+    "sam3_python": "3.12.13",
+    "sam3_torch": "2.10.0+cu128"
+  },
+  "hardware": {
+    "robot": "Rainbow Robotics RB5-850E",
+    "force_torque_sensor": "AIDIN AFT200",
+    "gripper": "Robotiq 2F-85",
+    "camera": "Intel RealSense D456",
+    "camera_stream": "640x480@30Hz",
+    "gripper_force_setting": 205
+  },
+  "input_sha256": {
+    "calibration/aft_tare_current.json": "2373dfeda97557b0848b347e06176df8fea7ae626466ab29e9781a26bec8df25",
+    "calibration/camera_cam_d456_front.json": "e040a1988dd60475037c31c5de8fbb2ad28428483e8ab0e82c6345ce982c0f9b",
+    "calibration/rb5_table_current.json": "d24b5c80183288ac27573f0605a0f8a643a96901673393b4a30390cbc4ca85b7",
+    "calibration/angle_signs.json": "f9b833d324ad3b6a4b05c91f214cb6522b0a63d2a2bce9372bf0b57540084618",
+    "my_work/outputs/grasp_target_desklamp.json": "39926b3bf9c495d941984ac20320853d8be3b3992d8135dfd09c647ca6f155f0",
+    "assets/final_objects/lamp/standlamp_2dgs_profile_c_angle_limited.urdf": "d564f81588083f695eaf4dd5214c3cdd0601884096e32d7dbf780c86a4fd6c0b",
+    "assets/final_objects/lamp/visual_meshes/base.obj": "76e36d4ed2ba62dc4d9091322ac8038703d816239efc4d1c8f50b54511da897c",
+    "assets/final_objects/lamp/visual_meshes/support.obj": "7046252e4404fb274fd1e694e8a0d1d322959e90044181a0f5b38579ef466b6c",
+    "assets/final_objects/lamp/visual_meshes/head.obj": "2115f91744a0411a10e741734c55a5fb670cb565a692836f3d205c4e73884e1e"
+  },
+  "source_note": "The published PIVOT source contains the experiment-time local changes. dual_view.py additionally contains the post-run exploration_round_N.json persistence fix made at 18:10 KST."
+}

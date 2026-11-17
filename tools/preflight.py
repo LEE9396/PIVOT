@@ -30,6 +30,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
@@ -127,8 +128,10 @@ def check_asset(report, conf):
         return report.add(FAIL, "충돌 메시", f"{root} 에 collision_meshes 가 없습니다")
 
     parts = sorted({p.stem for p in collisions.glob("*.obj")})
-    if not parts:                              # minimal_v2 배치
-        parts = sorted(d.name for d in collisions.iterdir() if d.is_dir())
+    if not parts:
+        part_root = (collisions / "convex"
+                     if (collisions / "convex").is_dir() else collisions)
+        parts = sorted(d.name for d in part_root.iterdir() if d.is_dir())
     missing = []
     for name in parts:
         pieces = sorted((collisions / "convex" / name).glob("part_*.obj"))
@@ -177,12 +180,42 @@ def check_same_build(report, conf):
     return report.add(OK, "빌드 일치", f"메시 차이 {1000*worst:.1f} mm")
 
 
-def check_calibration(report, conf, work):
-    """핸드아이·타어·책상·각도부호 — 없으면 조용히 명목값으로 돈다."""
-    calib = work / "calibration"
+def check_calibration(report, conf, root):
+    """핸드아이·영점 조정·책상·각도부호 — 없으면 조용히 명목값으로 돈다."""
+    calib = root / "calibration"
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "my_work"))
+        import workspace_obstacles
+        obstacles = workspace_obstacles.load(calib / "workspace_obstacles_current.json")
+        if obstacles["status"] != "validated":
+            raise ValueError("미확인: " + ", ".join(obstacles["unresolved"]))
+        report.add(OK, "추가 장애물", f"검증된 상자 {len(obstacles['boxes'])}개")
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        report.add(FAIL, "추가 장애물", str(exc),
+                   "optical table과 단차 지지대의 실제 범위를 확인한 뒤 충돌 장면을 다시 만드세요")
     camera = sorted(calib.glob("camera_*.json"))
     if camera:
         report.add(OK, "핸드아이", f"{camera[0].name}")
+        stream = conf.get("FP_INTRINSICS")
+        try:
+            calibrated = json.loads(camera[0].read_text())
+            live = json.loads(Path(stream).read_text())
+            keys = ("fx", "fy", "cx", "cy")
+            if not all(k in live for k in keys + ("width", "height")):
+                raise ValueError("현재 스트림의 K/해상도가 불완전합니다")
+            if not all(float(live[k]) > 0 for k in ("fx", "fy")):
+                raise ValueError("현재 스트림의 fx/fy가 유효하지 않습니다")
+            expected_size = [int(conf.get("FP_CAMERA_WIDTH", live["width"])),
+                             int(conf.get("FP_CAMERA_HEIGHT", live["height"]))]
+            if [int(live["width"]), int(live["height"])] != expected_size:
+                raise ValueError("설정 해상도와 현재 스트림 해상도가 다릅니다")
+            report.add(OK, "카메라 내부보정",
+                       f"현재 스트림 {live['width']}x{live['height']} ·"
+                       f" fx={live['fx']:.2f}")
+        except Exception as exc:                       # noqa: BLE001
+            report.add(FAIL, "카메라 내부보정", str(exc),
+                       "tools/import_easyhec.py 에 --intrinsics FP_INTRINSICS 를"
+                       " 주어 다시 가져오세요")
     else:
         report.add(FAIL, "핸드아이", f"{calib}/camera_*.json 이 없습니다",
                    "import_calibration.py 로 옮기세요.\n"
@@ -191,10 +224,83 @@ def check_calibration(report, conf, work):
 
     tare = conf.get("TARE_FILE")
     if tare and Path(tare).is_file():
-        report.add(OK, "3자세 타어", Path(tare).name)
+        try:
+            payload = json.loads(Path(tare).read_text())
+            entries = payload.get("entries", [])
+            if payload.get("wrench_frame") != "ft_mount":
+                raise ValueError("F/T 좌표계가 ft_mount로 검증되지 않았습니다")
+            if payload.get("measured", {}).get("passed") is not True:
+                raise ValueError("영점 물리 검산 합격 기록이 없습니다")
+            if conf.get("TARE_MODE", "gravity") == "gravity":
+                from hardware import GravityTare
+                model = GravityTare(payload, max_age_s=float(conf.get("TARE_MAX_AGE_S", 1800)))
+                model.apply(entries[0]["achieved_g_hat"], entries[0]["wrench"])
+            directions = {tuple(e["g_hat"]) for e in entries}
+            if not {(0., 0., -1.), (1., 0., 0.), (0., 1., 0.)} <= directions:
+                raise ValueError("탐색에 필요한 -Z, +X, +Y 영점이 없습니다")
+            if len(entries) < 3 or any("joint_deg" not in e or
+                                       "direction_error_deg" not in e
+                                       for e in entries):
+                raise ValueError("3방향 이상의 joint_deg/direction_error_deg 기록이 불완전")
+            worst = max(float(e["direction_error_deg"]) for e in entries)
+            verified = [float(v["time"]) for v in payload.get("verifications", [])
+                        if v.get("passed")]
+            stamp = max([float(payload.get("created_at_s", 0.0))] + verified)
+            age = time.time() - stamp
+            max_age_s = float(conf.get("TARE_MAX_AGE_S", 30 * 60))
+            if worst > 1.0:
+                report.add(FAIL, "3자세 영점 조정",
+                           f"방향오차 최대 {worst:.2f} deg",
+                           "1 deg 이내로 다시 재세요")
+            elif stamp <= 0 or (max_age_s > 0 and age > max_age_s):
+                report.add(FAIL, "3자세 영점 조정", "유효한 측정/검증 기록이 없습니다",
+                           "tare_real.py --verify 또는 --setup 을 실행하세요")
+            else:
+                report.add(OK, "3자세 영점 조정",
+                           f"{Path(tare).name}, 최대 {worst:.2f} deg, "
+                           + ("세션 재사용" if max_age_s <= 0 else f"{age/60:.0f}분 전"))
+        except Exception as exc:                       # noqa: BLE001
+            report.add(FAIL, "3자세 영점 조정", f"파일이 불완전합니다: {exc}",
+                       "현재 tare_real.py --setup 으로 다시 재세요")
     else:
-        report.add(FAIL, "3자세 타어", f"없습니다: {tare}",
-                   "MeshPCA pivot/tare_real.py 로 빈 그리퍼 타어를 재세요")
+        report.add(FAIL, "3자세 영점 조정", f"없습니다: {tare}",
+                   "MeshPCA pivot/tare_real.py 로 빈 그리퍼 영점을 다시 조정하세요")
+
+    # 영점을 "쟀다" 와 "맞다" 는 다르다.
+    #
+    # 위 검사는 로봇이 세 자세를 제대로 밟았는지(방향오차)와 값이 언제 것인지만
+    # 본다. 값 자체가 물리적으로 말이 되는지는 안 본다. session_20260904_1736 은
+    # 위 검사를 OK 로 통과했지만, 잰 값을 강체 하나가 중력 방향만 바꾼 것으로
+    # 설명하면 14.7 N 이 남았다 — 재려던 램프 전체가 5.6 N 인데.
+    #
+    # 그리퍼 질량은 이미 아는 값이므로 추 없이 그 자리에서 검산할 수 있다.
+    # my_work/tare_check.py 를 보라.
+    if tare and Path(tare).is_file():
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "my_work"))
+            import tare_check
+            lines = []
+            passed, info = tare_check.check(tare, log=lines.append)
+            detail = (f"공구 {info['tool_mass_kg']:.3f} kg, "
+                      f"부호 {'-g' if info['force_sign'] < 0 else '+g'}, "
+                      f"지렛대 {1000*info['lever_m']:.0f} mm, "
+                      f"잔차 {info['residual_force_n']:.2f} N /"
+                      f" {info['residual_torque_nm']:.3f} N·m")
+            failed = [name for name, ok, _, _ in info["rows"] if not ok]
+            report.add(OK if passed else FAIL,
+                       "영점 물리 검산", detail,
+                       None if passed else
+                       ("실패 항목: " + ", ".join(failed) + "\n"
+                       "  자세한 이유와 조치는 다음을 실행하세요:\n"
+                       f"  cd my_work && python tare_check.py {tare}"))
+        except Exception as exc:                       # noqa: BLE001
+            report.add(FAIL, "영점 물리 검산", f"검산을 못 돌렸습니다: {exc}",
+                       "my_work/tare_check.py 가 있는지 확인하세요")
+
+    if tare and float(conf.get("TARE_MAX_AGE_S", 30 * 60)) <= 0:
+        report.add(WARN, "영점 유효기간", "TARE_MAX_AGE_S=0 (무제한)",
+                   "AFT200 은 온도 드리프트가 있습니다. 세션마다 다시 재고\n"
+                   "  기본값(1800초)으로 되돌리는 편이 안전합니다.")
 
     table = calib / "rb5_table_current.json"
     if table.is_file():
@@ -215,10 +321,15 @@ def check_calibration(report, conf, work):
     signs = calib / "angle_signs.json"
     if signs.is_file():
         data = json.loads(signs.read_text())
-        rms = max(v.get("residual_rms_deg", 0) for v in data.values())
-        report.add(OK, "각도 부호·영점",
-                   f"{len(data)} 관절, 잔차 최대 {rms:.2f} deg"
-                   f" (ANGLE_FLOOR_DEG 에 쓰세요)")
+        if not data or any("residual_rms_deg" not in v for v in data.values()):
+            report.add(WARN, "각도 부호·영점",
+                       f"{len(data)} 관절 변환은 있으나 실측 잔차 기록이 없습니다",
+                       "기준 각도와 실측값을 비교하세요. 기록 없음은 오차 0°가 아닙니다.")
+        else:
+            rms = max(float(v["residual_rms_deg"]) for v in data.values())
+            report.add(WARN, "각도 부호·영점",
+                       f"{len(data)} 관절, 맞춤 잔차 최대 {rms:.2f} deg",
+                       "맞춤 잔차와 독립 기준에 대한 각도 정확도는 별도로 검증하세요.")
     else:
         report.add(WARN, "각도 부호·영점", "없습니다 — 각도 판정이 반대로 나올 수 있습니다",
                    "tools/angle_signs.py 로 관절마다 한 번씩 쓸어담으세요")
@@ -239,9 +350,96 @@ def check_tracker(report, conf):
         data = json.loads(latest.read_text())
     except Exception as exc:                                   # noqa: BLE001
         return report.add(FAIL, "FoundationPose", f"latest.json 을 못 읽습니다: {exc}")
+    age = time.time() - float(data.get("timestamp_s", latest.stat().st_mtime))
+    if age > 2.0:
+        return report.add(FAIL, "FoundationPose",
+                          f"마지막 값이 {age:.1f}초 전입니다 — 트래커가 멈췄습니다",
+                          "창 2를 다시 띄워 latest.json 이 갱신되는지 확인하세요")
     angles = [k for k in data if k.endswith("_deg")]
     return report.add(OK, "FoundationPose",
                       f"각도 수신 {', '.join(angles) if angles else list(data)[:3]}")
+
+
+def check_robot(report, conf):
+    """실물 UI가 움직임을 허용하기 전에 RB5 전원·초기화를 확인한다."""
+    host = conf.get("ROBOT_HOST")
+    if not host:
+        return report.add(WARN, "RB5 상태", "ROBOT_HOST가 없습니다")
+    try:
+        import rbpodo
+        reply = rbpodo.CobotData(host).request_data(2.0)
+        if reply is None:
+            raise TimeoutError("상태 응답 없음")
+        state = reply.sdata
+        power = (state.information_chunk_1 >> 6) & 1
+        faults = any((state.op_stat_collision_occur, state.op_stat_sos_flag,
+                      state.op_stat_soft_estop_occur, state.op_stat_ems_flag))
+        ready = (state.init_state_info == 6 and state.init_error == 0
+                 and power == 1 and not faults)
+        detail = (f"초기화={state.init_state_info}, 전원={'ON' if power else 'OFF'}, "
+                  f"fault={'있음' if faults else '없음'}")
+        if ready:
+            return report.add(OK, "RB5 상태", detail)
+        return report.add(FAIL, "RB5 상태", detail,
+                          "티칭펜던트의 경고를 확인하고 Initialize를 완료하세요")
+    except Exception as exc:                                  # noqa: BLE001
+        return report.add(FAIL, "RB5 상태", f"읽기 실패: {exc}",
+                          "제어기 전원과 192.168.50.x 네트워크를 확인하세요")
+
+
+def check_estimator_conf(report, conf):
+    """session_20260904_1736 을 재발시키는 설정 세 가지를 시작 전에 막는다.
+
+    1) GRASP_FRAME != measured  -> 회귀행렬 토크 기준점이 AFT200 이 아니라
+       파지점(173.9 mm 어긋남)이 되어 파지 오프셋이 +-50 mm 상자에 붙는다.
+    2) TOTAL_MASS_KG 없음      -> 토크만 쓰는 추정에 규모 기준이 없고,
+       자산 GT 로 총질량을 만들게 된다 (정답 넣고 정답 맞히기).
+    3) measured 인데 GRASP_MU_MM 있음 -> 173.9 mm 를 기하와 사전평균에
+       두 번 넣게 된다.
+    """
+    # ROBOT_HOST 가 없으면 dual_view 가 --hardware sim 으로 돈다. 그때는 모의
+    # 렌치가 회귀행렬과 같은 점에서 나오므로 아래 셋이 틀려도 결과가 안 틀린다.
+    # 실물에서만 FAIL 로 막고, 시뮬에서는 WARN 으로 알려만 준다.
+    real = bool(str(conf.get("ROBOT_HOST", "")).strip())
+    block = FAIL if real else WARN
+    frame = str(conf.get("GRASP_FRAME", "legacy")).strip()
+    if frame == "measured":
+        report.add(OK, "토크 기준점", "GRASP_FRAME=measured (AFT200 몸체 원점)")
+    else:
+        report.add(block, "토크 기준점",
+                   f"GRASP_FRAME={frame or '(없음)'} — 파지점 기준이라 AFT200 과 어긋납니다"
+                   + ("" if real else " (시뮬이라 무해)"),
+                   "setup/experiment.conf 에 GRASP_FRAME=measured")
+    mass = str(conf.get("TOTAL_MASS_KG", "")).strip()
+    try:
+        value = float(mass)
+        if value <= 0:
+            raise ValueError
+        report.add(OK, "저울 총질량", f"{1000*value:.1f} g (힌지 포함)")
+    except ValueError:
+        report.add(block, "저울 총질량",
+                   "TOTAL_MASS_KG 가 없거나 양수가 아닙니다"
+                   + ("" if real else " (시뮬은 자산 GT 로 만듭니다)"),
+                   "물체를 힌지까지 붙은 채로 저울에 올려 kg 으로 적으세요:"
+                   " TOTAL_MASS_KG=0.571")
+    mu = str(conf.get("GRASP_MU_MM", "")).strip()
+    if frame == "measured" and mu:
+        report.add(block, "파지 사전평균",
+                   f"GRASP_MU_MM={mu} — measured 모드에서는 이중 계산입니다",
+                   "GRASP_MU_MM 을 비우세요 (실측 파지가 이미 기하에 들어갑니다)")
+    else:
+        report.add(OK, "파지 사전평균", "비움 (실측 파지 잔차만 미지수)" if not mu
+                   else f"{mu} mm (legacy 프레임)")
+    sigma = str(conf.get("GRASP_SIGMA_MM", "10")).strip()
+    try:
+        if float(sigma) < 15.0:
+            report.add(WARN, "파지 불확실성",
+                       f"GRASP_SIGMA_MM={sigma} — FoundationPose 10 mm 에 손-눈 오차가 더해집니다",
+                       "15~20 을 권합니다. 표식으로 실측한 값이 있으면 그 값")
+        else:
+            report.add(OK, "파지 불확실성", f"GRASP_SIGMA_MM={sigma}")
+    except ValueError:
+        report.add(FAIL, "파지 불확실성", f"GRASP_SIGMA_MM={sigma} 를 숫자로 못 읽습니다")
 
 
 def check_masks(report, conf):
@@ -273,13 +471,15 @@ def main():
     conf = read_conf(args.conf.expanduser())
     if not conf:
         print(f"[주의] {args.conf} 를 못 읽었습니다 — 환경변수만 봅니다\n")
-    work = Path(conf.get("PIVOT_ROOT", ".")).expanduser() / "my_work"
+    root = Path(conf.get("PIVOT_ROOT", ".")).expanduser()
 
     print(f"PIVOT 0단계 준비 점검   ({args.conf})\n")
     report = Report()
+    check_robot(report, conf)
     check_asset(report, conf)
     check_same_build(report, conf)
-    check_calibration(report, conf, work)
+    check_calibration(report, conf, root)
+    check_estimator_conf(report, conf)
     check_masks(report, conf)
     check_tracker(report, conf)
     report.show()

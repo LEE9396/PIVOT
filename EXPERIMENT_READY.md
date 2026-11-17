@@ -1,5 +1,7 @@
 # 실물 실험 준비 완료 보고서
 
+> **2026-09-08 통합 UI 새 PC 설치:** [setup/REPRODUCE.md](setup/REPRODUCE.md)를 먼저 따르세요. 아래의 과거 4창/드라이버 미구현 설명보다 이 문서가 우선합니다.
+
 대상 물체 세 개 — **2-link**, **3-link**, **desk lamp** — 로 실물 실험을 할 수
 있도록 코드·UI·검증을 마쳤다. 이 문서 하나로 무엇을 어떻게 하는지 알 수 있다.
 
@@ -261,7 +263,7 @@ PIVOT 실물 실험 환경을 이 PC 에 새로 구성해 줘. 세 물체(2-link
 desk lamp)로 실험할 거야.
 
 ━━ 저장소 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  git clone -b real-experiment-ready https://github.com/LEE9396/PIVOT.git ~/PIVOT
+  git clone -b real-experiment-ready https://github.com/Yuseong-Cheon/PIVOT.git ~/PIVOT
   git clone https://github.com/Yuseong-Cheon/MeshPCA.git ~/MeshPCA
 
   ★ 할 일 목록은 ~/PIVOT/TEAMMATE_CHECKLIST.md 에 있다. **그것부터 읽어라.**

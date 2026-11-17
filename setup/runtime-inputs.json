@@ -1,0 +1,78 @@
+{
+  "date": "2026-09-08",
+  "note": "Inventory only. Calibration must be regenerated or independently validated for the physical setup. Weights are obtained from their upstream source.",
+  "files": {
+    "calibration/aft_tare_current.failed.json": {
+      "bytes": 3509,
+      "sha256": "78b825fce07db2abd2a9e201c61a9019ed5b100c042731b6921655ac691ea7f2"
+    },
+    "calibration/aft_tare_current.json": {
+      "bytes": 4094,
+      "sha256": "ad459dfa986d443d57609cbd128ce48c80f71acc512c3eceb8315da32a2869ba"
+    },
+    "calibration/angle_signs.json": {
+      "bytes": 348,
+      "sha256": "f9b833d324ad3b6a4b05c91f214cb6522b0a63d2a2bce9372bf0b57540084618"
+    },
+    "calibration/camera_cam_d456_front.json": {
+      "bytes": 688,
+      "sha256": "1107fbebe0dac3adb02555af737e6a9169aa98c164f56b97d56919bf049b852c"
+    },
+    "calibration/rb5_d456_easyhec_current.json": {
+      "bytes": 1359,
+      "sha256": "4e172c3e268069030ec01fe2ff8ab03bc41fe71f605bcbae8a3d7b02e62e9a57"
+    },
+    "calibration/rb5_optical_table_20260907.json": {
+      "bytes": 1213,
+      "sha256": "53c7aaba868bc64e629cc39a68233f568dd81e5205d9d30af56aab3942637e4f"
+    },
+    "calibration/rb5_optical_table_ordered_20260907.json": {
+      "bytes": 1225,
+      "sha256": "acea6156154ba3d5155db2c0c585d45ec179e5bcb24fbfb9af9f971372290bcb"
+    },
+    "calibration/rb5_optical_table_retry_20260907.json": {
+      "bytes": 1219,
+      "sha256": "d130667d47dbe8493d72c3b13e52ffd497557003412324540b5aefdccf22eaca"
+    },
+    "calibration/rb5_optical_table_retry_20260907_155256.json": {
+      "bytes": 1214,
+      "sha256": "995e814d01cd6c08d9966233771b337726cf84aa40b73b053ea06a2836a0d3ab"
+    },
+    "calibration/rb5_optical_table_surface_20260907_155540.json": {
+      "bytes": 1214,
+      "sha256": "1a80bce53358d46562f45ab6ee1d6ff26aed94bd63cf0c95209417051a49ab63"
+    },
+    "calibration/rb5_table_current.json": {
+      "bytes": 1217,
+      "sha256": "8d846d7cedec88d1acef24c8522260c70e9f679a93dcedb2d9a1615ffd4b5eaa"
+    },
+    "calibration/stepped_support_selection_20260907_160054.json": {
+      "bytes": 809,
+      "sha256": "7916858ed2960ddd24fad8e84678c76a85d4c74f180ff52135d9511a966795ab"
+    },
+    "calibration/workspace_obstacles_current.json": {
+      "bytes": 337,
+      "sha256": "5f0b1a9f94d648f6513f8fbfcabe4cfa88c4a05a91aeec45849119e0a650a3d4"
+    },
+    "weights/2023-10-28-18-33-37/config.yml": {
+      "bytes": 708,
+      "sha256": "28a6ba94a33230ee5fc3c51939486281578b0972542bd9e38ca6123e75605686"
+    },
+    "weights/2023-10-28-18-33-37/model_best.pth": {
+      "bytes": 68220109,
+      "sha256": "774700586ddc435d408fc01c9809c43e151232936369dfbea0f0f964ba471d60"
+    },
+    "weights/2024-01-11-20-02-45/config.yml": {
+      "bytes": 778,
+      "sha256": "a79db4de3b95885dd5ae86833b37b8698a75dad81e87d1086cd50b2fcd8dda3f"
+    },
+    "weights/2024-01-11-20-02-45/model_best.pth": {
+      "bytes": 190229389,
+      "sha256": "81924d384bf5c26c646ee4783104982ae3d1e049c181c36641b6a7aeae494c26"
+    },
+    "weights/foundationpose_ngc_1.0.0.zip": {
+      "bytes": 132121059,
+      "sha256": "cc839af844ad7c8b2ba262e25ab2a0935d43744bd5239302b4eec21913b5a880"
+    }
+  }
+}

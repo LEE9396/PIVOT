@@ -46,6 +46,8 @@ from pydrake.systems.framework import DiagramBuilder
 import density_id_drake as alg
 import density_id_objects as obj
 import grippers as gr
+import path_planning as pp
+import workspace_obstacles
 
 WORKSPACE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKSPACE / "robot_learning" / "scripts"))
@@ -58,10 +60,13 @@ ARM_JOINT_NAMES = rb5.ARM_JOINT_NAMES
 AFT_TOTAL_H_M = 0.0523
 AFT_DIAMETER_M = rb5.AFT200_DIAMETER_M
 AFT_MASS_KG = rb5.AFT200_BRACKET_MASS_KG + rb5.AFT200_SENSOR_MASS_KG
+AFT_CABLE_LENGTH_M = 0.050
+AFT_CABLE_RADIUS_M = 0.010
 
 PGC_TCP_Z_M = rb5.PGC_TCP_Z_M          # 0.125 — 그리퍼 베이스에서 파지점까지
 PGC_FINGER_ORIGIN_Y_M = 0.0265         # 손가락 원점의 y (열림 최대)
 PGC_STROKE_M = 0.025                   # 손가락당 행정
+GRIPPER_MOUNT_YAW_RAD = np.pi / 2.0    # 실물 AFT 기준 그리퍼 장착 방향
 
 # ---------------------------------------------------------------------------
 # 실험실 배치 — configs/experiments/icra_realistic_lab_scene_v1.json 그대로.
@@ -86,6 +91,7 @@ TABLE_CENTER_M = (_LAB["table"]["center_xy_m"][0],
 
 ROBOT_BASE_XYZ_M = tuple(_LAB["robot"]["base_xyz_m"])
 ROBOT_BASE_RPY_DEG = tuple(_LAB["robot"]["base_rpy_deg"])
+BASE_FLOOR_WIDTH_M = 2.0 * 0.85
 
 
 # ---------------------------------------------------------------------------
@@ -176,16 +182,13 @@ def table_box_pose(calibration=None):
     helper = np.array([1.0, 0.0, 0.0])
     if abs(z_axis @ helper) > 0.9:
         helper = np.array([0.0, 1.0, 0.0])
-    x_axis = np.cross(helper, z_axis); x_axis /= np.linalg.norm(x_axis)
+    # 수평일 때 명목 +X를 유지한다. 외적을 쓰면 긴 변/짧은 변이 90° 뒤바뀐다.
+    x_axis = helper - np.dot(helper, z_axis) * z_axis
+    x_axis /= np.linalg.norm(x_axis)
     y_axis = np.cross(z_axis, x_axis)
     rotation = RotationMatrix(np.column_stack([x_axis, y_axis, z_axis]))
     centre = top - z_axis * (size[2] / 2.0)
     return tuple(size), RigidTransform(rotation, centre)
-
-# 로봇은 테이블이 아니라 앞쪽 긴 변의 독립 받침대 위에 선다.
-PEDESTAL_SIZE_M = (0.22, 0.22, ROBOT_BASE_XYZ_M[2])
-PEDESTAL_CENTER_M = (ROBOT_BASE_XYZ_M[0], ROBOT_BASE_XYZ_M[1],
-                     ROBOT_BASE_XYZ_M[2] / 2.0)
 
 # 측정 자세를 둘 안전 촬영 영역 (설정 파일의 safe_capture_box).
 _BOX = np.array(_LAB["workspace"]["safe_capture_box_xyz_m"])
@@ -251,6 +254,13 @@ def load_camera(camera_id=CAMERA_ID, path=None, announce=False):
     data = json.loads(path.read_text())
     base.update({k: v for k, v in data.items() if k != "source"})
     base["source"] = f"캘리브레이션 {path.name}"
+    intrinsics_path = os.environ.get("PIVOT_CAMERA_INTRINSICS")
+    if intrinsics_path and Path(intrinsics_path).is_file():
+        live = json.loads(Path(intrinsics_path).read_text())
+        base["depth_intrinsics"] = {
+            key: float(live[key]) for key in ("fx", "fy", "cx", "cy")}
+        base["resolution"] = [int(live["width"]), int(live["height"])]
+        base["source"] += f" + 현재 스트림 {Path(intrinsics_path).name}"
     if announce:
         stamp = data.get("calibrated_at", "날짜 없음")
         rms = data.get("rms_px")
@@ -266,6 +276,13 @@ def camera_pose(camera):
         matrix = np.asarray(matrix, dtype=float)
         return RigidTransform(RotationMatrix(matrix[:3, :3]), matrix[:3, 3])
     return look_at_pose(camera["position_xyz_m"], camera["look_at_xyz_m"])
+
+
+def camera_view(camera):
+    """Meshcat용 카메라 위치와 광축 위 목표점."""
+    X_WC = camera_pose(camera)
+    position = X_WC.translation()
+    return position, position + X_WC.rotation().matrix()[:, 2]
 
 
 def save_calibration(X_WC, camera_id=CAMERA_ID, path=None, **extra):
@@ -285,6 +302,85 @@ def save_calibration(X_WC, camera_id=CAMERA_ID, path=None, **extra):
 CAMERA = load_camera()
 CAMERA_BODY_SIZE_M = (0.124, 0.026, 0.029)   # D456 외형 (124 x 26 x 29 mm)
 CAMERA_MOUNT_RADIUS_M = 0.016                # 지지대 봉
+CAMERA_FOV_MARGIN_PX = int(os.environ.get("PIVOT_FOV_MARGIN_PX", "20"))
+
+
+def _image_bounds(points_W, camera=CAMERA):
+    """월드 점들의 영상 경계 (u_min, v_min, u_max, v_max)."""
+    points_W = np.asarray(points_W, dtype=float)
+    X_WC = camera_pose(camera)
+    points_C = (X_WC.rotation().matrix().T
+                @ (points_W - X_WC.translation()).T).T
+    if not len(points_C) or np.any(points_C[:, 2] <= 0.0):
+        return None
+    intr = camera["depth_intrinsics"]
+    uv = points_C[:, :2] / points_C[:, 2, None]
+    uv[:, 0] = intr["fx"] * uv[:, 0] + intr["cx"]
+    uv[:, 1] = intr["fy"] * uv[:, 1] + intr["cy"]
+    return np.array([uv[:, 0].min(), uv[:, 1].min(),
+                     uv[:, 0].max(), uv[:, 1].max()])
+
+
+_PART_CORNERS = {}
+
+
+def _part_corners(part):
+    """FOV 판정에 쓸 실제 CoACD 메시 정점. 없으면 visual/AABB 순으로 대체."""
+    key = (tuple(part.collision_meshes), part.visual_mesh,
+           tuple(part.mesh_offset_m), tuple(part.bbox_mm))
+    if key not in _PART_CORNERS:
+        vertices = []
+        paths = tuple(part.collision_meshes) or ((part.visual_mesh,)
+                                                 if part.visual_mesh else ())
+        for path in paths:
+            try:
+                import mesh_props
+                points, _ = mesh_props.read_mesh(path)
+                vertices.append(np.asarray(points, dtype=float))
+            except (OSError, ValueError):
+                pass
+        if vertices:
+            _PART_CORNERS[key] = (np.vstack(vertices)
+                                  + np.asarray(part.mesh_offset_m, dtype=float))
+        else:
+            half = 0.5 * np.asarray(part.bbox_mm, dtype=float) * MM
+            _PART_CORNERS[key] = np.array([
+                [x, y, z] for x in (-half[0], half[0])
+                for y in (-half[1], half[1]) for z in (-half[2], half[2])])
+    return _PART_CORNERS[key]
+
+
+def object_image_bounds(plant, context, spec, model, camera=CAMERA):
+    """현재 자세의 물체 전체 visual mesh가 차지하는 영상 경계."""
+    points = []
+    for part in spec.parts:
+        X_WB = plant.GetBodyByName(part.name, model).body_frame().CalcPoseInWorld(
+            context)
+        points.extend(X_WB @ corner for corner in _part_corners(part))
+    return _image_bounds(points, camera)
+
+
+def object_in_camera(plant, context, spec, model, camera=CAMERA,
+                     margin_px=CAMERA_FOV_MARGIN_PX):
+    """현재 자세에서 물체 전체가 보정된 카메라 영상 안에 있는가."""
+    bounds = object_image_bounds(plant, context, spec, model, camera)
+    if bounds is None:
+        return False
+    width, height = camera.get("resolution", (1280, 720))
+    return bool(bounds[0] >= margin_px and bounds[1] >= margin_px
+                and bounds[2] <= width - margin_px
+                and bounds[3] <= height - margin_px)
+
+
+def fov_self_test():
+    camera = dict(X_WC=np.eye(4).tolist(),
+                  depth_intrinsics=dict(fx=100, fy=100, cx=50, cy=40),
+                  resolution=[100, 80])
+    assert np.allclose(_image_bounds([[0, 0, 1]], camera), [50, 40, 50, 40])
+    assert np.allclose(_image_bounds([[-.4, -.3, 1], [.4, .3, 1]], camera),
+                       [10, 10, 90, 70])
+    assert _image_bounds([[0, 0, -1]], camera) is None
+    print("카메라 FOV 투영 자기검사 통과")
 
 # 이 값보다 가까워지면 충돌로 본다. **자세와 경로 모두** 이 값을 지킨다.
 #
@@ -299,7 +395,15 @@ CAMERA_MOUNT_RADIUS_M = 0.016                # 지지대 봉
 # 이 중 파지점 어긋남은 이미 추정기가 미지수로 풀지만(design_core.grasp_columns),
 # 그건 **렌치를 고치는** 것이지 충돌 검사에 반영되지는 않는다. 충돌 검사는
 # 명목 형상만 본다. 그래서 여유를 형상 쪽에 따로 주어야 한다.
-MIN_DISTANCE_M = 0.010
+#
+# 10 mm 에서 20 mm 로 올린다. 이유 둘.
+#   1) 위 오차 예산의 합이 이미 10~13 mm 다. 10 mm 는 여유가 아니라 본전이었다.
+#   2) 실물이 움직일 때 10 mm 는 사람 눈으로 위험 여부를 판단할 수 없다.
+#      20 mm 면 보인다. 사람이 옆에 서 있는 실험이므로 이게 안전 조건이다.
+# 후보가 줄지 않는 것은 확인했다 — 램프 4x4 격자에서 10 mm 와 20 mm 가 똑같이
+# 8/16 을 통과한다. 22 mm 에서 9/16, 25 mm 에서 0/16 이므로 20 mm 는 절벽 앞
+# 안전한 자리다. 가장 빠듯한 쌍은 link_2(램프 머리) <-> base_floor 였다.
+MIN_DISTANCE_M = 0.020
 
 # IK 에만 얹는 추가 여유.
 #
@@ -308,7 +412,7 @@ MIN_DISTANCE_M = 0.010
 # 부동소수점 차이만으로 그 해를 탈락시킨다.
 #
 # 예전에는 계획기 문턱을 10% 낮춰(PLANNER_MARGIN_RATIO) 피했는데, 그러면
-# 실제로 보장되는 간격이 문턱보다 작아진다 — 10 mm 를 요구해도 경로는
+# 실제로 보장되는 간격이 문턱보다 작아진다 — 20 mm 를 요구해도 경로는
 # 9 mm 까지 파고들 수 있었다. 여유는 **지켜야 하는 쪽을 낮추는 게 아니라
 # 만드는 쪽을 높여서** 주는 것이 맞다. 그래서 IK 만 1 mm 더 요구한다.
 IK_SLACK_M = 0.001
@@ -324,8 +428,8 @@ ANGLE_TOL_RAD = np.deg2rad(1.0)
 #     head (joint_2 에서 최대 지레팔 304 mm)   1도 5.3 mm   2도 10.6   3도 15.9
 #     base (joint_1 에서 최대 지레팔 151 mm)   1도 2.6 mm   2도  5.3   3도  7.9
 #
-# 3 도면 head 끝이 15.9 mm 움직인다 — MIN_DISTANCE_M(10 mm) 보다 크다.
-# 즉 "여유 10 mm" 라고 판정한 자세가 실제로는 6 mm 파고들 수 있다.
+# 3 도면 head 끝이 15.9 mm 움직인다 — MIN_DISTANCE_M(20 mm) 에 육박한다.
+# 즉 "여유 20 mm" 라고 판정한 자세가 실제로는 4 mm 까지 줄어들 수 있다.
 #
 # 그래서 IK 로 찾은 팔 자세를 물체 각도 +-여유의 **모서리에서 다시 검사**한다.
 # IK 를 다시 풀지 않고 arm_pose_is_clear 로 간격만 재므로 값이 싸다.
@@ -530,14 +634,86 @@ def _add_object(plant, spec, densities, joint_limits_rad):
     return model, bodies, sensor_frame
 
 
+def sensor_grasp_translation(opening_m):
+    """Robotiq 실측 개구 [m] -> 모형 ft_mount에서 패드 중점으로 향하는 벡터 [m].
+
+    패드 중점은 공구 CoM이 아니다. ft_mount는 52.3 mm 키트의 중앙이며,
+    실제 센서 감지 원점과의 일치는 별도 확인이 필요하다. 동일 축에서
+    tau_pad = tau_mount - cross(r, force)로 렌치 기준점을 옮긴다.
+    """
+    opening = gr.validate_robotiq_opening(opening_m)
+    return np.array([0., 0., AFT_TOTAL_H_M / 2. + gr.robotiq_tcp_z(opening)])
+
+
+def sensor_object_transform(spec, gripper="robotiq2f85", grasp_transform=None,
+                            origin="model", joint_limits_rad=None,
+                            jaw_opening_m=None):
+    """센서 좌표계에서 본 물체의 자세 X_S_O 를 4x4 로 돌려준다.
+
+    왜 필요한가
+    -----------
+    가상환경이 두 벌이다.
+
+      robot_scene   충돌·IK·경로·카메라 시야를 본다.
+                    tools/grasp_measure.py 가 **실측한** X_G_O 를 쓴다.
+      density_id_objects  회귀행렬의 모멘트팔을 만든다.
+                    자산에 적어둔 **짐작값**을 쓰고, 회전은 아예 없다.
+
+    둘이 어긋나면 로봇은 맞게 움직이는데 밀도만 틀린다. 그리고 시뮬레이션에서는
+    렌치도 같은 plant 에서 나오므로 절대 안 드러난다.
+
+    이 함수가 robot_scene 쪽 장면에서 값을 뽑아 density 쪽에 넘겨줄 4x4 를
+    만든다. density_id_objects.build_plant(X_sensor_object=...) 에 그대로 준다.
+
+    origin 은 **토크를 어느 점 기준으로 볼 것인가**다.
+
+      "model"  지금 회귀행렬이 쓰는 자리 (obj_sensor 프레임).
+      "aft"    모형 ft_mount 원점 (실제 센서 감지 원점과의 일치는 별도 검증).
+
+    jaw_opening_m은 실측 Robotiq 패드 간격 [m]이다. 없으면 물체 단면을 쓴다.
+    실측 X_G_O가 있으면 그 변환이 우선하므로 개구에 따른 이동을 중복 적용하지 않는다.
+
+    램프·Robotiq 조합에서 이 둘은 173 mm 떨어져 있다. 렌치를 옮기지 않고
+    쓰면 토크가 |r x F| 만큼 틀어진다 (571 g 물체에서 0.97 N.m, 센서 잡음의
+    324 배). 파지 오프셋 미지수의 허용 범위가 +-50 mm 뿐이라 이 몫은 흡수되지
+    않고 경계에 붙는다 — session_20260904_1736 에서 실제로 그랬다.
+    """
+    limits = (joint_limits_rad if joint_limits_rad is not None
+              else [j.limits_rad for j in spec.joints])
+    scene = build_scene(spec, None, limits, include_visuals=False,
+                        gripper=gripper, grasp_transform=grasp_transform,
+                        jaw_opening_m=jaw_opening_m)
+    plant = scene["plant"]
+    context = plant.CreateDefaultContext()
+    if origin == "aft":
+        X_W_ref = plant.GetBodyByName("ft_mount").body_frame().CalcPoseInWorld(
+            context)
+    elif origin == "model":
+        X_W_ref = scene["sensor_frame"].CalcPoseInWorld(context)
+    else:
+        raise ValueError(f"origin 은 'model' 또는 'aft' 다: {origin}")
+    X_W_obj = scene["parts"][spec.parts[0].name].body_frame().CalcPoseInWorld(
+        context)
+    return (X_W_ref.inverse() @ X_W_obj).GetAsMatrix4()
+
+
 def build_scene(spec, densities=None, joint_limits_rad=None,
-                builder=None, include_visuals=True, gripper="robotiq2f85", grasp_transform=None):
+                builder=None, include_visuals=True, gripper="robotiq2f85",
+                grasp_transform=None, payload_pose_tcp=None,
+                include_aft_cable=True, jaw_opening_m=None):
     """RB5 + AFT200 + 그리퍼 + 물체(그리퍼에 고정)를 한 plant 로 만든다.
 
     gripper 는 grippers.GRIPPERS 의 키다. 개구량이 달라 잡을 수 있는 물체가
     갈린다 (PGC 53 mm vs Robotiq 78 mm).
+    jaw_opening_m은 Robotiq 실측 패드 간격 [m]이며 장치 카운트가 아니다.
     """
     gripper_spec = gr.GRIPPERS[gripper]
+    if jaw_opening_m is None:
+        opening = jaw_opening_for(spec, gripper_spec)
+    else:
+        if gripper != "robotiq2f85":
+            raise ValueError("실측 개구 지정은 Robotiq 2F-85에서만 지원합니다")
+        opening = gr.validate_robotiq_opening(jaw_opening_m)
     if densities is None:
         densities = [row["rho_gt"] for row in obj.body_table(spec)]
     if joint_limits_rad is None:
@@ -577,11 +753,40 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
                                      "ft_mount_visual", [0.2, 0.2, 0.22, 1.0])
     plant.RegisterCollisionGeometry(mount, RigidTransform(), shape,
                                     "ft_mount_collision", CoulombFriction(0.9, 0.8))
-    plant.WeldFrames(plant.GetFrameByName("tcp", arm), mount.body_frame(),
-                     RigidTransform([0.0, 0.0, AFT_TOTAL_H_M / 2.0]))
+    # RB5 flange extends along TCP -Y; rotate the tool so its +Z follows it.
+    plant.WeldFrames(
+        plant.GetFrameByName("tcp", arm), mount.body_frame(),
+        RigidTransform(RotationMatrix(
+                           RotationMatrix.MakeXRotation(np.pi / 2.0).matrix()
+                           @ RotationMatrix.MakeZRotation(
+                               GRIPPER_MOUNT_YAW_RAD).matrix()),
+                       [0.0, -AFT_TOTAL_H_M / 2.0, 0.0]))
+
+    # 후보 자세·실행 경로·피드백 검사에 같은 케이블 보호 원통을 사용한다.
+    cable = None
+    if include_aft_cable:
+        cable_model = plant.AddModelInstance("aft200_cable")
+        cable = plant.AddRigidBody(
+            "ft_cable_keepout", cable_model,
+            SpatialInertia(0.01, np.zeros(3),
+                           UnitInertia.SolidCylinder(AFT_CABLE_RADIUS_M,
+                                                     AFT_CABLE_LENGTH_M,
+                                                     [0, 0, 1])))
+        cable_shape = Cylinder(AFT_CABLE_RADIUS_M, AFT_CABLE_LENGTH_M)
+        if include_visuals:
+            plant.RegisterVisualGeometry(cable, RigidTransform(), cable_shape,
+                                         "ft_cable_keepout_visual",
+                                         [1.0, 0.35, 0.05, 0.65])
+        plant.RegisterCollisionGeometry(
+            cable, RigidTransform(), cable_shape, "ft_cable_keepout_collision",
+            CoulombFriction(0.9, 0.8))
+        plant.WeldFrames(
+            mount.body_frame(), cable.body_frame(),
+            RigidTransform(RotationMatrix.MakeYRotation(-np.pi / 2.0),
+                           [-(AFT_DIAMETER_M / 2.0
+                              + AFT_CABLE_LENGTH_M / 2.0), 0.0, 0.0]))
 
     # --- 그리퍼 ---
-    opening = jaw_opening_for(spec, gripper_spec)
     if gripper_spec.key == "pgc140":
         gripper_urdf = rb5.pgc_movable_urdf_string(pgc_urdf, "pgc",
                                                    include_visuals)
@@ -611,17 +816,27 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
     payload, parts, sensor_frame = _add_object(
         plant, spec, densities, joint_limits_rad)
     measured = load_measured_grasp(grasp_transform)
-    if measured is not None:
+    if payload_pose_tcp is not None:
+        matrix = np.asarray(payload_pose_tcp, dtype=float).reshape(4, 4)
+        X_tcp_object = RigidTransform(
+            RotationMatrix(matrix[:3, :3]), matrix[:3, 3])
+        plant.WeldFrames(plant.GetFrameByName("tcp", arm),
+                         parts[spec.parts[0].name].body_frame(),
+                         X_tcp_object)
+    elif measured is not None:
         X_gripper_object = RigidTransform(
             RotationMatrix(measured[:3, :3]), measured[:3, 3])
+        plant.WeldFrames(plant.GetFrameByName(gripper_spec.base_frame, gripper),
+                         parts[spec.parts[0].name].body_frame(),
+                         X_gripper_object)
     else:
         X_pgc_sensor = RigidTransform(grasp_rotation(spec), [0.0, 0.0, tcp_z])
         X_sensor_base = RigidTransform(
             np.array(spec.base_bbox_center_in_sensor_mm) * MM)
         X_gripper_object = X_pgc_sensor @ X_sensor_base
-    plant.WeldFrames(plant.GetFrameByName(gripper_spec.base_frame, gripper),
-                     parts[spec.parts[0].name].body_frame(),
-                     X_gripper_object)
+        plant.WeldFrames(plant.GetFrameByName(gripper_spec.base_frame, gripper),
+                         parts[spec.parts[0].name].body_frame(),
+                         X_gripper_object)
 
     # --- 실험실 고정물: 테이블, 로봇 받침대, 카메라 3대 ---
     fixtures = plant.AddModelInstance("lab")
@@ -653,9 +868,25 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
               f" rms {table_calibration['rms_mm']:.2f} mm")
     add_fixture("table", Box(*table_size), table_pose,
                 [*_LAB["table"]["surface_rgb"], 1.0])
-    add_fixture("pedestal", Box(*PEDESTAL_SIZE_M),
-                RigidTransform(np.array(PEDESTAL_CENTER_M)),
-                [0.30, 0.31, 0.33, 1.0])
+    # 받침대 형상 대신 base 장착면 아래 전체를 금지한다. 따라서 움직이는
+    # 링크뿐 아니라 그리퍼와 잡힌 물체도 이 높이 아래로 내려갈 수 없다.
+    base_floor_depth = 2.0
+    base_floor_width = BASE_FLOOR_WIDTH_M  # 긴 물체는 실행 장면에서 보호 범위를 넓힌다.
+    base_floor = add_fixture(
+        "base_floor", Box(base_floor_width, base_floor_width, base_floor_depth),
+        RigidTransform([ROBOT_BASE_XYZ_M[0], ROBOT_BASE_XYZ_M[1],
+                        ROBOT_BASE_XYZ_M[2] - base_floor_depth / 2.0]),
+        [0.30, 0.31, 0.33, 1.0])
+
+    # 상판 옆 단차와 돌출 지지대는 평면으로 표현할 수 없어 별도 입체로 검사한다.
+    extra_obstacles = workspace_obstacles.load()
+    plant.workspace_obstacles_sha256 = extra_obstacles["sha256"]
+    for obstacle in extra_obstacles["boxes"]:
+        size = np.asarray(obstacle["size_m"], dtype=float) + 2 * obstacle["padding_m"]
+        pose_B = RigidTransform(RollPitchYaw(np.deg2rad(obstacle["rpy_deg"])),
+                                np.asarray(obstacle["center_m"], dtype=float))
+        add_fixture("obstacle_" + obstacle["name"], Box(*size),
+                    _robot_base_pose() @ pose_B, [0.85, 0.40, 0.12, 1.0])
 
     # 카메라 본체와 지지봉. 팔이 여기에 닿으면 안 되므로 충돌 대상이다.
     # 캘리브레이션을 했으면 **실측 자세**로 세운다. 명목 위치로 세워 두면
@@ -684,7 +915,8 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
                      for n in gripper_spec.body_names]
     end_effector += [parts[spec.parts[0].name]]
     # 손목 링크: AFT200 이 link6 플랜지에 볼트로 붙으므로 항상 겹친다.
-    wrist = [plant.GetBodyByName(n, arm) for n in ("link5", "link6")]
+    # link5와는 J6 회전으로 상대 자세가 바뀐다. 고정 장착 링크만 제외한다.
+    wrist = [plant.GetBodyByName("link6", arm)]
 
     def ids(bodies):
         out = []
@@ -696,13 +928,34 @@ def build_scene(spec, densities=None, joint_limits_rad=None,
     manager.Apply(CollisionFilterDeclaration().ExcludeWithin(ids(end_effector)))
     manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
         ids(end_effector), ids(wrist)))
-    # link0..link4 와 물체의 나머지 부위, 테이블은 그대로 검사한다.
+    if cable is not None:
+        # 케이블은 mount 에 용접돼 있고, mount 는 link6 에, 그리퍼는 mount 에,
+        # 잡힌 부위는 그리퍼에 용접돼 있다. 즉 이들 사이에는 **상대 운동이
+        # 없다.** 볼트로 붙어 있는 두 물건의 거리를 충돌 검사하는 것은 아무
+        # 의미가 없다 — 팔을 어떻게 움직여도 그 거리는 안 변한다.
+        #
+        # 그런데 mount 하나만 빼고 있었다. 그래서 케이블과 그리퍼 사이의
+        # **고정된** 간격이 매번 최소 여유로 보고됐다. 실측에서 여러 경로가
+        # 똑같이 13.29 mm 로 나온 것이 그것이다. 안전 여유를 20 mm 로 올리면
+        # 팔을 어디로 보내든 절대 통과할 수 없다 — 고칠 수 없는 실패다.
+        #
+        # 진짜로 봐야 하는 것은 케이블이 **움직일 수 있는 것**에 닿는가이다:
+        # link0~link5, 테이블, 받침대, 카메라. 그쪽은 그대로 검사한다.
+        manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
+            ids([cable]), ids(end_effector)))
+        manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
+            ids([cable]), ids(wrist)))
+    manager.Apply(CollisionFilterDeclaration().ExcludeBetween(
+        ids([base_floor]), ids([plant.GetBodyByName("link0", arm)])))
+    # link0..link5 와 물체의 나머지 부위, 테이블은 그대로 검사한다.
 
     return dict(
         builder=builder, plant=plant, scene_graph=scene_graph,
         arm=arm, gripper=gripper, payload=payload, parts=parts,
-        mount=mount, sensor_frame=sensor_frame, spec=spec,
+        mount=mount, cable=cable, sensor_frame=sensor_frame,
+        wrench_frame=mount.body_frame(), spec=spec,
         gripper_spec=gripper_spec, jaw_opening_m=opening, tcp_z_m=tcp_z,
+        workspace_obstacles=extra_obstacles,
     )
 
 
@@ -748,15 +1001,31 @@ class PoseChecker:
 
     def __init__(self, spec, densities=None, joint_limits_rad=None,
                  min_distance_m=MIN_DISTANCE_M, seed_q=None, ik_restarts=4,
-                 gripper="robotiq2f85", angle_margin_rad=ANGLE_MARGIN_RAD):
+                 gripper="robotiq2f85", angle_margin_rad=ANGLE_MARGIN_RAD,
+                 payload_pose_tcp=None, include_aft_cable=True,
+                 jaw_opening_m=None):
+        # 케이블을 **여기에도** 넣는다.
+        #
+        # 예전에는 경로 계획 장면에만 넣었다. 그러면 목적지는 케이블이 없는
+        # 세계에서 고르고, 거기까지 가는 길은 케이블이 있는 세계에서 찾게
+        # 된다. 목적지에서 케이블이 걸리면 길찾기는 영원히 실패하는데,
+        # 돌려주는 말은 "경로 실패" 뿐이라 원인을 알 수 없다.
+        #
+        # 케이블 막대는 센서 축에서 옆으로 65 mm 나와 있어 손목의 유효 반경을
+        # 40 mm 에서 90 mm 로 두 배 넘게 키운다. 작은 차이가 아니다.
         scene = build_scene(spec, densities, joint_limits_rad,
-                            include_visuals=False, gripper=gripper)
+                            include_visuals=False, gripper=gripper,
+                            payload_pose_tcp=payload_pose_tcp,
+                            include_aft_cable=include_aft_cable,
+                            jaw_opening_m=jaw_opening_m)
         self.spec = spec
         self.plant = scene["plant"]
         self.arm = scene["arm"]
         self.gripper = scene["gripper"]
         self.payload = scene["payload"]
         self.sensor_frame = scene["sensor_frame"]
+        # 파지 위치용 obj_sensor는 물체마다 회전한다. 중력은 공통 F/T 축으로 잰다.
+        self.wrench_frame = scene["wrench_frame"]
         # min_distance_m 은 '지켜야 하는 값', ik_distance_m 은 'IK 에게
         # 요구하는 값'. 둘을 나눠 두어야 IK 해가 검사를 통과한다.
         self.min_distance_m = min_distance_m
@@ -812,7 +1081,7 @@ class PoseChecker:
         # 중력 방향 조건: 월드 아래 방향이 센서 좌표계에서 ĝ 가 되어야 한다.
         ik.AddAngleBetweenVectorsConstraint(
             self.plant.world_frame(), np.array([0.0, 0.0, -1.0]),
-            self.sensor_frame, np.asarray(g_hat, dtype=float),
+            self.wrench_frame, np.asarray(g_hat, dtype=float),
             0.0, ANGLE_TOL_RAD,
         )
         # 작업 공간 상자 안에 물체를 둔다.
@@ -840,10 +1109,18 @@ class PoseChecker:
             guess[joint.position_start()] = self.finger_value
         prog.SetInitialGuess(q, guess)
 
+        # 같은 센서 방향을 만드는 해 중 시작/직전 자세와 가장 가까운 것을
+        # 고른다. 초기 추측만 주면 solver가 먼 관절 분기를 골라도 성공이다.
+        arm_indices = [joint.position_start() for joint in self.arm_joints]
+        prog.AddQuadraticErrorCost(
+            np.eye(len(arm_indices)), guess[arm_indices], q[arm_indices])
+
         result = Solve(prog)
         if not result.is_success():
             return None
         solution = result.GetSolution(q)
+        if not self.arm_pose_is_clear(solution, theta):
+            return None
         self._last_solution = solution.copy()
         return solution
 
@@ -891,22 +1168,60 @@ class PoseChecker:
             guess[joint.position_start()] = self.finger_value
         prog.SetInitialGuess(q, guess)
         result = Solve(prog)
-        return result.GetSolution(q) if result.is_success() else None
+        if not result.is_success():
+            return None
+        solution = result.GetSolution(q)
+        return solution if self.arm_pose_is_clear(solution, theta) else None
 
     def arm_pose_is_clear(self, arm_q, theta):
-        """팔 자세를 고정한 채 물체 관절만 바꿨을 때 충돌이 없는가.
+        """팔 자세를 고정한 채 충돌이 없고 물체 전체가 보이는가.
 
         작업자가 물체를 손으로 돌리는 동안 로봇은 멈춰 있으므로,
         이 검사가 시작 자세의 안전 조건이다.
+        """
+        return self.pose_block_reason(arm_q, theta) is None
+
+    def pose_block_reason(self, arm_q, theta):
+        """막힌 이유를 사람이 읽을 수 있게 돌려준다. 안 막혔으면 None.
+
+        왜 이유를 따로 돌려주나
+        -----------------------
+        예전에는 참/거짓만 돌려주어서 화면에 "충돌/FOV 경로 실패" 라고만 떴다.
+        둘 중 어느 쪽인지, 어디가 몇 mm 모자란지 알 수 없으니 사람이 고칠 수가
+        없다. 시작 자세를 사람이 직접 정하게 된 뒤로는 더 그렇다 —
+        무엇을 얼마나 옮기면 되는지 알려주어야 한다.
         """
         q = np.asarray(arm_q).copy()
         for joint, value in zip(self.object_joints, np.atleast_1d(theta)):
             q[joint.position_start()] = value
         self.plant.SetPositions(self.context, q)
         query = self.plant.get_geometry_query_input_port().Eval(self.context)
-        pairs = query.ComputeSignedDistancePairwiseClosestPoints(
-            self.min_distance_m)
-        return all(pair.distance >= self.min_distance_m for pair in pairs)
+        if not pp.collision_free(self.plant, query, self.min_distance_m,
+                                 self.arm):
+            return f"충돌 ({self.closest_pair_text(query)})"
+        if not object_in_camera(self.plant, self.context, self.spec,
+                                self.payload):
+            return "카메라 시야 밖 (물체 전체가 화면 안에 안 들어옴)"
+        return None
+
+    def closest_pair_text(self, query):
+        """가장 빠듯한 충돌쌍을 "A <-> B, 필요 20 mm 현재 4 mm" 로 적는다."""
+        inspector = query.inspector()
+        worst, text = np.inf, "가장 가까운 쌍을 못 찾음"
+        for pair in query.ComputeSignedDistancePairwiseClosestPoints(
+                self.min_distance_m):
+            bodies = [self.plant.GetBodyFromFrameId(inspector.GetFrameId(gid))
+                      for gid in (pair.id_A, pair.id_B)]
+            required = pp._required_clearance(bodies[0].model_instance(),
+                                              bodies[1].model_instance(),
+                                              self.arm, self.min_distance_m)
+            slack = pair.distance - required
+            if slack < worst:
+                worst = slack
+                text = (f"{bodies[0].name()} <-> {bodies[1].name()},"
+                        f" 필요 {1000*required:.0f} mm"
+                        f" 현재 {1000*pair.distance:.1f} mm")
+        return text
 
     def solve_robust(self, theta, g_hat, workspace=None):
         """초기추측을 바꿔가며 IK 를 여러 번 시도한다.
@@ -953,6 +1268,23 @@ class PoseChecker:
                 return False
         return True
 
+    def object_self_is_clear(self, theta):
+        """로봇 IK 전에 물체 부위끼리의 충돌 조합을 싸게 거른다."""
+        q = self.plant.GetPositions(self.context).copy()
+        for joint, value in zip(self.object_joints, np.atleast_1d(theta)):
+            q[joint.position_start()] = value
+        self.plant.SetPositions(self.context, q)
+        query = self.plant.get_geometry_query_input_port().Eval(self.context)
+        inspector = query.inspector()
+        for pair in query.ComputeSignedDistancePairwiseClosestPoints(
+                self.min_distance_m):
+            bodies = [self.plant.GetBodyFromFrameId(inspector.GetFrameId(gid))
+                      for gid in (pair.id_A, pair.id_B)]
+            if (all(body.model_instance() == self.payload for body in bodies)
+                    and pair.distance < self.min_distance_m):
+                return False
+        return True
+
     def angle_corners(self, theta):
         """물체 각도 오차의 모서리들. 여유가 0 이면 명목 각도 하나뿐."""
         theta = np.atleast_1d(np.asarray(theta, dtype=float))
@@ -969,6 +1301,8 @@ class PoseChecker:
         모든 모서리에서도 간격을 지켜야 통과시킨다 (ANGLE_MARGIN_RAD 설명).
         """
         self._last_solution = None
+        if not self.object_self_is_clear(theta):
+            return {tuple(g): None for g in alg.G_DIRS}
         found = {}
         for g in alg.G_DIRS:
             arm_q = self.solve_robust(theta, g)
@@ -1320,7 +1654,7 @@ def find_viewing_poses(checker, theta_rad, scorer=None, presentations=None,
     return out
 
 
-def find_starting_pose(checker, thetas, presentations=None):
+def find_starting_pose(checker, thetas, presentations=None, theta_rad=None):
     """작업자가 물체 관절을 손으로 조정하는 동안 로봇이 멈춰 있을 자세.
 
     작업자가 관절을 움직이므로, 이 자세는 **구동범위 전 구간에서** 충돌이
@@ -1337,8 +1671,56 @@ def find_starting_pose(checker, thetas, presentations=None):
                 if np.all(point >= WORKSPACE_LOWER_M) and \
                         np.all(point <= WORKSPACE_UPPER_M):
                     presentations.append(point)
+
+    # 기존 관측성 점수로 방향 후보를 먼저 싼값에 정렬하고, 상위 후보만
+    # IK·실제 메시 충돌·FOV를 검사한다.
+    theta = np.asarray(theta_rad if theta_rad is not None
+                       else thetas[len(thetas) // 2], dtype=float)
+    scorer = ViewScorer(checker.spec)
+
+    def rank(q):
+        checker.plant.SetPositions(checker.context, q)
+        observability = min(
+            observability_px_per_deg(checker.plant, checker.context,
+                                     checker.spec, index, checker.payload)
+            for index in range(len(checker.spec.joints)))
+        part = checker.spec.parts[0]
+        X_WB = checker.plant.GetBodyByName(
+            part.name, checker.payload).body_frame().CalcPoseInWorld(
+                checker.context)
+        bounds = _image_bounds([X_WB @ p for p in _part_corners(part)])
+        footprint = (0.0 if bounds is None else
+                     np.sqrt(max(0.0, (bounds[2] - bounds[0])
+                                      * (bounds[3] - bounds[1]))))
+        position = checker.sensor_frame.CalcPoseInWorld(
+            checker.context).translation()
+        return observability * footprint, observability, footprint, q, position
+
+    predicted = []
+    indices = range(len(checker.spec.joints))
+    for position in presentations:
+        for rotation in candidate_rotations():
+            predicted.append((scorer.score_group(
+                rotation, position, theta, indices), position, rotation))
+    ranked = []
+    for _, position, rotation in sorted(predicted, key=lambda row: -row[0])[:48]:
+        checker._last_solution = None
+        q = checker.solve_oriented(theta, rotation, position)
+        if q is None or any(not checker.arm_pose_is_clear(q, th)
+                            for th in thetas):
+            continue
+        ranked.append(rank(q))
+        if len(ranked) == 4:
+            break
+    if ranked:
+        _, obs, footprint, q, position = max(ranked, key=lambda row: row[0])
+        print(f"  초기 자세 자동 선택: 관절 최소 관측성 {obs:.2f} px/deg,"
+              f" 파지 부위 화면 크기 {footprint:.0f} px")
+        return q, position
+
     down = np.array([0.0, 0.0, -1.0])
     best = (None, None, len(thetas) + 1)
+    ranked = []
     for target in presentations:
         checker._last_solution = None
         q = checker.solve_at(thetas[0], down, position=target, tol_m=0.02)
@@ -1348,9 +1730,14 @@ def find_starting_pose(checker, thetas, presentations=None):
         blocked = [th for th in thetas
                    if not checker.arm_pose_is_clear(q, th)]
         if not blocked:
-            return q, target
+            ranked.append(rank(q))
         if len(blocked) < best[2]:
             best = (q, target, len(blocked))
+    if ranked:
+        _, obs, footprint, q, position = max(ranked, key=lambda row: row[0])
+        print(f"  초기 자세 자동 선택: 관절 최소 관측성 {obs:.2f} px/deg,"
+              f" 파지 부위 화면 크기 {footprint:.0f} px (중력축 후보)")
+        return q, position
     if best[0] is not None:
         print(f"  가장 좋은 후보도 {best[2]}/{len(thetas)} 자세에서 간섭"
               f" (제시 위치 {np.round(best[1], 3)} m)")
@@ -1493,6 +1880,7 @@ def parse_joint_range(spec, values):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--self-test-fov", action="store_true")
     parser.add_argument("--object", choices=tuple(obj.OBJECTS), default="3link")
     parser.add_argument("--joint-range-deg", type=float, nargs="+", default=None,
                         help="관절 구동범위. 2개(전 관절 공통) 또는 관절당 2개")
@@ -1509,6 +1897,10 @@ def main():
     parser.add_argument("--safety", type=float, default=obj.DEFAULT_SAFETY)
     parser.add_argument("--auto-scale", action="store_true")
     args = parser.parse_args()
+
+    if args.self_test_fov:
+        fov_self_test()
+        return
 
     if args.plan is not None:
         import json

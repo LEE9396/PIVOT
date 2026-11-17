@@ -46,3 +46,7 @@ my_work/results/dynex_nlink_test/
 my_work/results/dynex/*.log
 calibration/tool_dynamic*.json
 calibration/tool_dynamic*.csv
+
+# 통합 UI 세션 산출물과 리허설 conf (생성물)
+my_work/sessions/
+setup/experiment.sim.conf

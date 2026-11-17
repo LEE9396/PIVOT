@@ -19,10 +19,18 @@ measurement
      "object_joint_deg": [float, ...],          # 실제로 맞춘 각도(시뮬만)
      "object_joint_deg_measured": [float, ...], # FoundationPose 가 읽은 값
      "wrench": [float x 6*방향수],              # **타어링 끝난** 물체만의 렌치
+     "wrench_raw": [float, ...],               # 센서 사용 시 원시 렌치
+     "tare_applied": [float, ...],             # 같은 방향/축 순서의 실제 차감값
+     "tare_required": bool,                   # 센서 사용 시 True, 두 배열 필수
+     "gravity_tare": bool,                    # 현재 FK에 따른 연속 공구 보정
+     "measurement_poses": [{"achieved_g_hat": [float, float, float], ...}],
      "aborted": bool}
 
 wrench 는 반드시 타어링을 끝낸 값이어야 한다. 그리퍼·마운트·손가락 무게가
 섞여 들어오면 밀도가 통째로 틀어진다 (hardware.TareTable 참고).
+추정기 입구는 wrench_raw - tare_applied를 다시 구성해 wrench와 일치하는지
+검사한다. 이미 차감된 wrench에서 영점을 두 번 빼지 않는다.
+연속 보정이면 각 측정의 achieved_g_hat을 밀도 회귀행렬에도 그대로 사용한다.
 
 실행 (연결 확인용 반향 서버):
     ../robot_learning/scripts/run_drake_env.sh python pose_bus.py --echo

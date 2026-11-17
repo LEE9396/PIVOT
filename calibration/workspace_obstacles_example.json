@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "추가 고정 장애물 (받침대, 단차 지지대, 옵티컬 테이블 가장자리 등). 로봇 베이스 프레임, m 단위.",
+    "이 파일을 workspace_obstacles_current.json 으로 복사해 실측값을 채운다.",
+    "장애물이 하나도 없으면 boxes 를 [] 로 두고 status 를 validated 로 바꾼다.",
+    "status 가 validated 이면 unresolved 는 비어 있어야 한다. 값은 my_work/workspace_obstacles.py 가 검증한다."
+  ],
+  "frame": "robot_base",
+  "units": "m",
+  "status": "pending",
+  "boxes": [
+    {
+      "name": "stand_left",
+      "center_m": [0.35, -0.60, 0.05],
+      "size_m": [0.20, 0.20, 0.10],
+      "rpy_deg": [0.0, 0.0, 0.0],
+      "padding_m": 0.02
+    }
+  ],
+  "unresolved": ["stand_left 실측 전"]
+}

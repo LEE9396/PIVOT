@@ -100,7 +100,9 @@ def read_intrinsics(path):
         if key in data:
             data = data[key]
             break
-    return {k: float(data[k]) for k in ("fx", "fy", "cx", "cy") if k in data}
+    out = {k: float(data[k]) for k in ("fx", "fy", "cx", "cy") if k in data}
+    out.update({k: int(data[k]) for k in ("width", "height") if k in data})
+    return out
 
 
 def main():

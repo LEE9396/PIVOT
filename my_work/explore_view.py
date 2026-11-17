@@ -109,7 +109,8 @@ def build_floating(spec, densities, builder):
 
 
 class Player:
-    def __init__(self, spec, meshcat, plant, bodies, context, diagram):
+    def __init__(self, spec, meshcat, plant, bodies, context, diagram,
+                 display_rotation=None):
         self.spec = spec
         self.meshcat = meshcat
         self.plant = plant
@@ -121,6 +122,8 @@ class Player:
         self.X_SB = RigidTransform(
             np.array(spec.base_bbox_center_in_sensor_mm) * MM
         )
+        self.display_rotation = (np.eye(3) if display_rotation is None
+                                 else np.asarray(display_rotation, dtype=float))
         self._draw_gravity_arrow()
 
     def _draw_gravity_arrow(self):
@@ -133,7 +136,8 @@ class Player:
         )
 
     def show(self, theta, g_hat=(0.0, 0.0, -1.0)):
-        R = RotationMatrix(rotation_taking(g_hat, [0.0, 0.0, -1.0]))
+        R = RotationMatrix(rotation_taking(g_hat, [0.0, 0.0, -1.0])
+                           @ self.display_rotation)
         X_WS = RigidTransform(R, [0.0, 0.0, 0.12])
         self.plant.SetFreeBodyPose(self.plant_context, self.base,
                                    X_WS @ self.X_SB)

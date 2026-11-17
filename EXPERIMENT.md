@@ -172,7 +172,7 @@ cd ~/MeshPCA && source .venv/bin/activate
 python pivot/rb5_ui.py \
     --host 192.168.50.51 \
     --port /dev/ttyUSB0 \
-    --tare ~/Desktop/PIVOT/my_work/calibration/aft_tare_current.json
+    --tare ~/Desktop/PIVOT/calibration/aft_tare_current.json
 ```
 
 ### 창 2 — 카메라 뷰 + 파지점 오버레이

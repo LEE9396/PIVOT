@@ -165,7 +165,7 @@ class DensityPanel:
     # ------------------------------------------------------------------
     # 라운드마다 갱신하는 실험용 화면 (창 4)
     # ------------------------------------------------------------------
-    def begin(self, rho_prior, target_rel=0.05, gt=None):
+    def begin(self, rho_prior, target_rel=0.05, gt=None, density_range=None):
         """왼쪽=초기(물 밀도), 오른쪽=탐색 후 두 벌을 세운다.
 
         오른쪽은 아직 결과가 없으므로 **초기값과 같은 색**으로 시작한다.
@@ -180,7 +180,8 @@ class DensityPanel:
         # 같은 색이 라운드마다 다른 밀도를 뜻하게 되어 비교가 안 된다.
         reference = self.prior if self.gt is None else np.concatenate(
             [self.prior, self.gt])
-        self.range = color_range([dict(rho=reference)], pad=0.6)
+        self.range = (tuple(map(float, density_range)) if density_range is not None
+                      else color_range([dict(rho=reference)], pad=0.6))
         self.spacing = 1.35 * self.size
         self._draw_column("before", self.prior, *self.range, -0.5 * self.spacing)
         self._draw_column("after", self.prior, *self.range, 0.5 * self.spacing)
